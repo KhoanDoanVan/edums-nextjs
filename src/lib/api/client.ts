@@ -9,8 +9,14 @@ interface ApiRequestOptions
   accessToken?: string;
 }
 
+const clientProxyPrefix = "/api/proxy";
+
 const buildApiUrl = (path: string): string => {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  if (typeof window !== "undefined") {
+    return `${clientProxyPrefix}${normalizedPath}`;
+  }
+
   return `${env.apiBaseUrl}${normalizedPath}`;
 };
 
@@ -24,7 +30,10 @@ export async function apiRequest<TData>(
   const isFormData = body instanceof FormData;
 
   if (accessToken) {
-    requestHeaders.set("Authorization", `Bearer ${accessToken}`);
+    const authorizationValue = accessToken.includes(" ")
+      ? accessToken
+      : `Bearer ${accessToken}`;
+    requestHeaders.set("Authorization", authorizationValue);
   }
 
   if (hasBody && !isFormData && !requestHeaders.has("Content-Type")) {
