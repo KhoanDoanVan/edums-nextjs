@@ -1,6 +1,7 @@
-"use client";
+﻿"use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useToastFeedback } from "@/hooks/use-toast-feedback";
 import {
   createAccount,
   getAccountById,
@@ -66,7 +67,7 @@ const toErrorMessage = (error: unknown): string => {
     return error.message;
   }
 
-  return "Thao tac that bai. Vui long thu lai.";
+  return "Thao tác thất bại. Vui lòng thử lại.";
 };
 
 const emptyAccounts: PagedRows<AccountListItem> = { rows: [] };
@@ -94,6 +95,19 @@ const parseRoleId = (value: string): number | null => {
   return parsed;
 };
 
+const getAccountStatusClass = (status: AccountStatus): string => {
+  switch (status) {
+    case "ACTIVE":
+      return "bg-[#edf9f1] text-[#23724b]";
+    case "INACTIVE":
+      return "bg-[#fff8e8] text-[#9a6a00]";
+    case "LOCKED":
+      return "bg-[#fff1f1] text-[#b54444]";
+    default:
+      return "bg-[#eef4f8] text-[#4a687d]";
+  }
+};
+
 export const AccountManagementPanel = ({
   authorization,
 }: AccountManagementPanelProps) => {
@@ -110,6 +124,13 @@ export const AccountManagementPanel = ({
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+
+  useToastFeedback({
+    errorMessage,
+    successMessage,
+    errorTitle: "Thao tác tài khoản thất bại",
+    successTitle: "Thao tác tài khoản thành công",
+  });
 
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [accountModalMode, setAccountModalMode] =
@@ -163,7 +184,7 @@ export const AccountManagementPanel = ({
 
   const loadInitialData = useCallback(async () => {
     if (!authorization) {
-      setErrorMessage("Khong tim thay token dang nhap. Vui long dang nhap lai.");
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
     }
 
@@ -180,7 +201,7 @@ export const AccountManagementPanel = ({
       setRoles(roleRows);
       setAccounts(accountRows);
       setStatusDraftByAccountId(buildStatusDraftMap(accountRows.rows));
-      setSuccessMessage(`Da tai ${accountRows.rows.length} tai khoan.`);
+      setSuccessMessage(`Đã tải ${accountRows.rows.length} tài khoản.`);
     });
   }, [authorization, runAction]);
 
@@ -190,7 +211,7 @@ export const AccountManagementPanel = ({
 
   const loadRolesAndAccounts = useCallback(async () => {
     if (!authorization) {
-      setErrorMessage("Khong tim thay token dang nhap. Vui long dang nhap lai.");
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
     }
 
@@ -203,16 +224,26 @@ export const AccountManagementPanel = ({
       setRoles(roleRows);
       setAccounts(accountRows);
       setStatusDraftByAccountId(buildStatusDraftMap(accountRows.rows));
-      setSuccessMessage(`Da tai ${accountRows.rows.length} tai khoan.`);
+      setSuccessMessage(`Đã tải ${accountRows.rows.length} tài khoản.`);
     });
   }, [authorization, resolveAccountFilters, runAction]);
 
   const roleOptions = useMemo(() => {
     return roles.map((role) => ({
       id: role.id,
-      name: role.roleName || `Role ${role.id}`,
+      name: role.roleName || `Vai trò ${role.id}`,
     }));
   }, [roles]);
+
+  const activeCount = useMemo(
+    () => accounts.rows.filter((item) => item.status === "ACTIVE").length,
+    [accounts.rows],
+  );
+
+  const lockedCount = useMemo(
+    () => accounts.rows.filter((item) => item.status === "LOCKED").length,
+    [accounts.rows],
+  );
 
   const openCreateModal = () => {
     setErrorMessage("");
@@ -231,7 +262,7 @@ export const AccountManagementPanel = ({
 
   const openEditModal = async (accountId: number) => {
     if (!authorization) {
-      setErrorMessage("Khong tim thay token dang nhap. Vui long dang nhap lai.");
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
     }
 
@@ -282,7 +313,7 @@ export const AccountManagementPanel = ({
 
       setAccounts(rows);
       setStatusDraftByAccountId(buildStatusDraftMap(rows.rows));
-      setSuccessMessage(`Da tai ${rows.rows.length} tai khoan.`);
+      setSuccessMessage(`Đã tải ${rows.rows.length} tài khoản.`);
     });
   };
 
@@ -291,7 +322,7 @@ export const AccountManagementPanel = ({
     setErrorMessage("");
 
     if (!authorization) {
-      setErrorMessage("Khong tim thay token dang nhap. Vui long dang nhap lai.");
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
     }
 
@@ -300,23 +331,23 @@ export const AccountManagementPanel = ({
     const avatarUrl = accountForm.avatarUrl.trim();
 
     if (!username || !roleId) {
-      setErrorMessage("Vui long nhap username va role hop le.");
+      setErrorMessage("Vui lòng nhập username và vai trò hợp lệ.");
       return;
     }
 
     if (accountModalMode === "create") {
       if (!accountForm.password || !accountForm.confirmPassword) {
-        setErrorMessage("Vui long nhap password va xac nhan password.");
+        setErrorMessage("Vui lòng nhập mật khẩu và xác nhận mật khẩu.");
         return;
       }
 
       if (accountForm.password.length < 6) {
-        setErrorMessage("Password toi thieu 6 ky tu.");
+        setErrorMessage("Mật khẩu tối thiểu 6 ký tự.");
         return;
       }
 
       if (accountForm.password !== accountForm.confirmPassword) {
-        setErrorMessage("Password va xac nhan password khong khop.");
+        setErrorMessage("Mật khẩu và xác nhận mật khẩu không khớp.");
         return;
       }
     }
@@ -341,10 +372,10 @@ export const AccountManagementPanel = ({
           await updateAccountStatus(created.id, accountForm.desiredStatus, authorization);
         }
 
-        setSuccessMessage(`Tao tai khoan thanh cong: ${created.username}.`);
+        setSuccessMessage(`Tạo tài khoản thành công: ${created.username}.`);
       } else {
         if (!accountForm.id) {
-          throw new Error("Khong tim thay ID tai khoan de cap nhat.");
+          throw new Error("Không tìm thấy ID tài khoản để cập nhật.");
         }
 
         const updated = await updateAccount(
@@ -357,7 +388,7 @@ export const AccountManagementPanel = ({
           authorization,
         );
 
-        setSuccessMessage(`Cap nhat tai khoan thanh cong: ${updated.username}.`);
+        setSuccessMessage(`Cập nhật tài khoản thành công: ${updated.username}.`);
       }
 
       const refreshed = await getAccounts(authorization, resolveAccountFilters());
@@ -369,13 +400,13 @@ export const AccountManagementPanel = ({
 
   const handleSaveAccountStatus = async (account: AccountListItem) => {
     if (!authorization) {
-      setErrorMessage("Khong tim thay token dang nhap. Vui long dang nhap lai.");
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
     }
 
     const nextStatus = statusDraftByAccountId[account.id];
     if (!nextStatus || nextStatus === account.status) {
-      setSuccessMessage("Trang thai khong thay doi.");
+      setSuccessMessage("Trạng thái không thay doi.");
       return;
     }
 
@@ -384,7 +415,7 @@ export const AccountManagementPanel = ({
       const refreshed = await getAccounts(authorization, resolveAccountFilters());
       setAccounts(refreshed);
       setStatusDraftByAccountId(buildStatusDraftMap(refreshed.rows));
-      setSuccessMessage(`Da cap nhat trang thai tai khoan #${account.id}.`);
+      setSuccessMessage(`Đã cập nhật trạng thái tài khoản #${account.id}.`);
     });
   };
 
@@ -410,12 +441,12 @@ export const AccountManagementPanel = ({
     setErrorMessage("");
 
     if (!authorization) {
-      setErrorMessage("Khong tim thay token dang nhap. Vui long dang nhap lai.");
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
     }
 
     if (!resetTargetAccount?.id) {
-      setErrorMessage("Khong tim thay tai khoan can reset password.");
+      setErrorMessage("Không tìm thấy tài khoản cần đặt lại mật khẩu.");
       return;
     }
 
@@ -423,17 +454,17 @@ export const AccountManagementPanel = ({
     const confirmPassword = resetPasswordForm.confirmPassword;
 
     if (!newPassword || !confirmPassword) {
-      setErrorMessage("Vui long nhap day du mat khau moi va xac nhan.");
+      setErrorMessage("Vui lòng nhập đầy đủ mật khẩu mới và xác nhận.");
       return;
     }
 
     if (newPassword.length < 6) {
-      setErrorMessage("Mat khau moi toi thieu 6 ky tu.");
+      setErrorMessage("Mật khẩu mới tối thiểu 6 ký tự.");
       return;
     }
 
     if (newPassword !== confirmPassword) {
-      setErrorMessage("Mat khau moi va xac nhan khong khop.");
+      setErrorMessage("Mật khẩu mới và xác nhận không khớp.");
       return;
     }
 
@@ -448,22 +479,29 @@ export const AccountManagementPanel = ({
       );
 
       setResetTargetAccount(null);
-      setSuccessMessage(`Da reset password cho tai khoan #${resetTargetAccount.id}.`);
+      setSuccessMessage(`Đã đặt lại mật khẩu cho tài khoản #${resetTargetAccount.id}.`);
     });
   };
 
   return (
-    <section className="rounded-[8px] border border-[#8ab3d1] bg-white shadow-[0_1px_2px_rgba(7,51,84,0.16)]">
-      <div className="flex items-center justify-between border-b border-[#c5dced] px-4 py-2 text-[18px] font-semibold text-[#1a4f75]">
-        <h2>Quan ly tai khoan</h2>
+    <section className="rounded-[10px] border border-[#8ab3d1] bg-white shadow-[0_1px_2px_rgba(7,51,84,0.16)]">
+      <div className="flex flex-col gap-3 border-b border-[#c5dced] px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h2 className="text-[20px] font-semibold text-[#1a4f75]">
+            Quản lý tài khoản
+          </h2>
+          <p className="mt-1 text-sm text-[#5a7890]">
+            Tổng hợp tài khoản, vai trò và trạng thái để thao tác nhanh hơn.
+          </p>
+        </div>
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={openCreateModal}
             disabled={isLoading}
-            className="rounded-[4px] bg-[#0d6ea6] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
+            className="rounded-[6px] bg-[#0d6ea6] px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
           >
-            Tao tai khoan
+            Tạo tài khoản
           </button>
           <button
             type="button"
@@ -471,14 +509,35 @@ export const AccountManagementPanel = ({
               void loadRolesAndAccounts();
             }}
             disabled={isLoading}
-            className="rounded-[4px] border border-[#9ec3dd] bg-white px-3 py-1.5 text-sm font-semibold text-[#165a83] transition hover:bg-[#edf6fd] disabled:opacity-60"
+            className="rounded-[6px] border border-[#9ec3dd] bg-white px-3.5 py-2 text-sm font-semibold text-[#165a83] transition hover:bg-[#edf6fd] disabled:opacity-60"
           >
-            Lam moi
+            Làm mới
           </button>
         </div>
       </div>
 
-      <div className="space-y-3 px-4 py-4">
+      <div className="space-y-4 px-4 py-4">
+        <div className="grid gap-3 md:grid-cols-3">
+          <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
+            <p className="text-sm font-medium text-[#5f7d93]">Tổng tài khoản</p>
+            <p className="mt-2 text-[28px] font-bold text-[#1d5b82]">
+              {accounts.rows.length}
+            </p>
+          </article>
+          <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
+            <p className="text-sm font-medium text-[#5f7d93]">Đang hoạt động</p>
+            <p className="mt-2 text-[28px] font-bold text-[#1d7a47]">
+              {activeCount}
+            </p>
+          </article>
+          <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
+            <p className="text-sm font-medium text-[#5f7d93]">Đang bị khóa</p>
+            <p className="mt-2 text-[28px] font-bold text-[#b54444]">
+              {lockedCount}
+            </p>
+          </article>
+        </div>
+
         <form className="grid gap-2 md:grid-cols-4" onSubmit={handleSubmitFilters}>
           <input
             className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
@@ -505,7 +564,7 @@ export const AccountManagementPanel = ({
               setStatusFilter(event.target.value as FilterStatusValue)
             }
           >
-            <option value="ALL">Tat ca trang thai</option>
+            <option value="ALL">Tat ca trạng thái</option>
             {accountStatusOptions.map((status) => (
               <option key={status} value={status}>
                 {status}
@@ -528,7 +587,7 @@ export const AccountManagementPanel = ({
               disabled={isLoading}
               className="h-10 rounded-[6px] border border-[#9ec3dd] bg-white px-4 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
             >
-              Bo loc
+              Bộ lọc
             </button>
           </div>
         </form>
@@ -551,8 +610,8 @@ export const AccountManagementPanel = ({
               <tr className="border-b border-[#cfdfec] text-[#305970]">
                 <th className="px-2 py-2">ID</th>
                 <th className="px-2 py-2">Username</th>
-                <th className="px-2 py-2">Role</th>
-                <th className="px-2 py-2">Trang thai</th>
+                <th className="px-2 py-2">Vai trò</th>
+                <th className="px-2 py-2">Trạng thái</th>
                 <th className="px-2 py-2">Created at</th>
                 <th className="px-2 py-2">Thao tac</th>
               </tr>
@@ -567,10 +626,30 @@ export const AccountManagementPanel = ({
                 return (
                   <tr key={item.id} className="border-b border-[#e0ebf4] text-[#1f3344]">
                     <td className="px-2 py-2">{item.id}</td>
-                    <td className="px-2 py-2">{item.username || "-"}</td>
-                    <td className="px-2 py-2">{item.roleName || "-"}</td>
+                    <td className="px-2 py-2">
+                      <div>
+                        <p className="font-semibold text-[#1f567b]">
+                          {item.username || "-"}
+                        </p>
+                        <p className="mt-1 text-xs text-[#6b8497]">
+                          Avatar: {item.avatarUrl || "Không có"}
+                        </p>
+                      </div>
+                    </td>
+                    <td className="px-2 py-2">
+                      <span className="rounded-full bg-[#eef4f8] px-2.5 py-1 text-xs font-semibold text-[#47677e]">
+                        {item.roleName || "-"}
+                      </span>
+                    </td>
                     <td className="px-2 py-2">
                       <div className="flex min-w-[210px] items-center gap-2">
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${getAccountStatusClass(
+                            currentStatus,
+                          )}`}
+                        >
+                          {currentStatus}
+                        </span>
                         <select
                           className="h-9 w-[130px] rounded-[6px] border border-[#c8d3dd] px-2 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
                           value={draftStatus}
@@ -610,7 +689,7 @@ export const AccountManagementPanel = ({
                           className="h-9 rounded-[6px] border border-[#9ec3dd] bg-white px-3 text-xs font-semibold text-[#245977] transition hover:bg-[#edf6fd]"
                           disabled={isLoading}
                         >
-                          Sua
+                          Sửa
                         </button>
                         <button
                           type="button"
@@ -628,7 +707,7 @@ export const AccountManagementPanel = ({
               {accounts.rows.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-2 py-4 text-center text-[#577086]">
-                    Chua co du lieu tai khoan.
+                    Chưa có dữ liệu tài khoản.
                   </td>
                 </tr>
               ) : null}
@@ -649,8 +728,8 @@ export const AccountManagementPanel = ({
             <div className="flex items-center justify-between border-b border-[#d2e4f1] px-5 py-3">
               <h3 className="text-[20px] font-semibold text-[#154f75]">
                 {accountModalMode === "create"
-                  ? "Tao Tai Khoan Moi"
-                  : `Cap Nhat Tai Khoan #${accountForm.id}`}
+                  ? "Tạo Tài Khoản Mới"
+                  : `Cập Nhật Tài Khoản #${accountForm.id}`}
               </h3>
               <button
                 type="button"
@@ -668,7 +747,7 @@ export const AccountManagementPanel = ({
                 <span className="text-sm font-semibold text-[#2c5877]">Username</span>
                 <input
                   className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] placeholder:text-[#5f6b76] outline-none focus:border-[#6aa8cf]"
-                  placeholder="Nhap username"
+                  placeholder="Nhập username"
                   value={accountForm.username}
                   onChange={(event) =>
                     setAccountForm((prev) => ({
@@ -680,7 +759,7 @@ export const AccountManagementPanel = ({
               </label>
 
               <label className="space-y-1">
-                <span className="text-sm font-semibold text-[#2c5877]">Role</span>
+                <span className="text-sm font-semibold text-[#2c5877]">Vai trò</span>
                 <select
                   className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
                   value={accountForm.roleId}
@@ -702,7 +781,7 @@ export const AccountManagementPanel = ({
 
               <label className="space-y-1">
                 <span className="text-sm font-semibold text-[#2c5877]">
-                  Avatar URL (khong bat buoc)
+                  Avatar URL (không bat buoc)
                 </span>
                 <input
                   className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] placeholder:text-[#5f6b76] outline-none focus:border-[#6aa8cf]"
@@ -720,7 +799,7 @@ export const AccountManagementPanel = ({
               {accountModalMode === "create" ? (
                 <>
                   <label className="space-y-1">
-                    <span className="text-sm font-semibold text-[#2c5877]">Password</span>
+                    <span className="text-sm font-semibold text-[#2c5877]">Mật khẩu</span>
                     <input
                       type="password"
                       className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] placeholder:text-[#5f6b76] outline-none focus:border-[#6aa8cf]"
@@ -737,12 +816,12 @@ export const AccountManagementPanel = ({
 
                   <label className="space-y-1">
                     <span className="text-sm font-semibold text-[#2c5877]">
-                      Xac nhan password
+                      Xác nhận mật khẩu
                     </span>
                     <input
                       type="password"
                       className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] placeholder:text-[#5f6b76] outline-none focus:border-[#6aa8cf]"
-                      placeholder="Nhap lai password"
+                      placeholder="Nhập lại mật khẩu"
                       value={accountForm.confirmPassword}
                       onChange={(event) =>
                         setAccountForm((prev) => ({
@@ -755,7 +834,7 @@ export const AccountManagementPanel = ({
 
                   <label className="space-y-1 md:col-span-2">
                     <span className="text-sm font-semibold text-[#2c5877]">
-                      Trang thai sau khi tao
+                      Trạng thái sau khi tao
                     </span>
                     <select
                       className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
@@ -792,9 +871,9 @@ export const AccountManagementPanel = ({
                   className="h-10 rounded-[6px] bg-[#0d6ea6] px-4 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                 >
                   {isLoading
-                    ? "Dang xu ly..."
+                    ? "Đang xử lý..."
                     : accountModalMode === "create"
-                      ? "Tao tai khoan"
+                      ? "Tạo tài khoản"
                       : "Luu thay doi"}
                 </button>
               </div>
@@ -814,7 +893,7 @@ export const AccountManagementPanel = ({
           >
             <div className="flex items-center justify-between border-b border-[#d2e4f1] px-5 py-3">
               <h3 className="text-[20px] font-semibold text-[#154f75]">
-                Reset Password Tai Khoan #{resetTargetAccount.id}
+                Đặt lại mật khẩu tài khoản #{resetTargetAccount.id}
               </h3>
               <button
                 type="button"
@@ -829,7 +908,7 @@ export const AccountManagementPanel = ({
 
             <form className="space-y-3 px-5 py-4" onSubmit={handleSubmitResetPassword}>
               <label className="space-y-1">
-                <span className="text-sm font-semibold text-[#2c5877]">Mat khau moi</span>
+                <span className="text-sm font-semibold text-[#2c5877]">Mật khẩu mới</span>
                 <input
                   type="password"
                   className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] placeholder:text-[#5f6b76] outline-none focus:border-[#6aa8cf]"
@@ -846,12 +925,12 @@ export const AccountManagementPanel = ({
 
               <label className="space-y-1">
                 <span className="text-sm font-semibold text-[#2c5877]">
-                  Xac nhan mat khau moi
+                  Xác nhận mật khẩu mới
                 </span>
                 <input
                   type="password"
                   className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] placeholder:text-[#5f6b76] outline-none focus:border-[#6aa8cf]"
-                  placeholder="Nhap lai mat khau moi"
+                  placeholder="Nhập lại mật khẩu mới"
                   value={resetPasswordForm.confirmPassword}
                   onChange={(event) =>
                     setResetPasswordForm((prev) => ({
@@ -876,7 +955,7 @@ export const AccountManagementPanel = ({
                   disabled={isLoading}
                   className="h-10 rounded-[6px] bg-[#0d6ea6] px-4 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                 >
-                  {isLoading ? "Dang xu ly..." : "Xac nhan reset"}
+                  {isLoading ? "Đang xử lý..." : "Xác nhận reset"}
                 </button>
               </div>
             </form>
@@ -886,3 +965,9 @@ export const AccountManagementPanel = ({
     </section>
   );
 };
+
+
+
+
+
+

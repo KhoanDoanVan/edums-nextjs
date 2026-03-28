@@ -26,13 +26,13 @@ const normalizeAuthResponse = (response: unknown): AuthResponse => {
   const token = typeof rawToken === "string" ? rawToken.trim() : rawToken;
 
   if (typeof token !== "string" || !token.trim()) {
-    throw new Error("Khong nhan duoc token tu API dang nhap.");
+    throw new Error("Không nhận được token từ API đăng nhập.");
   }
 
   const rawAccountId = rawAuth.accountId ?? rawAuth.id;
   const accountId = Number(rawAccountId);
   if (!Number.isInteger(accountId) || accountId <= 0) {
-    throw new Error("API dang nhap khong tra ve accountId hop le.");
+    throw new Error("API đăng nhập không trả về accountId hợp lệ.");
   }
 
   const username =
