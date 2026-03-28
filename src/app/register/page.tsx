@@ -13,6 +13,7 @@ import {
 } from "@/components/auth/auth-icons";
 import { AuthPageShell } from "@/components/auth/auth-page-shell";
 import { useAuth } from "@/context/auth-context";
+import { useToastFeedback } from "@/hooks/use-toast-feedback";
 import { getRoles } from "@/lib/auth/service";
 import type { RoleResponse } from "@/lib/auth/types";
 
@@ -21,7 +22,7 @@ const toErrorMessage = (error: unknown): string => {
     return error.message;
   }
 
-  return "Dang ky that bai. Vui long thu lai.";
+  return "Đăng ký thất bại. Vui lòng thử lại.";
 };
 
 export default function RegisterPage() {
@@ -40,6 +41,13 @@ export default function RegisterPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useToastFeedback({
+    errorMessage,
+    successMessage,
+    errorTitle: "Đăng ký thất bại",
+    successTitle: "Tạo tài khoản thành công",
+  });
 
   const hasRoleOptions = useMemo(() => availableRoles.length > 0, [availableRoles]);
 
@@ -82,17 +90,17 @@ export default function RegisterPage() {
     const parsedRoleId = Number(roleId);
 
     if (!username.trim() || !password) {
-      setErrorMessage("Vui long nhap username va password.");
+      setErrorMessage("Vui lòng nhập tên đăng nhập và mật khẩu.");
       return;
     }
 
     if (password !== confirmPassword) {
-      setErrorMessage("Mat khau xac nhan khong khop.");
+      setErrorMessage("Mật khẩu xác nhận không khớp.");
       return;
     }
 
     if (!Number.isInteger(parsedRoleId) || parsedRoleId <= 0) {
-      setErrorMessage("Role ID khong hop le.");
+      setErrorMessage("Vai trò đã chọn không hợp lệ.");
       return;
     }
 
@@ -106,7 +114,7 @@ export default function RegisterPage() {
       });
 
       setSuccessMessage(
-        `Tao tai khoan thanh cong. ID: ${createdAccount.id} - role: ${createdAccount.roleName}.`,
+        `Tạo tài khoản thành công. Mã tài khoản: ${createdAccount.id}, vai trò: ${createdAccount.roleName}.`,
       );
       setPassword("");
       setConfirmPassword("");
@@ -125,7 +133,7 @@ export default function RegisterPage() {
           value={username}
           onChange={(event) => setUsername(event.target.value)}
           autoComplete="username"
-          placeholder="Username"
+          placeholder="Tên đăng nhập"
         />
 
         <AuthInput
@@ -134,13 +142,13 @@ export default function RegisterPage() {
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           autoComplete="new-password"
-          placeholder="Password"
+          placeholder="Mật khẩu"
           rightNode={
             <button
               type="button"
               onClick={() => setShowPassword((value) => !value)}
               className="rounded p-0.5 text-[#607286] transition hover:bg-[#eef3f8]"
-              aria-label={showPassword ? "Hide password" : "Show password"}
+              aria-label={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
             >
               {showPassword ? <EyeOffIcon /> : <EyeIcon />}
             </button>
@@ -153,13 +161,13 @@ export default function RegisterPage() {
           value={confirmPassword}
           onChange={(event) => setConfirmPassword(event.target.value)}
           autoComplete="new-password"
-          placeholder="Confirm password"
+          placeholder="Xác nhận mật khẩu"
           rightNode={
             <button
               type="button"
               onClick={() => setShowConfirmPassword((value) => !value)}
               className="rounded p-0.5 text-[#607286] transition hover:bg-[#eef3f8]"
-              aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+              aria-label={showConfirmPassword ? "Ẩn xác nhận mật khẩu" : "Hiện xác nhận mật khẩu"}
             >
               {showConfirmPassword ? <EyeOffIcon /> : <EyeIcon />}
             </button>
@@ -188,7 +196,7 @@ export default function RegisterPage() {
             leftIcon={<IdBadgeIcon />}
             value={roleId}
             onChange={(event) => setRoleId(event.target.value)}
-            placeholder="Role ID"
+            placeholder="Mã vai trò"
             inputMode="numeric"
           />
         )}
@@ -197,11 +205,11 @@ export default function RegisterPage() {
           leftIcon={<ImageIcon />}
           value={avatarUrl}
           onChange={(event) => setAvatarUrl(event.target.value)}
-          placeholder="Avatar URL (optional)"
+          placeholder="Đường dẫn ảnh đại diện (không bắt buộc)"
         />
 
         {isLoadingRoles ? (
-          <p className="text-[12px] font-medium text-[#698198]">Dang tai role list...</p>
+          <p className="text-[12px] font-medium text-[#698198]">Đang tải danh sách vai trò...</p>
         ) : null}
 
         {errorMessage ? (
@@ -222,7 +230,7 @@ export default function RegisterPage() {
           className="flex h-10 w-full items-center justify-center gap-2 rounded-[4px] bg-[#0d6ea6] text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:cursor-not-allowed disabled:opacity-60"
         >
           <LoginIcon className="h-4 w-4" />
-          <span>{isSubmitting ? "Dang xu ly..." : "Tao tai khoan"}</span>
+          <span>{isSubmitting ? "Đang xử lý..." : "Tạo tài khoản"}</span>
         </button>
       </form>
     </AuthPageShell>

@@ -1,6 +1,7 @@
-"use client";
+﻿"use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useToastFeedback } from "@/hooks/use-toast-feedback";
 import {
   createDynamicByPath,
   deleteDynamicByPath,
@@ -39,7 +40,7 @@ const toErrorMessage = (error: unknown): string => {
     return error.message;
   }
 
-  return "Thao tac that bai. Vui long thu lai.";
+  return "Thao tác thất bại. Vui lòng thử lại.";
 };
 
 const isObject = (value: unknown): value is Record<string, unknown> => {
@@ -155,9 +156,16 @@ export const DynamicCrudPanel = ({
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  useToastFeedback({
+    errorMessage,
+    successMessage,
+    errorTitle: "Thao tác dữ liệu thất bại",
+    successTitle: "Thao tác dữ liệu thành công",
+  });
   const [statusDraftByRowId, setStatusDraftByRowId] = useState<
     Record<string, string>
   >({});
+  const [keyword, setKeyword] = useState("");
 
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [formMode, setFormMode] = useState<FormMode>("create");
@@ -179,7 +187,7 @@ export const DynamicCrudPanel = ({
 
   const loadData = useCallback(async () => {
     if (!authorization) {
-      setErrorMessage("Khong tim thay token dang nhap. Vui long dang nhap lai.");
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
     }
 
@@ -202,7 +210,7 @@ export const DynamicCrudPanel = ({
         setStatusDraftByRowId(draft);
       }
 
-      setSuccessMessage(`Da tai ${rows.rows.length} ban ghi.`);
+      setSuccessMessage(`Đã tải ${rows.rows.length} bản ghi.`);
     });
   }, [
     authorization,
@@ -221,6 +229,19 @@ export const DynamicCrudPanel = ({
     return buildColumns(dataRows.rows, priorityColumns);
   }, [dataRows.rows, priorityColumns]);
 
+  const filteredRows = useMemo(() => {
+    const normalizedKeyword = keyword.trim().toLowerCase();
+    if (!normalizedKeyword) {
+      return dataRows.rows;
+    }
+
+    return dataRows.rows.filter((row) =>
+      tableColumns.some((column) =>
+        toDisplayValue(row[column]).toLowerCase().includes(normalizedKeyword),
+      ),
+    );
+  }, [dataRows.rows, keyword, tableColumns]);
+
   const openCreateEditor = () => {
     setFormMode("create");
     setEditingRowId(null);
@@ -230,7 +251,7 @@ export const DynamicCrudPanel = ({
 
   const openEditEditor = async (rowId: string) => {
     if (!authorization) {
-      setErrorMessage("Khong tim thay token dang nhap. Vui long dang nhap lai.");
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
     }
 
@@ -256,7 +277,7 @@ export const DynamicCrudPanel = ({
     setErrorMessage("");
 
     if (!authorization) {
-      setErrorMessage("Khong tim thay token dang nhap. Vui long dang nhap lai.");
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
     }
 
@@ -269,20 +290,20 @@ export const DynamicCrudPanel = ({
       }
       payload = parsed;
     } catch {
-      setErrorMessage("JSON payload khong hop le.");
+      setErrorMessage("JSON payload không hop le.");
       return;
     }
 
     await runAction(async () => {
       if (formMode === "create") {
         await createDynamicByPath(basePath, payload, authorization);
-        setSuccessMessage("Tao moi thanh cong.");
+        setSuccessMessage("Tạo moi thành công.");
       } else {
         if (!editingRowId) {
-          throw new Error("Khong tim thay ID ban ghi de cap nhat.");
+          throw new Error("Không tìm thấy ID bản ghi để cập nhật.");
         }
         await updateDynamicByPath(`${basePath}/${editingRowId}`, payload, authorization);
-        setSuccessMessage("Cap nhat thanh cong.");
+        setSuccessMessage("Cập nhật thành công.");
       }
 
       setIsEditorOpen(false);
@@ -293,11 +314,11 @@ export const DynamicCrudPanel = ({
 
   const handleDeleteRow = async (rowId: string) => {
     if (!authorization) {
-      setErrorMessage("Khong tim thay token dang nhap. Vui long dang nhap lai.");
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
     }
 
-    const accepted = window.confirm(`Ban co chac muon xoa ban ghi #${rowId}?`);
+    const accepted = window.confirm(`Bạn có chắc muốn xoa bản ghi #${rowId}?`);
     if (!accepted) {
       return;
     }
@@ -306,7 +327,7 @@ export const DynamicCrudPanel = ({
       await deleteDynamicByPath(`${basePath}/${rowId}`, authorization);
       const rows = await getDynamicListByPath(basePath, authorization, listQuery);
       setDataRows(rows);
-      setSuccessMessage(`Da xoa ban ghi #${rowId}.`);
+      setSuccessMessage(`Đã xóa bản ghi #${rowId}.`);
     });
   };
 
@@ -321,7 +342,7 @@ export const DynamicCrudPanel = ({
     }
 
     if (row[statusPatch.fieldName] === nextStatus) {
-      setSuccessMessage("Trang thai khong thay doi.");
+      setSuccessMessage("Trạng thái không thay doi.");
       return;
     }
 
@@ -333,22 +354,27 @@ export const DynamicCrudPanel = ({
       );
       const rows = await getDynamicListByPath(basePath, authorization, listQuery);
       setDataRows(rows);
-      setSuccessMessage(`Da cap nhat trang thai ban ghi #${rowId}.`);
+      setSuccessMessage(`Đã cập nhật trạng thái bản ghi #${rowId}.`);
     });
   };
 
   return (
-    <section className="rounded-[8px] border border-[#8ab3d1] bg-white shadow-[0_1px_2px_rgba(7,51,84,0.16)]">
-      <div className="flex items-center justify-between border-b border-[#c5dced] px-4 py-2 text-[18px] font-semibold text-[#1a4f75]">
-        <h2>{title}</h2>
+    <section className="rounded-[10px] border border-[#8ab3d1] bg-white shadow-[0_1px_2px_rgba(7,51,84,0.16)]">
+      <div className="flex items-center justify-between border-b border-[#c5dced] px-4 py-3 text-[18px] font-semibold text-[#1a4f75]">
+        <div>
+          <h2>{title}</h2>
+          <p className="mt-1 text-sm font-medium text-[#5a7890]">
+            Quản lý dữ liệu danh muc voi bo loc nhanh va thao tac tap trung hon.
+          </p>
+        </div>
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={openCreateEditor}
             disabled={isLoading}
-            className="rounded-[4px] bg-[#0d6ea6] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
+            className="rounded-[6px] bg-[#0d6ea6] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
           >
-            Tao moi
+            Tạo moi
           </button>
           <button
             type="button"
@@ -356,14 +382,44 @@ export const DynamicCrudPanel = ({
               void loadData();
             }}
             disabled={isLoading}
-            className="rounded-[4px] border border-[#9ec3dd] bg-white px-3 py-1.5 text-sm font-semibold text-[#165a83] transition hover:bg-[#edf6fd] disabled:opacity-60"
+            className="rounded-[6px] border border-[#9ec3dd] bg-white px-3 py-2 text-sm font-semibold text-[#165a83] transition hover:bg-[#edf6fd] disabled:opacity-60"
           >
-            Lam moi
+            Làm mới
           </button>
         </div>
       </div>
 
-      <div className="space-y-3 px-4 py-4">
+      <div className="space-y-4 px-4 py-4">
+        <div className="grid gap-3 md:grid-cols-3">
+          <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
+            <p className="text-sm font-medium text-[#5f7d93]">Tổng bản ghi</p>
+            <p className="mt-2 text-[28px] font-bold text-[#1d5b82]">
+              {dataRows.rows.length}
+            </p>
+          </article>
+          <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
+            <p className="text-sm font-medium text-[#5f7d93]">Sau bo loc</p>
+            <p className="mt-2 text-[28px] font-bold text-[#2b67a1]">
+              {filteredRows.length}
+            </p>
+          </article>
+          <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
+            <p className="text-sm font-medium text-[#5f7d93]">Cot uu tien</p>
+            <p className="mt-2 text-[28px] font-bold text-[#1d7a47]">
+              {priorityColumns.length}
+            </p>
+          </article>
+        </div>
+
+        <div className="max-w-[420px]">
+          <input
+            className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
+            placeholder="Tim nhanh trong bạng..."
+            value={keyword}
+            onChange={(event) => setKeyword(event.target.value)}
+          />
+        </div>
+
         {errorMessage ? (
           <p className="rounded-[4px] border border-[#e8b2b2] bg-[#fff4f4] px-3 py-2 text-sm text-[#b03d3d]">
             {errorMessage}
@@ -385,12 +441,12 @@ export const DynamicCrudPanel = ({
                     {toColumnLabel(column)}
                   </th>
                 ))}
-                {statusPatch ? <th className="px-2 py-2">Trang thai</th> : null}
+                {statusPatch ? <th className="px-2 py-2">Trạng thái</th> : null}
                 <th className="px-2 py-2">Thao tac</th>
               </tr>
             </thead>
             <tbody>
-              {dataRows.rows.map((row, index) => {
+              {filteredRows.map((row, index) => {
                 const rowId = resolveRowId(row, idFieldCandidates);
                 return (
                   <tr key={`row-${rowId || index}`} className="border-b border-[#e0ebf4] text-[#1f3344]">
@@ -435,7 +491,7 @@ export const DynamicCrudPanel = ({
                             </button>
                           </div>
                         ) : (
-                          <span className="text-xs text-[#577086]">Khong co ID</span>
+                          <span className="text-xs text-[#577086]">Không có ID</span>
                         )}
                       </td>
                     ) : null}
@@ -451,7 +507,7 @@ export const DynamicCrudPanel = ({
                             disabled={isLoading}
                             className="h-9 rounded-[6px] border border-[#9ec3dd] bg-white px-3 text-xs font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
                           >
-                            Sua
+                            Sửa
                           </button>
                           <button
                             type="button"
@@ -461,23 +517,23 @@ export const DynamicCrudPanel = ({
                             disabled={isLoading}
                             className="h-9 rounded-[6px] bg-[#cc3a3a] px-3 text-xs font-semibold text-white transition hover:bg-[#aa2e2e] disabled:opacity-60"
                           >
-                            Xoa
+                            Xóa
                           </button>
                         </div>
                       ) : (
-                        <span className="text-xs text-[#577086]">Khong co ID</span>
+                        <span className="text-xs text-[#577086]">Không có ID</span>
                       )}
                     </td>
                   </tr>
                 );
               })}
-              {dataRows.rows.length === 0 ? (
+              {filteredRows.length === 0 ? (
                 <tr>
                   <td
                     colSpan={tableColumns.length + (statusPatch ? 2 : 1)}
                     className="px-2 py-4 text-center text-[#577086]"
                   >
-                    Chua co du lieu.
+                    Không có dữ liệu phu hop voi bo loc hiện tại.
                   </td>
                 </tr>
               ) : null}
@@ -498,8 +554,8 @@ export const DynamicCrudPanel = ({
             <div className="flex items-center justify-between border-b border-[#d2e4f1] px-5 py-3">
               <h3 className="text-[20px] font-semibold text-[#154f75]">
                 {formMode === "create"
-                  ? `Tao moi - ${title}`
-                  : `Cap nhat #${editingRowId} - ${title}`}
+                  ? `Tạo moi - ${title}`
+                  : `Cập nhật #${editingRowId} - ${title}`}
               </h3>
               <button
                 type="button"
@@ -514,7 +570,7 @@ export const DynamicCrudPanel = ({
 
             <form className="space-y-3 px-5 py-4" onSubmit={handleSubmitEditor}>
               <p className="text-sm text-[#355970]">
-                Nhap payload JSON theo schema backend.
+                Modal này vẫn hỗ trợ JSON để giữ tính linh hoạt cho các danh mục có schema khác nhau.
               </p>
               <textarea
                 value={editorJson}
@@ -538,9 +594,9 @@ export const DynamicCrudPanel = ({
                   className="h-10 rounded-[6px] bg-[#0d6ea6] px-4 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                 >
                   {isLoading
-                    ? "Dang xu ly..."
+                    ? "Đang xử lý..."
                     : formMode === "create"
-                      ? "Tao moi"
+                      ? "Tạo moi"
                       : "Luu cap nhat"}
                 </button>
               </div>
@@ -551,3 +607,7 @@ export const DynamicCrudPanel = ({
     </section>
   );
 };
+
+
+
+

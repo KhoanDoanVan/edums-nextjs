@@ -33,7 +33,7 @@ export const AuthPageShell = ({ mode, children }: AuthPageShellProps) => {
               <div className="flex h-[126px] w-[126px] items-center justify-center rounded-full border-[3px] border-[#89b7d8] bg-[#66d0ee] shadow-[0_2px_6px_rgba(17,76,116,0.25)]">
                 <div className="text-center leading-tight">
                   <p className="text-[11px] font-semibold tracking-[0.09em] text-[#0b4f85]">
-                    DAI HOC SAI GON
+                    ĐẠI HỌC SÀI GÒN
                   </p>
                   <p className="text-[42px] font-extrabold tracking-[0.02em] text-[#1b3b98]">
                     SGU
@@ -45,10 +45,10 @@ export const AuthPageShell = ({ mode, children }: AuthPageShellProps) => {
             <div className="rounded-[5px] border border-[#cdd2d8] bg-[#efefef] p-4 shadow-[0_1px_0_rgba(255,255,255,0.95)]">
               <div className="mb-3 flex gap-2">
                 <Link href="/login" className={tabClass(mode === "login")}>
-                  Dang nhap
+                  Đăng nhập
                 </Link>
                 <Link href="/register" className={tabClass(mode === "register")}>
-                  Dang ky
+                  Đăng ký
                 </Link>
               </div>
               {children}
@@ -58,7 +58,7 @@ export const AuthPageShell = ({ mode, children }: AuthPageShellProps) => {
       </div>
 
       <footer className="hidden h-14 items-center justify-center bg-[#006da7] text-[34px] font-black tracking-[0.03em] text-white md:flex">
-        <span className="text-xl">TRUONG DAI HOC SAI GON</span>
+        <span className="text-xl">TRƯỜNG ĐẠI HỌC SÀI GÒN</span>
       </footer>
     </div>
   );

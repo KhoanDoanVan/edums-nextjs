@@ -64,12 +64,12 @@ const forwardRequest = async (
     const details =
       error instanceof Error && error.message
         ? error.message
-        : "Backend API khong phan hoi.";
+        : "Backend API không phản hồi.";
 
     return NextResponse.json(
       {
         status: 503,
-        message: "Khong the ket noi backend API.",
+        message: "Không thể kết nối đến backend API.",
         path: `/${path.join("/")}`,
         details,
       },

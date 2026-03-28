@@ -1,9 +1,11 @@
-"use client";
+﻿"use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AuthGuard } from "@/components/auth/auth-guard";
 import { useAuth } from "@/context/auth-context";
+import { useToast } from "@/context/toast-context";
+import { useToastFeedback } from "@/hooks/use-toast-feedback";
 import {
   changeMyPassword,
   getCourseSections,
@@ -30,7 +32,7 @@ const toErrorMessage = (error: unknown): string => {
     return error.message;
   }
 
-  return "Thao tac that bai. Vui long thu lai.";
+  return "Thao tác thất bại. Vui lòng thử lại.";
 };
 
 const formatDate = (value?: string): string => {
@@ -59,20 +61,192 @@ const formatDateTime = (value?: string): string => {
   return date.toLocaleString("vi-VN");
 };
 
+interface RegistrationNotice {
+  title: string;
+  message: string;
+  detail?: string;
+}
+
+interface RegisteredCourseItem {
+  registrationId: number;
+  registrationTime?: string;
+  status?: "PENDING" | "CONFIRMED" | "CANCELLED" | "DROPPED";
+  section: CourseSectionResponse;
+}
+
 const contentCardClass =
   "rounded-[8px] border border-[#8ab3d1] bg-white shadow-[0_1px_2px_rgba(7,51,84,0.16)]";
 
 const sectionTitleClass =
   "flex items-center justify-between border-b border-[#c5dced] px-4 py-2 text-[18px] font-semibold text-[#1a4f75]";
 
+const getSectionDisplayName = (section: CourseSectionResponse): string => {
+  return section.displayName || section.sectionCode || `Lớp ${section.id}`;
+};
+
+const getCourseDisplayName = (section: CourseSectionResponse): string => {
+  return section.courseName || section.courseCode || "Chưa cập nhật";
+};
+
+const getGroupLabel = (section: CourseSectionResponse): string => {
+  const matched = section.sectionCode?.match(/(\d+)$/);
+  return matched?.[1] || "-";
+};
+
+const getCreditsLabel = (section: CourseSectionResponse): string => {
+  void section;
+  return "-";
+};
+
+const getScheduleLabel = (section: CourseSectionResponse): string => {
+  const term = [
+    section.semesterNumber ? `Học kỳ ${section.semesterNumber}` : null,
+    section.academicYear || null,
+  ]
+    .filter(Boolean)
+    .join(" - ");
+
+  const lecturer = section.lecturerName ? `GV ${section.lecturerName}` : "";
+
+  return [term, lecturer].filter(Boolean).join(", ") || "Chưa có thời khóa biểu";
+};
+
+const getRegistrationStatusLabel = (status?: string): string => {
+  switch (status) {
+    case "OPEN":
+      return "Đang mở";
+    case "ONGOING":
+      return "Đang diễn ra";
+    case "FINISHED":
+      return "Đã kết thúc";
+    case "CANCELLED":
+      return "Đã hủy";
+    case "PENDING":
+      return "Chờ xác nhận";
+    case "CONFIRMED":
+      return "Đã xác nhận";
+    case "DROPPED":
+      return "Đã hủy đăng ký";
+    default:
+      return status || "-";
+  }
+};
+
+const getRegistrationStatusClass = (status?: string): string => {
+  switch (status) {
+    case "OPEN":
+    case "CONFIRMED":
+      return "bg-[#eef8f1] text-[#1d7a46]";
+    case "PENDING":
+    case "ONGOING":
+      return "bg-[#fff7e8] text-[#a16a00]";
+    case "CANCELLED":
+    case "DROPPED":
+      return "bg-[#fff0f0] text-[#bf4e4e]";
+    default:
+      return "bg-[#eef4f8] text-[#47677e]";
+  }
+};
+
+const getTopHeaderDisplayLabel = (label: string): string => {
+  if (label === "Thông báo") {
+    return "Thông báo";
+  }
+
+  if (label === "Quy dinh - quy che") {
+    return "Quy định - quy chế";
+  }
+
+  if (label === "Thông tin cập nhật") {
+    return "Thông tin cập nhật";
+  }
+
+  return label;
+};
+
+const getStudentTabDisplayLabel = (
+  item: Pick<StudentFeatureTab, "key" | "label">,
+): string => {
+  if (item.key === "course-registration") {
+    return "Đăng ký môn học";
+  }
+
+  return item.label;
+};
+
+const getStudentTabDescription = (
+  item: Pick<StudentFeatureTab, "key" | "description">,
+): string => {
+  if (item.key === "course-registration") {
+    return "Tra cứu học phần đang mở, lọc theo môn học và gửi yêu cầu đăng ký ngay trên trang này.";
+  }
+
+  return item.description;
+};
+
+const parseRegistrationError = (error: unknown): RegistrationNotice => {
+  const fallback: RegistrationNotice = {
+    title: "Không thể đăng ký học phần",
+    message: "Đăng ký học phần thất bại. Vui lòng thử lại.",
+  };
+
+  if (!(error instanceof Error) || !error.message) {
+    return fallback;
+  }
+
+  const separatorIndex = error.message.indexOf(" - ");
+  if (separatorIndex >= 0) {
+    const payloadText = error.message.slice(separatorIndex + 3).trim();
+
+    try {
+      const payload = JSON.parse(payloadText) as {
+        status?: number;
+        message?: string;
+        path?: string;
+      };
+
+      if (
+        payload.status === 400 &&
+        typeof payload.path === "string" &&
+        payload.path.includes("schedule conflicts with section")
+      ) {
+        const matched = payload.path.match(/section\s+([A-Za-z0-9_-]+)/i);
+
+        return {
+          title: "Không thể đăng ký học phần",
+          message: matched
+            ? `Lớp học phần bạn chọn bị trùng lịch với lớp ${matched[1]} đã đăng ký. Vui lòng chọn lớp khác hoặc hủy lớp đang bị trùng trước khi đăng ký lại.`
+            : "Lớp học phần bạn chọn đang bị trùng lịch với một lớp đã đăng ký. Vui lòng kiểm tra lại thời khóa biểu trước khi đăng ký.",
+          detail: payload.path,
+        };
+      }
+    } catch {
+      return {
+        title: fallback.title,
+        message: error.message,
+      };
+    }
+  }
+
+  return {
+    title: fallback.title,
+    message: error.message,
+  };
+};
+
 export default function DashboardPage() {
   const { session, logout } = useAuth();
+  const toast = useToast();
 
   const [activeTabKey, setActiveTabKey] =
     useState<StudentFeatureTab["key"]>("home");
   const [studentIdInput, setStudentIdInput] = useState("");
   const [tabError, setTabError] = useState("");
   const [tabMessage, setTabMessage] = useState("");
+  useToastFeedback({
+    errorMessage: tabError,
+    errorTitle: "Thao tác sinh viên thất bại",
+  });
 
   const [profile, setProfile] = useState<ProfileResponse | null>(null);
   const [profileForm, setProfileForm] = useState({
@@ -88,6 +262,13 @@ export default function DashboardPage() {
     [],
   );
   const [selectedSectionId, setSelectedSectionId] = useState("");
+  const [courseKeyword, setCourseKeyword] = useState("");
+  const [selectedCourseName, setSelectedCourseName] = useState("");
+  const [registrationNotice, setRegistrationNotice] =
+    useState<RegistrationNotice | null>(null);
+  const [registeredSections, setRegisteredSections] = useState<
+    RegisteredCourseItem[]
+  >([]);
 
   const [passwordForm, setPasswordForm] = useState({
     oldPassword: "",
@@ -114,9 +295,48 @@ export default function DashboardPage() {
     [activeTabKey],
   );
 
+  const selectedSection = useMemo(() => {
+    return (
+      courseSections.find((section) => String(section.id) === selectedSectionId) ||
+      null
+    );
+  }, [courseSections, selectedSectionId]);
+
+  const courseNameOptions = useMemo(() => {
+    return Array.from(
+      new Set(courseSections.map((section) => getCourseDisplayName(section))),
+    );
+  }, [courseSections]);
+
+  const filteredSections = useMemo(() => {
+    const normalizedKeyword = courseKeyword.trim().toLowerCase();
+
+    return courseSections.filter((section) => {
+      const matchesCourse =
+        !selectedCourseName ||
+        getCourseDisplayName(section) === selectedCourseName;
+
+      const matchesKeyword =
+        !normalizedKeyword ||
+        [
+          section.courseCode,
+          getCourseDisplayName(section),
+          getSectionDisplayName(section),
+          section.sectionCode,
+          section.lecturerName,
+        ]
+          .filter(Boolean)
+          .some((value) =>
+            String(value).toLowerCase().includes(normalizedKeyword),
+          );
+
+      return matchesCourse && matchesKeyword;
+    });
+  }, [courseKeyword, courseSections, selectedCourseName]);
+
   const requireSession = (): string | null => {
     if (!session?.authorization) {
-      setTabError("Khong tim thay token dang nhap. Vui long dang nhap lai.");
+      setTabError("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return null;
     }
 
@@ -126,7 +346,7 @@ export default function DashboardPage() {
   const getStudentIdValue = (): number | null => {
     const parsed = Number(studentIdInput);
     if (!Number.isInteger(parsed) || parsed <= 0) {
-      setTabError("Student ID khong hop le.");
+      setTabError("Mã sinh viên không hợp le.");
       return null;
     }
 
@@ -173,7 +393,7 @@ export default function DashboardPage() {
         address: data.address || "",
         dateOfBirth: data.dateOfBirth || "",
       });
-      setTabMessage("Da tai thong tin profile.");
+      setTabMessage("Đã tải thông tin hồ sơ.");
     } catch (error) {
       const errorMessage = toErrorMessage(error);
       if (
@@ -189,7 +409,7 @@ export default function DashboardPage() {
           dateOfBirth: fallbackProfile.dateOfBirth || "",
         });
         setTabMessage(
-          "Tai khoan hien tai chua co du lieu ho so day du. Dang hien thi thong tin co ban.",
+          "Tài khoản hiện tại chưa có dữ liệu hồ sơ đầy đủ. Đang hiển thị thông tin cơ bản.",
         );
         return;
       }
@@ -219,7 +439,8 @@ export default function DashboardPage() {
         authorization,
       );
       setProfile(data);
-      setTabMessage("Cap nhat profile thanh cong.");
+      setTabMessage("Cập nhật hồ sơ thành công.");
+      toast.success("Cập nhật hồ sơ thành công.", "Thành công");
     });
   };
 
@@ -234,7 +455,7 @@ export default function DashboardPage() {
     await runAction(async () => {
       const data = await getMyGradeReports(studentId, authorization);
       setGradeReports(data);
-      setTabMessage(`Da tai ${data.length} ban ghi diem.`);
+      setTabMessage(`Đã tải ${data.length} bản ghi diem.`);
     });
   };
 
@@ -249,7 +470,7 @@ export default function DashboardPage() {
     await runAction(async () => {
       const data = await getMyAttendance(studentId, authorization);
       setAttendanceItems(data);
-      setTabMessage(`Da tai ${data.length} ban ghi chuyen can.`);
+      setTabMessage(`Đã tải ${data.length} bản ghi chuyên cần.`);
     });
   };
 
@@ -260,12 +481,13 @@ export default function DashboardPage() {
     }
 
     await runAction(async () => {
+      setRegistrationNotice(null);
       const data = await getCourseSections(authorization);
       setCourseSections(data);
       if (data.length > 0) {
         setSelectedSectionId(String(data[0].id));
       }
-      setTabMessage(`Da tai ${data.length} lop hoc phan.`);
+      setTabMessage(`Đã tải ${data.length} lop hoc phan.`);
     });
   };
 
@@ -277,13 +499,23 @@ export default function DashboardPage() {
 
     const parsedSectionId = Number(selectedSectionId);
     if (!Number.isInteger(parsedSectionId) || parsedSectionId <= 0) {
-      setTabError("Vui long chon lop hoc phan.");
+      const notice = {
+        title: "Chưa chọn lớp học phần",
+        message: "Vui lòng chọn một lớp học phần trước khi đăng ký.",
+      };
+      setRegistrationNotice(notice);
+      toast.error(notice.message, notice.title);
       return;
     }
 
     const parsedStudentId = Number(studentIdInput);
 
-    await runAction(async () => {
+    try {
+      setIsWorking(true);
+      setTabError("");
+      setTabMessage("");
+      setRegistrationNotice(null);
+
       const response = await registerCourseSection(
         {
           courseSectionId: parsedSectionId,
@@ -295,10 +527,33 @@ export default function DashboardPage() {
         authorization,
       );
 
-      setTabMessage(
-        `Dang ky thanh cong. Registration ID: ${response.id}, status: ${response.status || "-"}.`,
-      );
-    });
+      if (selectedSection) {
+        setRegisteredSections((currentItems) => {
+          const nextItem: RegisteredCourseItem = {
+            registrationId: response.id,
+            registrationTime: response.registrationTime,
+            status: response.status,
+            section: selectedSection,
+          };
+
+          return [
+            nextItem,
+            ...currentItems.filter(
+              (item) => item.section.id !== selectedSection.id,
+            ),
+          ];
+        });
+      }
+
+      setTabMessage("Đăng ký học phần thành công.");
+      toast.success("Đăng ký học phần thành công.", "Thành công");
+    } catch (error) {
+      const notice = parseRegistrationError(error);
+      setRegistrationNotice(notice);
+      toast.error(notice.message, notice.title);
+    } finally {
+      setIsWorking(false);
+    }
   };
 
   const handleChangePassword = async (event: FormEvent<HTMLFormElement>) => {
@@ -314,12 +569,12 @@ export default function DashboardPage() {
       !passwordForm.newPassword ||
       !passwordForm.confirmPassword
     ) {
-      setTabError("Vui long nhap day du thong tin doi mat khau.");
+      setTabError("Vui lòng nhập đầy đủ thông tin đổi mật khẩu.");
       return;
     }
 
     if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-      setTabError("Mat khau moi va xac nhan mat khau khong khop.");
+      setTabError("Mật khẩu mới và xác nhận mật khẩu không khớp.");
       return;
     }
 
@@ -330,7 +585,8 @@ export default function DashboardPage() {
         newPassword: "",
         confirmPassword: "",
       });
-      setTabMessage("Doi mat khau thanh cong.");
+      setTabMessage("Đổi mật khẩu thành công.");
+      toast.success("Đổi mật khẩu thành công.", "Thành công");
     });
   };
 
@@ -349,7 +605,7 @@ export default function DashboardPage() {
                   type="button"
                   className="text-base transition hover:text-[#d7f0ff]"
                 >
-                  {item}
+                  {getTopHeaderDisplayLabel(item)}
                 </button>
               ))}
             </nav>
@@ -362,7 +618,7 @@ export default function DashboardPage() {
             <div className="text-right leading-tight">
               <p className="text-sm font-semibold">{session?.username || "-"}</p>
               <p className="text-xs opacity-90">
-                Student ID: {studentIdInput || "-"}
+                Mã sinh viên: {studentIdInput || "-"}
               </p>
             </div>
             <button
@@ -370,7 +626,7 @@ export default function DashboardPage() {
               onClick={logout}
               className="rounded-[4px] border border-white/40 px-2 py-1 text-sm font-semibold transition hover:bg-white/15"
             >
-              Logout
+              Đăng xuất
             </button>
           </div>
         </header>
@@ -378,7 +634,7 @@ export default function DashboardPage() {
         <div className="grid min-h-[calc(100vh-52px)] grid-cols-1 lg:grid-cols-[255px_minmax(0,1fr)]">
           <aside className="border-r border-[#b9cfe0] bg-[#f2f5f8]">
             <div className="border-b border-[#c7d8e5] px-4 py-3 text-[17px] font-semibold text-[#1c587f]">
-              Student Menu
+              Menu sinh viên
             </div>
             <nav className="px-2 py-2">
               {studentFeatureTabs.map((item) => {
@@ -391,6 +647,9 @@ export default function DashboardPage() {
                       setActiveTabKey(item.key);
                       setTabError("");
                       setTabMessage("");
+                      if (item.key !== "course-registration") {
+                        setRegistrationNotice(null);
+                      }
                       if (item.key === "profile") {
                         void handleLoadProfile();
                       }
@@ -407,16 +666,16 @@ export default function DashboardPage() {
                         : "text-[#234d69] hover:bg-[#e5eef6]"
                     }`}
                   >
-                    <span>{item.label}</span>
+                    <span>{getStudentTabDisplayLabel(item)}</span>
                   </button>
                 );
               })}
             </nav>
             <div className="mt-5 border-t border-[#d0dce6] px-3 py-3 text-sm text-[#516b7f]">
-              <p className="font-semibold text-[#2d5672]">Dieu huong nhanh</p>
+              <p className="font-semibold text-[#2d5672]">Điều hướng nhanh</p>
               <p className="mt-2">
                 <Link className="font-semibold text-[#0a5f92] hover:underline" href="/login">
-                  Ve trang dang nhap
+                  Về trang đăng nhập
                 </Link>
               </p>
             </div>
@@ -425,10 +684,10 @@ export default function DashboardPage() {
           <main className="space-y-4 p-3 sm:p-4">
             <section className={contentCardClass}>
               <div className={sectionTitleClass}>
-                <h1>{activeTab.label}</h1>
+                <h1>{getStudentTabDisplayLabel(activeTab)}</h1>
               </div>
               <div className="space-y-2 px-4 py-3 text-sm text-[#355970]">
-                <p>{activeTab.description}</p>
+                <p>{getStudentTabDescription(activeTab)}</p>
                 {tabError ? (
                   <p className="rounded-[4px] border border-[#e8b2b2] bg-[#fff4f4] px-3 py-2 text-[#b03d3d]">
                     {tabError}
@@ -446,7 +705,7 @@ export default function DashboardPage() {
               <div className="space-y-4">
                 <section className={contentCardClass}>
                   <div className={sectionTitleClass}>
-                    <h2>Thong bao</h2>
+                    <h2>Thông báo</h2>
                     <button
                       type="button"
                       className="text-sm font-semibold text-[#0a6aa1] hover:underline"
@@ -456,9 +715,9 @@ export default function DashboardPage() {
                   </div>
                   <div className="grid gap-3 px-4 py-4 md:grid-cols-3">
                     {[
-                      "Dang ky mon hoc hoc ky moi",
+                      "Đăng ký môn học học kỳ moi",
                       "Lich cong bo ket qua hoc tap",
-                      "Huong dan cap nhat profile",
+                      "Hướng dẫn cập nhật hồ sơ",
                     ].map((item, index) => (
                       <article
                         key={item}
@@ -466,7 +725,7 @@ export default function DashboardPage() {
                       >
                         <p className="text-base font-semibold text-[#1d5b82]">{item}</p>
                         <p className="mt-2 text-sm text-[#4b6a7f]">
-                          Cap nhat {formatDateTime(new Date().toISOString())}
+                          Cập nhật {formatDateTime(new Date().toISOString())}
                         </p>
                         <p className="mt-2 text-sm text-[#4b6a7f]">
                           Danh muc #{index + 1}
@@ -478,7 +737,7 @@ export default function DashboardPage() {
 
                 <section className={contentCardClass}>
                   <div className={sectionTitleClass}>
-                    <h2>Chuc nang sinh vien</h2>
+                    <h2>Chuc nang sinh viên</h2>
                   </div>
                   <div className="overflow-x-auto px-4 py-3">
                     <table className="min-w-full text-left text-sm">
@@ -512,7 +771,7 @@ export default function DashboardPage() {
             {activeTab.key === "profile" ? (
               <section className={contentCardClass}>
                 <div className={sectionTitleClass}>
-                  <h2>Ho so ca nhan sinh vien</h2>
+                  <h2>Ho so ca nhan sinh viên</h2>
                   <button
                     type="button"
                     onClick={() => {
@@ -521,14 +780,14 @@ export default function DashboardPage() {
                     disabled={isWorking}
                     className="rounded-[4px] bg-[#0d6ea6] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                   >
-                    Lam moi
+                    Làm mới
                   </button>
                 </div>
                 <div className="grid gap-4 px-4 py-4 lg:grid-cols-[1fr_1fr]">
                   <div className="space-y-3">
                     <div className="rounded-[6px] border border-[#c8dceb] bg-[#f5fbff] p-3 text-sm text-[#335a72]">
                       {isWorking && !profile ? (
-                        <p className="text-[#4c6e86]">Dang tai thong tin profile...</p>
+                        <p className="text-[#4c6e86]">Đang tải thông tin hồ sơ...</p>
                       ) : (
                         <div className="grid gap-2 sm:grid-cols-2">
                           <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
@@ -538,7 +797,7 @@ export default function DashboardPage() {
                             </p>
                           </div>
                           <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
-                            <p className="text-xs text-[#6f8798]">Role</p>
+                            <p className="text-xs text-[#6f8798]">Vai trò</p>
                             <p className="font-semibold text-[#1c4f72]">
                               {profile?.role || "-"}
                             </p>
@@ -628,7 +887,7 @@ export default function DashboardPage() {
                       disabled={isWorking}
                       className="rounded-[4px] bg-[#0d6ea6] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                     >
-                      Cap nhat profile
+                      Cập nhật hồ sơ
                     </button>
                   </form>
                 </div>
@@ -636,84 +895,330 @@ export default function DashboardPage() {
             ) : null}
 
             {activeTab.key === "course-registration" ? (
-              <section className={contentCardClass}>
-                <div className={sectionTitleClass}>
-                  <h2>Dang ky mon hoc</h2>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void handleLoadCourseSections();
-                    }}
-                    disabled={isWorking}
-                    className="rounded-[4px] bg-[#0d6ea6] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
-                  >
-                    Tai danh sach lop
-                  </button>
-                </div>
-                <div className="space-y-3 px-4 py-4">
-                  <div className="grid gap-2 md:grid-cols-[220px_1fr_180px]">
-                    <input
-                      className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                      placeholder="Student ID"
-                      value={studentIdInput}
-                      onChange={(event) => setStudentIdInput(event.target.value)}
-                    />
-                    <select
-                      className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                      value={selectedSectionId}
-                      onChange={(event) => setSelectedSectionId(event.target.value)}
-                    >
-                      <option value="">Chon lop hoc phan</option>
-                      {courseSections.map((section) => (
-                        <option key={section.id} value={section.id}>
-                          {section.displayName || section.sectionCode || `Section ${section.id}`}
-                        </option>
-                      ))}
-                    </select>
+              <section className="rounded-[10px] border border-[#6da8c9] bg-white shadow-[0_1px_2px_rgba(7,51,84,0.16)]">
+                <div className="border-b border-[#c5dced] px-4 py-3">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="flex items-center gap-3 text-[#185678]">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-full border border-[#8ebed9] bg-[#edf7fc] text-sm font-bold">
+                        *
+                      </span>
+                      <div>
+                        <h2 className="text-[24px] font-semibold uppercase tracking-[0.01em]">
+                          Đăng ký môn học học kỳ 3 - năm học 2025 - 2026
+                        </h2>
+                        <p className="mt-1 text-sm text-[#5f7e93]">
+                          Chọn học phần mở đăng ký và gửi yêu cầu ngay trên bảng bên dưới.
+                        </p>
+                      </div>
+                    </div>
+
                     <button
                       type="button"
                       onClick={() => {
-                        void handleRegisterSection();
+                        void handleLoadCourseSections();
                       }}
                       disabled={isWorking}
-                      className="h-10 rounded-[4px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
+                      className="h-10 rounded-[8px] border border-[#0d6ea6] bg-[#0d6ea6] px-4 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                     >
-                      Dang ky lop
+                      Tải danh sách lớp
                     </button>
                   </div>
+                </div>
 
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full text-left text-sm">
-                      <thead>
-                        <tr className="border-b border-[#cfdfec] text-[#305970]">
-                          <th className="px-2 py-2">Section</th>
-                          <th className="px-2 py-2">Course</th>
-                          <th className="px-2 py-2">Lecturer</th>
-                          <th className="px-2 py-2">Hoc ky</th>
-                          <th className="px-2 py-2">Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {courseSections.slice(0, 40).map((section) => (
-                          <tr
-                            key={section.id}
-                            className="border-b border-[#e0ebf4] text-[#3f6178]"
-                          >
-                            <td className="px-2 py-2">
-                              {section.displayName || section.sectionCode || section.id}
-                            </td>
-                            <td className="px-2 py-2">
-                              {section.courseName || section.courseCode || "-"}
-                            </td>
-                            <td className="px-2 py-2">{section.lecturerName || "-"}</td>
-                            <td className="px-2 py-2">
-                              {section.semesterNumber || "-"} / {section.academicYear || "-"}
-                            </td>
-                            <td className="px-2 py-2">{section.status || "-"}</td>
+                <div className="space-y-5 px-4 py-4">
+                  {registrationNotice ? (
+                    <div className="rounded-[8px] border border-[#efbcbc] bg-[#fff5f5] px-4 py-3 text-[#a94242]">
+                      <p className="text-sm font-semibold">{registrationNotice.title}</p>
+                      <p className="mt-1 text-sm">{registrationNotice.message}</p>
+                      {registrationNotice.detail ? (
+                        <p className="mt-1 text-xs text-[#b86a6a]">
+                          Chi tiết: {registrationNotice.detail}
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                    <input
+                      className="h-11 rounded-[8px] border border-[#d4e2ec] bg-white px-4 text-sm text-[#214b66] outline-none focus:border-[#5fa7d0]"
+                      placeholder="Lọc theo môn học"
+                      value={courseKeyword}
+                      onChange={(event) => setCourseKeyword(event.target.value)}
+                    />
+                    <select
+                      className="h-11 rounded-[8px] border border-[#d4e2ec] bg-white px-4 text-sm text-[#214b66] outline-none focus:border-[#5fa7d0]"
+                      value={selectedCourseName}
+                      onChange={(event) => setSelectedCourseName(event.target.value)}
+                    >
+                      <option value="">Tất cả môn học</option>
+                      {courseNameOptions.map((courseName) => (
+                        <option key={courseName} value={courseName}>
+                          {courseName}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="rounded-[12px] border border-[#6da8c9]">
+                    <div className="border-b border-[#c5dced] px-4 py-3">
+                      <h3 className="text-[18px] font-semibold text-[#1a4f75]">
+                        Danh sách môn học mở cho đăng ký
+                      </h3>
+                    </div>
+
+                    <div className="max-h-[430px] overflow-auto">
+                      <table className="min-w-[1120px] text-left text-sm">
+                        <thead className="bg-white">
+                          <tr className="border-b border-[#2a7da9] text-[#2d5067]">
+                            <th className="w-10 px-3 py-3"></th>
+                            <th className="px-3 py-3">Mã MH</th>
+                            <th className="px-3 py-3">Tên môn học</th>
+                            <th className="px-3 py-3">Nhóm</th>
+                            <th className="px-3 py-3">Tổ</th>
+                            <th className="px-3 py-3">Số TC</th>
+                            <th className="px-3 py-3">Lớp</th>
+                            <th className="px-3 py-3">Số lượng</th>
+                            <th className="px-3 py-3">Còn lại</th>
+                            <th className="px-3 py-3">Thời khóa biểu</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                          <tr className="border-b border-[#2a7da9] bg-[#fbfdfe]">
+                            <th className="px-3 py-2 text-[#2a7da9]">Q</th>
+                            <th className="px-1 py-2">
+                              <input
+                                className="h-8 w-full rounded-[4px] border border-[#d4e2ec] px-2 text-xs outline-none"
+                                value={courseKeyword}
+                                onChange={(event) =>
+                                  setCourseKeyword(event.target.value)
+                                }
+                                placeholder="..."
+                              />
+                            </th>
+                            <th className="px-1 py-2">
+                              <input
+                                className="h-8 w-full rounded-[4px] border border-[#d4e2ec] px-2 text-xs outline-none"
+                                value={courseKeyword}
+                                onChange={(event) =>
+                                  setCourseKeyword(event.target.value)
+                                }
+                                placeholder="..."
+                              />
+                            </th>
+                            <th className="px-1 py-2">
+                              <input
+                                className="h-8 w-full rounded-[4px] border border-[#d4e2ec] px-2 text-xs outline-none"
+                                value=""
+                                readOnly
+                                placeholder="..."
+                              />
+                            </th>
+                            <th className="px-1 py-2">
+                              <input
+                                className="h-8 w-full rounded-[4px] border border-[#d4e2ec] px-2 text-xs outline-none"
+                                value=""
+                                readOnly
+                                placeholder="..."
+                              />
+                            </th>
+                            <th className="px-1 py-2">
+                              <input
+                                className="h-8 w-full rounded-[4px] border border-[#d4e2ec] px-2 text-xs outline-none"
+                                value=""
+                                readOnly
+                                placeholder="..."
+                              />
+                            </th>
+                            <th className="px-1 py-2">
+                              <input
+                                className="h-8 w-full rounded-[4px] border border-[#d4e2ec] px-2 text-xs outline-none"
+                                value=""
+                                readOnly
+                                placeholder="..."
+                              />
+                            </th>
+                            <th className="px-1 py-2">
+                              <input
+                                className="h-8 w-full rounded-[4px] border border-[#d4e2ec] px-2 text-xs outline-none"
+                                value=""
+                                readOnly
+                                placeholder="..."
+                              />
+                            </th>
+                            <th className="px-1 py-2">
+                              <input
+                                className="h-8 w-full rounded-[4px] border border-[#d4e2ec] px-2 text-xs outline-none"
+                                value=""
+                                readOnly
+                                placeholder="..."
+                              />
+                            </th>
+                            <th className="px-1 py-2">
+                              <input
+                                className="h-8 w-full rounded-[4px] border border-[#d4e2ec] px-2 text-xs outline-none"
+                                value=""
+                                readOnly
+                                placeholder="..."
+                              />
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredSections.map((section) => {
+                            const selected = String(section.id) === selectedSectionId;
+                            const capacity = section.maxCapacity ?? "-";
+                            const groupLabel = getGroupLabel(section);
+
+                            return (
+                              <tr
+                                key={section.id}
+                                className={`border-b border-[#d7e7f1] text-[#375d75] ${
+                                  selected ? "bg-[#edf7fc]" : "bg-white"
+                                }`}
+                              >
+                                <td className="px-3 py-3 align-top">
+                                  <input
+                                    type="checkbox"
+                                    checked={selected}
+                                    onChange={() =>
+                                      setSelectedSectionId(String(section.id))
+                                    }
+                                    className="mt-1 h-4 w-4 rounded border-[#a9c6d8] accent-[#0d6ea6]"
+                                  />
+                                </td>
+                                <td className="px-3 py-3 align-top font-semibold text-[#1b547a]">
+                                  {section.courseCode || "-"}
+                                </td>
+                                <td className="px-3 py-3 align-top">
+                                  <p className="max-w-[260px] leading-5">
+                                    {getCourseDisplayName(section)}
+                                  </p>
+                                </td>
+                                <td className="px-3 py-3 align-top">{groupLabel}</td>
+                                <td className="px-3 py-3 align-top">{groupLabel}</td>
+                                <td className="px-3 py-3 align-top">
+                                  {getCreditsLabel(section)}
+                                </td>
+                                <td className="px-3 py-3 align-top">
+                                  {section.sectionCode || getSectionDisplayName(section)}
+                                </td>
+                                <td className="px-3 py-3 align-top">{capacity}</td>
+                                <td className="px-3 py-3 align-top text-[#d67676]">
+                                  {capacity}
+                                </td>
+                                <td className="px-3 py-3 align-top text-[#58758a]">
+                                  {getScheduleLabel(section)}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                          {filteredSections.length === 0 ? (
+                            <tr>
+                              <td
+                                colSpan={10}
+                                className="px-3 py-8 text-center text-[#5d7b91]"
+                              >
+                                Chưa có học phần phù hợp với bộ lọc hiện tại.
+                              </td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="rounded-[12px] border border-[#6da8c9]">
+                    <div className="border-b border-[#c5dced] px-4 py-3">
+                      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                        <h3 className="text-[18px] font-semibold text-[#1a4f75]">
+                          Danh sách môn học đã đăng ký: {registeredSections.length} môn
+                        </h3>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void handleRegisterSection();
+                            }}
+                            disabled={isWorking || !selectedSectionId}
+                            className="h-10 rounded-[8px] border border-[#0d6ea6] bg-[#0d6ea6] px-4 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
+                          >
+                            Đăng ký học phần đã chọn
+                          </button>
+                          <button
+                            type="button"
+                            className="h-10 rounded-[8px] border border-[#6da8c9] bg-white px-4 text-sm font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff]"
+                          >
+                            Xuất phiếu đăng ký
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                      <table className="min-w-[980px] text-left text-sm">
+                        <thead>
+                          <tr className="border-b border-[#2a7da9] text-[#2d5067]">
+                            <th className="px-3 py-3">Xóa</th>
+                            <th className="px-3 py-3">Mã MH</th>
+                            <th className="px-3 py-3">Tên môn học</th>
+                            <th className="px-3 py-3">Nhóm tổ</th>
+                            <th className="px-3 py-3">Số TC</th>
+                            <th className="px-3 py-3">Lớp</th>
+                            <th className="px-3 py-3">Ngày đăng ký</th>
+                            <th className="px-3 py-3">Trạng thái</th>
+                            <th className="px-3 py-3">Thời khóa biểu</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {registeredSections.map((item) => (
+                            <tr
+                              key={item.registrationId}
+                              className="border-b border-[#d7e7f1] text-[#375d75]"
+                            >
+                              <td className="px-3 py-3 align-top text-[#d16d6d]">x</td>
+                              <td className="px-3 py-3 align-top font-semibold text-[#1b547a]">
+                                {item.section.courseCode || "-"}
+                              </td>
+                              <td className="px-3 py-3 align-top">
+                                {getCourseDisplayName(item.section)}
+                              </td>
+                              <td className="px-3 py-3 align-top">
+                                {getGroupLabel(item.section)}
+                              </td>
+                              <td className="px-3 py-3 align-top">
+                                {getCreditsLabel(item.section)}
+                              </td>
+                              <td className="px-3 py-3 align-top">
+                                {item.section.sectionCode || getSectionDisplayName(item.section)}
+                              </td>
+                              <td className="px-3 py-3 align-top">
+                                {formatDateTime(item.registrationTime)}
+                              </td>
+                              <td className="px-3 py-3 align-top">
+                                <span
+                                  className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getRegistrationStatusClass(
+                                    item.status,
+                                  )}`}
+                                >
+                                  {getRegistrationStatusLabel(item.status)}
+                                </span>
+                              </td>
+                              <td className="px-3 py-3 align-top text-[#58758a]">
+                                {getScheduleLabel(item.section)}
+                              </td>
+                            </tr>
+                          ))}
+                          {registeredSections.length === 0 ? (
+                            <tr>
+                              <td
+                                colSpan={9}
+                                className="px-3 py-8 text-center text-[#5d7b91]"
+                              >
+                                Chưa có học phần nào được đăng ký trong phiên hiện tại.
+                              </td>
+                            </tr>
+                          ) : null}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 </div>
               </section>
@@ -722,7 +1227,7 @@ export default function DashboardPage() {
             {activeTab.key === "schedule" ? (
               <section className={contentCardClass}>
                 <div className={sectionTitleClass}>
-                  <h2>Thoi khoa bieu sinh vien</h2>
+                  <h2>Thời khóa biểu sinh viên</h2>
                   <button
                     type="button"
                     onClick={() => {
@@ -731,7 +1236,7 @@ export default function DashboardPage() {
                     disabled={isWorking}
                     className="rounded-[4px] bg-[#0d6ea6] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                   >
-                    Lam moi
+                    Làm mới
                   </button>
                 </div>
                 <div className="space-y-3 px-4 py-4">
@@ -740,11 +1245,11 @@ export default function DashboardPage() {
                       <thead>
                         <tr className="border-b border-[#cfdfec] text-[#305970]">
                           <th className="px-2 py-2">Section</th>
-                          <th className="px-2 py-2">Mon hoc</th>
+                          <th className="px-2 py-2">Môn học</th>
                           <th className="px-2 py-2">Giang vien</th>
-                          <th className="px-2 py-2">Hoc ky</th>
+                          <th className="px-2 py-2">Học kỳ</th>
                           <th className="px-2 py-2">Nam hoc</th>
-                          <th className="px-2 py-2">Trang thai</th>
+                          <th className="px-2 py-2">Trạng thái</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -768,7 +1273,7 @@ export default function DashboardPage() {
                         {courseSections.length === 0 ? (
                           <tr>
                             <td colSpan={6} className="px-2 py-4 text-center text-[#577086]">
-                              Chua co du lieu thoi khoa bieu.
+                              Chưa có dữ liệu thời khóa biểu.
                             </td>
                           </tr>
                         ) : null}
@@ -782,11 +1287,11 @@ export default function DashboardPage() {
             {activeTab.key === "grades" ? (
               <section className={contentCardClass}>
                 <div className={sectionTitleClass}>
-                  <h2>Bang diem sinh vien</h2>
+                  <h2>Bạng diem sinh viên</h2>
                   <div className="flex items-center gap-2">
                     <input
                       className="h-9 w-[180px] rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                      placeholder="Student ID"
+                      placeholder="Mã sinh viên"
                       value={studentIdInput}
                       onChange={(event) => setStudentIdInput(event.target.value)}
                     />
@@ -798,7 +1303,7 @@ export default function DashboardPage() {
                       disabled={isWorking}
                       className="h-9 rounded-[4px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                     >
-                      Tai diem
+                      Tải diem
                     </button>
                   </div>
                 </div>
@@ -806,10 +1311,10 @@ export default function DashboardPage() {
                   <table className="min-w-full text-left text-sm">
                     <thead>
                       <tr className="border-b border-[#cfdfec] text-[#305970]">
-                        <th className="px-2 py-2">Mon hoc</th>
-                        <th className="px-2 py-2">Diem</th>
-                        <th className="px-2 py-2">Diem chu</th>
-                        <th className="px-2 py-2">Trang thai</th>
+                        <th className="px-2 py-2">Môn học</th>
+                        <th className="px-2 py-2">Điểm</th>
+                        <th className="px-2 py-2">Điểm chu</th>
+                        <th className="px-2 py-2">Trạng thái</th>
                         <th className="px-2 py-2">Ngay tao</th>
                       </tr>
                     </thead>
@@ -821,7 +1326,7 @@ export default function DashboardPage() {
                         >
                           <td className="px-2 py-2">{item.courseName || "-"}</td>
                           <td className="px-2 py-2">{item.finalScore ?? "-"}</td>
-                          <td className="px-2 py-2">{item.letterGrade || "-"}</td>
+                          <td className="px-2 py-2">{item.letterGrađể || "-"}</td>
                           <td className="px-2 py-2">{item.status || "-"}</td>
                           <td className="px-2 py-2">{formatDateTime(item.createdAt)}</td>
                         </tr>
@@ -829,7 +1334,7 @@ export default function DashboardPage() {
                       {gradeReports.length === 0 ? (
                         <tr>
                           <td colSpan={5} className="px-2 py-4 text-center text-[#577086]">
-                            Chua co du lieu diem.
+                            Chưa có dữ liệu diem.
                           </td>
                         </tr>
                       ) : null}
@@ -842,11 +1347,11 @@ export default function DashboardPage() {
             {activeTab.key === "attendance" ? (
               <section className={contentCardClass}>
                 <div className={sectionTitleClass}>
-                  <h2>Chuyen can sinh vien</h2>
+                  <h2>Chuyên cần sinh viên</h2>
                   <div className="flex items-center gap-2">
                     <input
                       className="h-9 w-[180px] rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                      placeholder="Student ID"
+                      placeholder="Mã sinh viên"
                       value={studentIdInput}
                       onChange={(event) => setStudentIdInput(event.target.value)}
                     />
@@ -858,7 +1363,7 @@ export default function DashboardPage() {
                       disabled={isWorking}
                       className="h-9 rounded-[4px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                     >
-                      Tai chuyen can
+                      Tải chuyên cần
                     </button>
                   </div>
                 </div>
@@ -868,7 +1373,7 @@ export default function DashboardPage() {
                       <tr className="border-b border-[#cfdfec] text-[#305970]">
                         <th className="px-2 py-2">Ngay hoc</th>
                         <th className="px-2 py-2">Session ID</th>
-                        <th className="px-2 py-2">Trang thai</th>
+                        <th className="px-2 py-2">Trạng thái</th>
                         <th className="px-2 py-2">Ghi chu</th>
                       </tr>
                     </thead>
@@ -887,7 +1392,7 @@ export default function DashboardPage() {
                       {attendanceItems.length === 0 ? (
                         <tr>
                           <td colSpan={4} className="px-2 py-4 text-center text-[#577086]">
-                            Chua co du lieu chuyen can.
+                            Chưa có dữ liệu chuyên cần.
                           </td>
                         </tr>
                       ) : null}
@@ -900,7 +1405,7 @@ export default function DashboardPage() {
             {activeTab.key === "password" ? (
               <section className={contentCardClass}>
                 <div className={sectionTitleClass}>
-                  <h2>Doi mat khau</h2>
+                  <h2>Đổi mật khẩu</h2>
                 </div>
                 <form
                   className="grid max-w-[520px] gap-2 px-4 py-4"
@@ -909,7 +1414,7 @@ export default function DashboardPage() {
                   <input
                     type="password"
                     className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                    placeholder="Mat khau hien tai"
+                    placeholder="Mật khẩu hiện tại"
                     value={passwordForm.oldPassword}
                     onChange={(event) =>
                       setPasswordForm((prev) => ({
@@ -921,7 +1426,7 @@ export default function DashboardPage() {
                   <input
                     type="password"
                     className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                    placeholder="Mat khau moi"
+                    placeholder="Mật khẩu mới"
                     value={passwordForm.newPassword}
                     onChange={(event) =>
                       setPasswordForm((prev) => ({
@@ -933,7 +1438,7 @@ export default function DashboardPage() {
                   <input
                     type="password"
                     className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                    placeholder="Xac nhan mat khau moi"
+                    placeholder="Xác nhận mật khẩu mới"
                     value={passwordForm.confirmPassword}
                     onChange={(event) =>
                       setPasswordForm((prev) => ({
@@ -947,7 +1452,7 @@ export default function DashboardPage() {
                     disabled={isWorking}
                     className="mt-1 h-10 rounded-[4px] bg-[#0d6ea6] px-4 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                   >
-                    Luu mat khau moi
+                    Lưu mật khẩu mới
                   </button>
                 </form>
               </section>
@@ -958,3 +1463,9 @@ export default function DashboardPage() {
     </AuthGuard>
   );
 }
+
+
+
+
+
+

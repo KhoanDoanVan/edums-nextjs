@@ -25,7 +25,7 @@ export default function RootPage() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#edf1f5] px-4">
       <div className="rounded-[8px] border border-[#bfd4e4] bg-white px-5 py-4 text-sm text-[#355970] shadow-[0_1px_2px_rgba(7,51,84,0.16)]">
-        Dang chuyen huong...
+        Đang chuyển hướng...
       </div>
     </main>
   );

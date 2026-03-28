@@ -1,19 +1,26 @@
-"use client";
+﻿"use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AuthGuard } from "@/components/auth/auth-guard";
 import { AccountManagementPanel } from "@/components/admin/account-management-panel";
 import { DynamicCrudPanel } from "@/components/admin/dynamic-crud-panel";
+import { GradeComponentPanel } from "@/components/admin/grade-component-panel";
+import { RecurringSchedulePanel } from "@/components/admin/recurring-schedule-panel";
 import { RolePermissionPanel } from "@/components/admin/role-permission-panel";
 import { useAuth } from "@/context/auth-context";
+import { useToastFeedback } from "@/hooks/use-toast-feedback";
 import {
+  createDynamicByPath,
+  deleteDynamicByPath,
   getAdmissionApplications,
   getAdmissionBenchmarks,
   getAdmissionBlocks,
   getAdmissionPeriods,
+  getDynamicListByPath,
   getSectionGradeReports,
   getStudentAttendances,
+  updateDynamicByPath,
 } from "@/lib/admin/service";
 import { adminFeatureTabs, adminTopHeaderTabs } from "@/lib/admin/tabs";
 import type {
@@ -32,7 +39,7 @@ const toErrorMessage = (error: unknown): string => {
     return error.message;
   }
 
-  return "Thao tac that bai. Vui long thu lai.";
+  return "Thao tác thất bại. Vui lòng thử lại.";
 };
 
 const formatDateTime = (value?: string): string => {
@@ -119,9 +126,532 @@ type DynamicCrudTabConfig = {
   };
 };
 
+type CohortRow = {
+  id: number;
+  cohortName?: string;
+  startYear?: number;
+  endYear?: number;
+  status?: string;
+};
+
+type CohortFormState = {
+  cohortName: string;
+  startYear: string;
+  endYear: string;
+  status: string;
+};
+
+const emptyCohortForm: CohortFormState = {
+  cohortName: "",
+  startYear: "",
+  endYear: "",
+  status: "ACTIVE",
+};
+
+const toCohortRows = (rows: DynamicRow[]): CohortRow[] => {
+  return rows.map((row) => ({
+    id: typeof row.id === "number" ? row.id : Number(row.id || 0),
+    cohortName:
+      typeof row.cohortName === "string" ? row.cohortName : undefined,
+    startYear:
+      typeof row.startYear === "number"
+        ? row.startYear
+        : Number(row.startYear || 0) || undefined,
+    endYear:
+      typeof row.endYear === "number"
+        ? row.endYear
+        : Number(row.endYear || 0) || undefined,
+    status: typeof row.status === "string" ? row.status : undefined,
+  }));
+};
+
+const getCohortProgressLabel = (cohort: CohortRow, currentYear: number): string => {
+  if (cohort.startYear && cohort.startYear > currentYear) {
+    return "Sắp mở";
+  }
+
+  if (
+    cohort.startYear &&
+    cohort.endYear &&
+    cohort.startYear <= currentYear &&
+    cohort.endYear >= currentYear
+  ) {
+    return "Đang đào tạo";
+  }
+
+  if (cohort.endYear && cohort.endYear < currentYear) {
+    return "Đã kết thúc";
+  }
+
+  return "Chưa xác định";
+};
+
+const getCohortStatusClass = (label: string): string => {
+  switch (label) {
+    case "Đang đào tạo":
+      return "bg-[#ebf8f0] text-[#1d7a47]";
+    case "Sắp mở":
+      return "bg-[#eef5ff] text-[#2b67a1]";
+    case "Đã kết thúc":
+      return "bg-[#fff3eb] text-[#b56223]";
+    default:
+      return "bg-[#eef4f8] text-[#4a6a7d]";
+  }
+};
+
+function CohortManagementPanel({
+  authorization,
+}: {
+  authorization?: string;
+}) {
+  const currentYear = new Date().getFullYear();
+  const [rows, setRows] = useState<CohortRow[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+  const [keyword, setKeyword] = useState("");
+  const [statusFilter, setStatusFilter] = useState("ALL");
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [form, setForm] = useState<CohortFormState>(emptyCohortForm);
+
+  const loadRows = async () => {
+    if (!authorization) {
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      setErrorMessage("");
+      const response = await getDynamicListByPath("/api/v1/cohorts", authorization);
+      setRows(toCohortRows(response.rows));
+    } catch (error) {
+      setErrorMessage(toErrorMessage(error));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const loadInitialRows = async () => {
+      if (!authorization) {
+        setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
+        return;
+      }
+
+      try {
+        setIsLoading(true);
+        setErrorMessage("");
+        const response = await getDynamicListByPath("/api/v1/cohorts", authorization);
+        setRows(toCohortRows(response.rows));
+      } catch (error) {
+        setErrorMessage(toErrorMessage(error));
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    void loadInitialRows();
+  }, [authorization]);
+
+  const filteredRows = useMemo(() => {
+    const normalizedKeyword = keyword.trim().toLowerCase();
+
+    return rows.filter((row) => {
+      const progress = getCohortProgressLabel(row, currentYear);
+      const matchesKeyword =
+        !normalizedKeyword ||
+        [row.cohortName, row.startYear, row.endYear, row.status]
+          .filter(Boolean)
+          .some((value) =>
+            String(value).toLowerCase().includes(normalizedKeyword),
+          );
+
+      const matchesStatus =
+        statusFilter === "ALL" ||
+        row.status === statusFilter ||
+        progress === statusFilter;
+
+      return matchesKeyword && matchesStatus;
+    });
+  }, [currentYear, keyword, rows, statusFilter]);
+
+  const totalCount = rows.length;
+  const activeCount = rows.filter(
+    (row) => getCohortProgressLabel(row, currentYear) === "Đang đào tạo",
+  ).length;
+  const upcomingCount = rows.filter(
+    (row) => getCohortProgressLabel(row, currentYear) === "Sắp mở",
+  ).length;
+  const finishedCount = rows.filter(
+    (row) => getCohortProgressLabel(row, currentYear) === "Đã kết thúc",
+  ).length;
+
+  const resetForm = () => {
+    setEditingId(null);
+    setForm(emptyCohortForm);
+  };
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+
+    if (!authorization) {
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
+      return;
+    }
+
+    const startYear = Number(form.startYear);
+    const endYear = Number(form.endYear);
+
+    if (!form.cohortName.trim()) {
+      setErrorMessage("Vui lòng nhập tên niên khóa.");
+      return;
+    }
+
+    if (!Number.isInteger(startYear) || !Number.isInteger(endYear)) {
+      setErrorMessage("Năm bắt đầu và năm kết thúc phải là số hợp lệ.");
+      return;
+    }
+
+    if (endYear < startYear) {
+      setErrorMessage("Năm kết thúc phải lớn hơn hoặc bằng năm bắt đầu.");
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      const payload = {
+        cohortName: form.cohortName.trim(),
+        startYear,
+        endYear,
+        status: form.status,
+      };
+
+      if (editingId) {
+        await updateDynamicByPath(
+          `/api/v1/cohorts/${editingId}`,
+          payload,
+          authorization,
+        );
+        setSuccessMessage(`Đã cập nhật niên khóa #${editingId}.`);
+      } else {
+        await createDynamicByPath("/api/v1/cohorts", payload, authorization);
+        setSuccessMessage("Đã tạo niên khóa mới.");
+      }
+
+      resetForm();
+      const response = await getDynamicListByPath("/api/v1/cohorts", authorization);
+      setRows(toCohortRows(response.rows));
+    } catch (error) {
+      setErrorMessage(toErrorMessage(error));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleEdit = (row: CohortRow) => {
+    setEditingId(row.id);
+    setForm({
+      cohortName: row.cohortName || "",
+      startYear: row.startYear ? String(row.startYear) : "",
+      endYear: row.endYear ? String(row.endYear) : "",
+      status: row.status || "ACTIVE",
+    });
+    setErrorMessage("");
+    setSuccessMessage("");
+  };
+
+  const handleDelete = async (row: CohortRow) => {
+    if (!authorization) {
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
+      return;
+    }
+
+    const accepted = window.confirm(
+      `Bạn có chắc muốn xóa niên khóa ${row.cohortName || `#${row.id}`} không?`,
+    );
+
+    if (!accepted) {
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      setErrorMessage("");
+      await deleteDynamicByPath(`/api/v1/cohorts/${row.id}`, authorization);
+      setSuccessMessage(`Đã xóa niên khóa #${row.id}.`);
+      const response = await getDynamicListByPath("/api/v1/cohorts", authorization);
+      setRows(toCohortRows(response.rows));
+      if (editingId === row.id) {
+        resetForm();
+      }
+    } catch (error) {
+      setErrorMessage(toErrorMessage(error));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <section className={contentCardClass}>
+      <div className={sectionTitleClass}>
+        <div>
+          <h2>Quản lý niên khóa</h2>
+          <p className="mt-1 text-sm font-medium text-[#5a7890]">
+            Theo dõi niên khóa đang đào tạo, sắp mở và cập nhật nhanh theo từng năm.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            void loadRows();
+          }}
+          disabled={isLoading}
+          className="rounded-[4px] border border-[#9ec3dd] bg-white px-3 py-1.5 text-sm font-semibold text-[#165a83] transition hover:bg-[#edf6fd] disabled:opacity-60"
+        >
+          Làm mới
+        </button>
+      </div>
+
+      <div className="space-y-4 px-4 py-4">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {[
+            { label: "Tổng niên khóa", value: totalCount, tone: "text-[#1d5b82]" },
+            { label: "Đang đào tạo", value: activeCount, tone: "text-[#1d7a47]" },
+            { label: "Sắp mở", value: upcomingCount, tone: "text-[#2b67a1]" },
+            { label: "Đã kết thúc", value: finishedCount, tone: "text-[#b56223]" },
+          ].map((item) => (
+            <article
+              key={item.label}
+              className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3"
+            >
+              <p className="text-sm font-medium text-[#5f7d93]">{item.label}</p>
+              <p className={`mt-2 text-[28px] font-bold ${item.tone}`}>{item.value}</p>
+            </article>
+          ))}
+        </div>
+
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_360px]">
+          <section className="rounded-[10px] border border-[#c7dceb] bg-white">
+            <div className="flex flex-col gap-3 border-b border-[#d9e7f1] px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <h3 className="text-[18px] font-semibold text-[#184f74]">
+                  Danh sách niên khóa
+                </h3>
+                <p className="mt-1 text-sm text-[#678197]">
+                  Bố cục ưu tiên theo dõi nhanh khoảng năm và trạng thái đào tạo.
+                </p>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-[220px_180px]">
+                <input
+                  className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  placeholder="Tìm theo tên hoặc năm"
+                  value={keyword}
+                  onChange={(event) => setKeyword(event.target.value)}
+                />
+                <select
+                  className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  value={statusFilter}
+                  onChange={(event) => setStatusFilter(event.target.value)}
+                >
+                  <option value="ALL">Tất cả trạng thái</option>
+                  <option value="ACTIVE">ACTIVE</option>
+                  <option value="INACTIVE">INACTIVE</option>
+                  <option value="Đang đào tạo">Đang đào tạo</option>
+                  <option value="Sắp mở">Sắp mở</option>
+                  <option value="Đã kết thúc">Đã kết thúc</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-[#cfdfec] text-[#305970]">
+                    <th className="px-3 py-3">Niên khóa</th>
+                    <th className="px-3 py-3">Khoảng năm</th>
+                    <th className="px-3 py-3">Tiến độ</th>
+                    <th className="px-3 py-3">Trạng thái hệ thống</th>
+                    <th className="px-3 py-3">Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRows.map((row) => {
+                    const progressLabel = getCohortProgressLabel(row, currentYear);
+
+                    return (
+                      <tr
+                        key={row.id}
+                        className="border-b border-[#e0ebf4] text-[#3f6178]"
+                      >
+                        <td className="px-3 py-3">
+                          <p className="font-semibold text-[#1f567b]">
+                            {row.cohortName || "-"}
+                          </p>
+                          <p className="mt-1 text-xs text-[#6b8497]">ID: {row.id}</p>
+                        </td>
+                        <td className="px-3 py-3">
+                          {row.startYear || "-"} - {row.endYear || "-"}
+                        </td>
+                        <td className="px-3 py-3">
+                          <span
+                            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getCohortStatusClass(
+                              progressLabel,
+                            )}`}
+                          >
+                            {progressLabel}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3">
+                          <span className="rounded-full bg-[#eef4f8] px-2.5 py-1 text-xs font-semibold text-[#47677e]">
+                            {row.status || "-"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => handleEdit(row)}
+                              disabled={isLoading}
+                              className="h-9 rounded-[6px] border border-[#9ec3dd] bg-white px-3 text-xs font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
+                            >
+                              Chỉnh sửa
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handleDelete(row);
+                              }}
+                              disabled={isLoading}
+                              className="h-9 rounded-[6px] bg-[#cc3a3a] px-3 text-xs font-semibold text-white transition hover:bg-[#aa2e2e] disabled:opacity-60"
+                            >
+                              Xóa
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filteredRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-3 py-6 text-center text-[#577086]">
+                        Chưa có niên khóa phù hợp với bộ lọc hiện tại.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff]">
+            <div className="border-b border-[#d9e7f1] px-4 py-3">
+              <h3 className="text-[18px] font-semibold text-[#184f74]">
+                {editingId ? `Cập nhật niên khóa #${editingId}` : "Tạo niên khóa mới"}
+              </h3>
+              <p className="mt-1 text-sm text-[#678197]">
+                Nhập thông tin theo từng trường để thao tác nhanh và hạn chế sai payload.
+              </p>
+            </div>
+
+            <form className="space-y-3 px-4 py-4" onSubmit={handleSubmit}>
+              {errorMessage ? (
+                <p className="rounded-[6px] border border-[#e8b2b2] bg-[#fff4f4] px-3 py-2 text-sm text-[#b03d3d]">
+                  {errorMessage}
+                </p>
+              ) : null}
+
+              {successMessage ? (
+                <p className="rounded-[6px] border border-[#b3dbc1] bg-[#f2fbf5] px-3 py-2 text-sm text-[#2f7b4f]">
+                  {successMessage}
+                </p>
+              ) : null}
+
+              <label className="block space-y-1">
+                <span className="text-sm font-semibold text-[#315972]">Tên niên khóa</span>
+                <input
+                  className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  value={form.cohortName}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, cohortName: event.target.value }))
+                  }
+                  placeholder="Ví dụ: K2026 - 2030"
+                />
+              </label>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block space-y-1">
+                  <span className="text-sm font-semibold text-[#315972]">Năm bắt đầu</span>
+                  <input
+                    className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                    value={form.startYear}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, startYear: event.target.value }))
+                    }
+                    inputMode="numeric"
+                    placeholder="2026"
+                  />
+                </label>
+
+                <label className="block space-y-1">
+                  <span className="text-sm font-semibold text-[#315972]">Năm kết thúc</span>
+                  <input
+                    className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                    value={form.endYear}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, endYear: event.target.value }))
+                    }
+                    inputMode="numeric"
+                    placeholder="2030"
+                  />
+                </label>
+              </div>
+
+              <label className="block space-y-1">
+                <span className="text-sm font-semibold text-[#315972]">Trạng thái</span>
+                <select
+                  className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  value={form.status}
+                  onChange={(event) =>
+                    setForm((prev) => ({ ...prev, status: event.target.value }))
+                  }
+                >
+                  <option value="ACTIVE">ACTIVE</option>
+                  <option value="INACTIVE">INACTIVE</option>
+                </select>
+              </label>
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="h-10 rounded-[6px] bg-[#0d6ea6] px-4 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
+                >
+                  {editingId ? "Lưu cập nhật" : "Tạo niên khóa"}
+                </button>
+                <button
+                  type="button"
+                  onClick={resetForm}
+                  disabled={isLoading}
+                  className="h-10 rounded-[6px] border border-[#9ec3dd] bg-white px-4 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
+                >
+                  Xóa form
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> = {
   faculties: {
-    title: "Danh sach khoa",
+    title: "Danh sách khoa",
     basePath: "/api/v1/faculties",
     priorityColumns: ["id", "facultyCode", "facultyName", "status"],
     createTemplate: {
@@ -134,7 +664,7 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
     },
   },
   majors: {
-    title: "Danh sach nganh",
+    title: "Danh sách ngành",
     basePath: "/api/v1/majors",
     priorityColumns: ["id", "majorCode", "majorName", "facultyId", "status"],
     createTemplate: {
@@ -149,7 +679,7 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
     },
   },
   specializations: {
-    title: "Danh sach chuyen nganh",
+    title: "Danh sách chuyen ngành",
     basePath: "/api/v1/specializations",
     priorityColumns: ["id", "specializationName", "majorId", "status"],
     createTemplate: {
@@ -162,7 +692,7 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
     },
   },
   cohorts: {
-    title: "Danh sach nien khoa",
+    title: "Danh sách niên khóa",
     basePath: "/api/v1/cohorts",
     priorityColumns: ["id", "cohortName", "startYear", "endYear", "status"],
     createTemplate: {
@@ -179,7 +709,7 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
     },
   },
   courses: {
-    title: "Danh sach mon hoc",
+    title: "Danh sách môn học",
     basePath: "/api/v1/courses",
     priorityColumns: [
       "id",
@@ -204,8 +734,23 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
       status: "ACTIVE",
     },
   },
+  "grade-components": {
+    title: "Cấu hình điểm",
+    basePath: "/api/v1/grade-components",
+    priorityColumns: ["id", "componentName", "weightPercentage", "courseId"],
+    createTemplate: {
+      componentName: "",
+      weightPercentage: 10,
+      courseId: 1,
+    },
+    updateTemplate: {
+      componentName: "",
+      weightPercentage: 10,
+      courseId: 1,
+    },
+  },
   classrooms: {
-    title: "Danh sach phong hoc",
+    title: "Danh sách phong hoc",
     basePath: "/api/v1/classrooms",
     priorityColumns: ["id", "roomName", "capacity", "roomType"],
     createTemplate: {
@@ -220,7 +765,7 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
     },
   },
   "administrative-classes": {
-    title: "Danh sach lop chu nhiem",
+    title: "Danh sách lớp chủ nhiệm",
     basePath: "/api/v1/administrative-classes",
     priorityColumns: [
       "id",
@@ -246,7 +791,7 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
     },
   },
   students: {
-    title: "Quan ly sinh vien",
+    title: "Quản lý sinh viên",
     basePath: "/api/v1/students",
     listQuery: {
       page: 0,
@@ -304,7 +849,7 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
     },
   },
   lecturers: {
-    title: "Quan ly giang vien",
+    title: "Quản lý giảng viên",
     basePath: "/api/v1/lecturers",
     listQuery: {
       page: 0,
@@ -325,7 +870,7 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
     },
   },
   guardians: {
-    title: "Quan ly phu huynh",
+    title: "Quản lý phụ huynh",
     basePath: "/api/v1/guardians",
     listQuery: {
       page: 0,
@@ -344,7 +889,7 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
     },
   },
   "course-sections": {
-    title: "Quan ly lop hoc phan",
+    title: "Quản lý lop hoc phan",
     basePath: "/api/v1/course-sections",
     priorityColumns: [
       "id",
@@ -388,6 +933,10 @@ export default function AdminDashboardPage() {
   const [activeTabKey, setActiveTabKey] = useState<AdminTabKey>("home");
   const [tabError, setTabError] = useState("");
   const [tabMessage, setTabMessage] = useState("");
+  useToastFeedback({
+    errorMessage: tabError,
+    errorTitle: "Thao tác quản trị thất bại",
+  });
   const [isWorking, setIsWorking] = useState(false);
 
   const [admissionPeriods, setAdmissionPeriods] = useState<PagedRows<PeriodListItem>>({
@@ -441,7 +990,7 @@ export default function AdminDashboardPage() {
 
   const requireAuthorization = (): string | null => {
     if (!session?.authorization) {
-      setTabError("Khong tim thay token dang nhap. Vui long dang nhap lai.");
+      setTabError("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return null;
     }
 
@@ -467,7 +1016,7 @@ export default function AdminDashboardPage() {
   ): number | null => {
     const parsed = Number(rawValue);
     if (!Number.isInteger(parsed) || parsed <= 0) {
-      setTabError(`${fieldLabel} khong hop le.`);
+      setTabError(`${fieldLabel} không hop le.`);
       return null;
     }
 
@@ -483,57 +1032,65 @@ export default function AdminDashboardPage() {
     await runAction(async () => {
       switch (tabKey) {
         case "accounts": {
-          setTabMessage("Su dung module Quan ly tai khoan de thao tac CRUD.");
+          setTabMessage("Sử dụng module Quản lý tải khoan để thao tac CRUD.");
           break;
         }
         case "roles": {
           setTabMessage(
-            "Su dung module Vai tro & phan quyen de thao tac toan bo CRUD role.",
+            "Sử dụng module Vai trò & phan quyen để thao tac toan bo CRUD vai trò.",
           );
           break;
         }
         case "faculties": {
-          setTabMessage("Su dung module CRUD de quan ly du lieu khoa.");
+          setTabMessage("Sử dụng module CRUD để quan ly dữ liệu khoa.");
           break;
         }
         case "majors": {
-          setTabMessage("Su dung module CRUD de quan ly du lieu nganh.");
+          setTabMessage("Sử dụng module CRUD để quan ly dữ liệu ngành.");
           break;
         }
         case "specializations": {
-          setTabMessage("Su dung module CRUD de quan ly du lieu chuyen nganh.");
+          setTabMessage("Sử dụng module CRUD để quan ly dữ liệu chuyen ngành.");
           break;
         }
         case "cohorts": {
-          setTabMessage("Su dung module CRUD de quan ly du lieu nien khoa.");
+          setTabMessage("Sử dụng module CRUD để quan ly dữ liệu niên khóa.");
           break;
         }
         case "courses": {
-          setTabMessage("Su dung module CRUD de quan ly du lieu mon hoc.");
+          setTabMessage("Sử dụng module CRUD để quan ly dữ liệu môn học.");
+          break;
+        }
+        case "grade-components": {
+          setTabMessage("Sử dụng module Cấu hình điểm để quan ly thành phần điểm theo môn học.");
           break;
         }
         case "classrooms": {
-          setTabMessage("Su dung module CRUD de quan ly du lieu phong hoc.");
+          setTabMessage("Sử dụng module CRUD để quan ly dữ liệu phong hoc.");
           break;
         }
         case "administrative-classes": {
-          setTabMessage("Su dung module CRUD de quan ly lop chu nhiem.");
+          setTabMessage("Sử dụng module CRUD để quan ly lớp chủ nhiệm.");
           break;
         }
         case "students": {
-          setTabMessage("Su dung module CRUD de quan ly sinh vien.");
+          setTabMessage("Sử dụng module CRUD để quan ly sinh viên.");
           break;
         }
         case "lecturers": {
-          setTabMessage("Su dung module CRUD de quan ly giang vien.");
+          setTabMessage("Sử dụng module CRUD để quan ly giảng viên.");
           break;
         }
         case "guardians": {
-          setTabMessage("Su dung module CRUD de quan ly phu huynh.");
+          setTabMessage("Sử dụng module CRUD để quan ly phụ huynh.");
           break;
         }
         case "course-sections": {
-          setTabMessage("Su dung module CRUD de quan ly lop hoc phan.");
+          setTabMessage("Sử dụng module CRUD để quan ly lop hoc phan.");
+          break;
+        }
+        case "recurring-schedules": {
+          setTabMessage("Nhập section ID để tải va quan ly lịch học lap lai.");
           break;
         }
         case "admissions": {
@@ -550,18 +1107,18 @@ export default function AdminDashboardPage() {
           setAdmissionBenchmarks(benchmarkRows);
           setAdmissionApplications(applicationRows);
           setTabMessage(
-            `Da tai tuyen sinh: ${periodRows.rows.length} periods, ${blockRows.length} blocks, ${benchmarkRows.rows.length} benchmarks, ${applicationRows.rows.length} applications.`,
+            `Đã tải tuyen sinh: ${periodRows.rows.length} periods, ${blockRows.length} blocks, ${benchmarkRows.rows.length} benchmarks, ${applicationRows.rows.length} applications.`,
           );
           break;
         }
         case "grade-management": {
           setGradeRows([]);
-          setTabMessage("Nhap section ID roi bam Tai diem theo lop hoc phan.");
+          setTabMessage("Nhập section ID rồi bam Tải diem theo lop hoc phan.");
           break;
         }
         case "attendance-management": {
           setAttendanceRows([]);
-          setTabMessage("Nhap student ID roi bam Tai diem danh.");
+          setTabMessage("Nhập student ID rồi bam Tải điểm danh.");
           break;
         }
         case "home":
@@ -583,7 +1140,7 @@ export default function AdminDashboardPage() {
 
   const handleLoadGradeReports = async () => {
     const authorization = requireAuthorization();
-    const sectionId = parsePositiveInteger(gradeSectionIdInput, "Section ID");
+    const sectionId = parsePositiveInteger(gradeSectionIdInput, "Mã lớp học phần");
     if (!authorization || !sectionId) {
       return;
     }
@@ -591,7 +1148,7 @@ export default function AdminDashboardPage() {
     await runAction(async () => {
       const data = await getSectionGradeReports(sectionId, authorization);
       setGradeRows(data);
-      setTabMessage(`Da tai ${data.length} ban ghi diem cho section ${sectionId}.`);
+      setTabMessage(`Đã tải ${data.length} bản ghi diem cho section ${sectionId}.`);
     });
   };
 
@@ -599,7 +1156,7 @@ export default function AdminDashboardPage() {
     const authorization = requireAuthorization();
     const studentId = parsePositiveInteger(
       attendanceStudentIdInput,
-      "Student ID",
+      "Mã sinh viên",
     );
     if (!authorization || !studentId) {
       return;
@@ -608,7 +1165,7 @@ export default function AdminDashboardPage() {
     await runAction(async () => {
       const data = await getStudentAttendances(studentId, authorization);
       setAttendanceRows(data);
-      setTabMessage(`Da tai ${data.length} ban ghi diem danh cho student ${studentId}.`);
+      setTabMessage(`Đã tải ${data.length} bản ghi điểm danh cho student ${studentId}.`);
     });
   };
 
@@ -621,7 +1178,7 @@ export default function AdminDashboardPage() {
       <section className={contentCardClass}>
         <div className={sectionTitleClass}>
           <h2>{title}</h2>
-          <span className="text-sm font-medium text-[#396786]">{rows.length} records</span>
+          <span className="text-sm font-medium text-[#396786]">{rows.length} bản ghi</span>
         </div>
         <div className="overflow-x-auto px-4 py-4">
           <table className="min-w-full text-left text-sm">
@@ -650,7 +1207,7 @@ export default function AdminDashboardPage() {
               {rows.length === 0 ? (
                 <tr>
                   <td colSpan={Math.max(columns.length, 1)} className="px-2 py-4 text-center text-[#577086]">
-                    Chua co du lieu.
+                    Chưa co dữ liệu.
                   </td>
                 </tr>
               ) : null}
@@ -661,7 +1218,10 @@ export default function AdminDashboardPage() {
     );
   };
 
-  const activeDynamicCrudConfig = dynamicCrudTabConfigs[activeTab.key];
+  const activeDynamicCrudConfig =
+    activeTab.key === "cohorts" || activeTab.key === "recurring-schedules"
+      ? undefined
+      : dynamicCrudTabConfigs[activeTab.key];
 
   return (
     <AuthGuard allowedRoles={["ADMIN"]}>
@@ -690,14 +1250,14 @@ export default function AdminDashboardPage() {
             </div>
             <div className="text-right leading-tight">
               <p className="text-sm font-semibold">{session?.username || "-"}</p>
-              <p className="text-xs opacity-90">Role: {session?.role || "-"}</p>
+              <p className="text-xs opacity-90">Vai trò: {session?.role || "-"}</p>
             </div>
             <button
               type="button"
               onClick={logout}
               className="rounded-[4px] border border-white/40 px-2 py-1 text-sm font-semibold transition hover:bg-white/15"
             >
-              Logout
+              Đăng xuất
             </button>
           </div>
         </header>
@@ -728,7 +1288,7 @@ export default function AdminDashboardPage() {
             </nav>
 
             <div className="mt-5 border-t border-[#d0dce6] px-3 py-3 text-sm text-[#516b7f]">
-              <p className="font-semibold text-[#2d5672]">Dieu huong nhanh</p>
+              <p className="font-semibold text-[#2d5672]">Điều hướng nhanh</p>
               <p className="mt-2">
                 <Link className="font-semibold text-[#0a5f92] hover:underline" href="/dashboard">
                   Mo dashboard student
@@ -761,7 +1321,7 @@ export default function AdminDashboardPage() {
               <div className="space-y-4">
                 <section className={contentCardClass}>
                   <div className={sectionTitleClass}>
-                    <h2>Tong quan nhanh</h2>
+                    <h2>Tổng quan nhanh</h2>
                   </div>
                   <div className="grid gap-3 px-4 py-4 md:grid-cols-3 xl:grid-cols-4">
                     {adminFeatureTabs
@@ -774,7 +1334,7 @@ export default function AdminDashboardPage() {
                           className="rounded-[8px] border border-[#c0d8ea] bg-[#f4fbff] p-3 text-left transition hover:border-[#7eb3d9] hover:bg-[#eaf5ff]"
                         >
                           <p className="text-base font-semibold text-[#1d5b82]">{item.label}</p>
-                          <p className="mt-2 text-xs text-[#6c8597]">Click de tai du lieu</p>
+                          <p className="mt-2 text-xs text-[#6c8597]">Click để tải dữ liệu</p>
                         </button>
                       ))}
                   </div>
@@ -782,7 +1342,7 @@ export default function AdminDashboardPage() {
 
                 <section className={contentCardClass}>
                   <div className={sectionTitleClass}>
-                    <h2>Danh sach chuc nang admin</h2>
+                    <h2>Danh sách chuc nang admin</h2>
                   </div>
                   <div className="overflow-x-auto px-4 py-3">
                     <table className="min-w-full text-left text-sm">
@@ -816,6 +1376,18 @@ export default function AdminDashboardPage() {
               <RolePermissionPanel authorization={session?.authorization} />
             ) : null}
 
+            {activeTab.key === "cohorts" ? (
+              <CohortManagementPanel authorization={session?.authorization} />
+            ) : null}
+
+            {activeTab.key === "grade-components" ? (
+              <GradeComponentPanel authorization={session?.authorization} />
+            ) : null}
+
+            {activeTab.key === "recurring-schedules" ? (
+              <RecurringSchedulePanel authorization={session?.authorization} />
+            ) : null}
+
             {activeDynamicCrudConfig ? (
               <DynamicCrudPanel
                 authorization={session?.authorization}
@@ -833,12 +1405,12 @@ export default function AdminDashboardPage() {
               <div className="space-y-4">
                 <section className={contentCardClass}>
                   <div className={sectionTitleClass}>
-                    <h2>Quan ly diem theo lop hoc phan</h2>
+                    <h2>Quản lý diem theo lop hoc phan</h2>
                   </div>
                   <div className="grid gap-2 px-4 py-4 sm:grid-cols-[220px_160px]">
                     <input
                       className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                      placeholder="Section ID"
+                      placeholder="Mã lớp học phần"
                       value={gradeSectionIdInput}
                       onChange={(event) => setGradeSectionIdInput(event.target.value)}
                     />
@@ -850,12 +1422,12 @@ export default function AdminDashboardPage() {
                       disabled={isWorking}
                       className="h-10 rounded-[4px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                     >
-                      Tai diem theo lop
+                      Tải diem theo lop
                     </button>
                   </div>
                 </section>
                 {renderDynamicTable(
-                  "Bang diem theo lop hoc phan",
+                  "Bạng diem theo lop hoc phan",
                   gradeRows,
                   gradeColumns,
                 )}
@@ -866,12 +1438,12 @@ export default function AdminDashboardPage() {
               <div className="space-y-4">
                 <section className={contentCardClass}>
                   <div className={sectionTitleClass}>
-                    <h2>Quan ly diem danh theo sinh vien</h2>
+                    <h2>Quản lý điểm danh theo sinh viên</h2>
                   </div>
                   <div className="grid gap-2 px-4 py-4 sm:grid-cols-[220px_160px]">
                     <input
                       className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                      placeholder="Student ID"
+                      placeholder="Mã sinh viên"
                       value={attendanceStudentIdInput}
                       onChange={(event) => setAttendanceStudentIdInput(event.target.value)}
                     />
@@ -883,12 +1455,12 @@ export default function AdminDashboardPage() {
                       disabled={isWorking}
                       className="h-10 rounded-[4px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                     >
-                      Tai diem danh
+                      Tải điểm danh
                     </button>
                   </div>
                 </section>
                 {renderDynamicTable(
-                  "Bang diem danh theo sinh vien",
+                  "Bạng điểm danh theo sinh viên",
                   attendanceRows,
                   attendanceColumns,
                 )}
@@ -909,7 +1481,7 @@ export default function AdminDashboardPage() {
                       disabled={isWorking}
                       className="rounded-[4px] bg-[#0d6ea6] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                     >
-                      Lam moi tat ca
+                      Làm mới tat ca
                     </button>
                   </div>
                   <div className="overflow-x-auto px-4 py-4">
@@ -921,7 +1493,7 @@ export default function AdminDashboardPage() {
                           <th className="px-2 py-2">Bat dau</th>
                           <th className="px-2 py-2">Ket thuc</th>
                           <th className="px-2 py-2">Status</th>
-                          <th className="px-2 py-2">Tong ho so</th>
+                          <th className="px-2 py-2">Tổng ho so</th>
                           <th className="px-2 py-2">Da duyet</th>
                         </tr>
                       </thead>
@@ -940,7 +1512,7 @@ export default function AdminDashboardPage() {
                         {admissionPeriods.rows.length === 0 ? (
                           <tr>
                             <td colSpan={7} className="px-2 py-4 text-center text-[#577086]">
-                              Chua co du lieu period.
+                              Chưa co dữ liệu period.
                             </td>
                           </tr>
                         ) : null}
@@ -974,7 +1546,7 @@ export default function AdminDashboardPage() {
                         {admissionBlocks.length === 0 ? (
                           <tr>
                             <td colSpan={3} className="px-2 py-4 text-center text-[#577086]">
-                              Chua co du lieu blocks.
+                              Chưa co dữ liệu blocks.
                             </td>
                           </tr>
                         ) : null}
@@ -985,7 +1557,7 @@ export default function AdminDashboardPage() {
 
                 <section className={contentCardClass}>
                   <div className={sectionTitleClass}>
-                    <h2>Diem chuan (benchmarks)</h2>
+                    <h2>Điểm chưan (benchmarks)</h2>
                     <span className="text-sm font-medium text-[#396786]">{admissionBenchmarks.rows.length} benchmarks</span>
                   </div>
                   <div className="overflow-x-auto px-4 py-4">
@@ -1012,7 +1584,7 @@ export default function AdminDashboardPage() {
                         {admissionBenchmarks.rows.length === 0 ? (
                           <tr>
                             <td colSpan={5} className="px-2 py-4 text-center text-[#577086]">
-                              Chua co du lieu benchmark.
+                              Chưa co dữ liệu benchmark.
                             </td>
                           </tr>
                         ) : null}
@@ -1035,8 +1607,8 @@ export default function AdminDashboardPage() {
                           <th className="px-2 py-2">Nganh</th>
                           <th className="px-2 py-2">Block</th>
                           <th className="px-2 py-2">Period</th>
-                          <th className="px-2 py-2">Tong diem</th>
-                          <th className="px-2 py-2">Trang thai</th>
+                          <th className="px-2 py-2">Tổng diem</th>
+                          <th className="px-2 py-2">Trạng thái</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1054,7 +1626,7 @@ export default function AdminDashboardPage() {
                         {admissionApplications.rows.length === 0 ? (
                           <tr>
                             <td colSpan={7} className="px-2 py-4 text-center text-[#577086]">
-                              Chua co du lieu application.
+                              Chưa co dữ liệu application.
                             </td>
                           </tr>
                         ) : null}
@@ -1070,3 +1642,6 @@ export default function AdminDashboardPage() {
     </AuthGuard>
   );
 }
+
+
+

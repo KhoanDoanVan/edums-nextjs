@@ -13,6 +13,8 @@ import {
 } from "@/components/auth/auth-icons";
 import { AuthPageShell } from "@/components/auth/auth-page-shell";
 import { useAuth } from "@/context/auth-context";
+import { useToast } from "@/context/toast-context";
+import { useToastFeedback } from "@/hooks/use-toast-feedback";
 import { getPostLoginPath } from "@/lib/auth/routing";
 
 const toErrorMessage = (error: unknown): string => {
@@ -20,19 +22,22 @@ const toErrorMessage = (error: unknown): string => {
     return error.message;
   }
 
-  return "Dang nhap that bai. Vui long thu lai.";
+  return "Đăng nhập thất bại. Vui lòng thử lại.";
 };
 
 function LoginPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { status, isAuthenticated, session, login } = useAuth();
+  const toast = useToast();
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useToastFeedback({ errorMessage, errorTitle: "Đăng nhập thất bại" });
 
   const explicitNextPath = useMemo(() => {
     const rawPath = searchParams.get("next");
@@ -56,7 +61,7 @@ function LoginPageContent() {
     setErrorMessage("");
 
     if (!username.trim() || !password) {
-      setErrorMessage("Vui long nhap day du username va password.");
+      setErrorMessage("Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.");
       return;
     }
 
@@ -66,6 +71,7 @@ function LoginPageContent() {
         username: username.trim(),
         password,
       });
+      toast.success("Đăng nhập thành công. Đang chuyển đến trang phù hợp.", "Thành công");
     } catch (error) {
       setErrorMessage(toErrorMessage(error));
     } finally {
@@ -81,7 +87,7 @@ function LoginPageContent() {
           value={username}
           onChange={(event) => setUsername(event.target.value)}
           autoComplete="username"
-          placeholder="Username"
+          placeholder="Tên đăng nhập"
         />
 
         <AuthInput
@@ -90,13 +96,13 @@ function LoginPageContent() {
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           autoComplete="current-password"
-          placeholder="Password"
+          placeholder="Mật khẩu"
           rightNode={
             <button
               type="button"
               onClick={() => setShowPassword((value) => !value)}
               className="rounded p-0.5 text-[#607286] transition hover:bg-[#eef3f8]"
-              aria-label={showPassword ? "Hide password" : "Show password"}
+              aria-label={showPassword ? "Ẩn mật khẩu" : "Hiện mật khẩu"}
             >
               {showPassword ? <EyeOffIcon /> : <EyeIcon />}
             </button>
@@ -108,7 +114,7 @@ function LoginPageContent() {
             type="button"
             className="text-[13px] font-semibold text-[#0a5c93] hover:underline"
           >
-            Quen mat khau
+            Quên mật khẩu
           </button>
         </div>
 
@@ -124,7 +130,7 @@ function LoginPageContent() {
           className="flex h-10 w-full items-center justify-center gap-2 rounded-[4px] bg-[#0d6ea6] text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:cursor-not-allowed disabled:opacity-60"
         >
           <LoginIcon className="h-4 w-4" />
-          <span>{isSubmitting ? "Dang xu ly..." : "Dang nhap"}</span>
+          <span>{isSubmitting ? "Đang xử lý..." : "Đăng nhập"}</span>
         </button>
 
         <button
@@ -132,7 +138,7 @@ function LoginPageContent() {
           className="flex h-10 w-full items-center justify-center gap-2 rounded-[4px] bg-[#0d6ea6] text-lg font-semibold text-white transition hover:bg-[#085d90]"
         >
           <BellIcon className="h-4 w-4 text-[#ef2e2e]" />
-          <span>Xem thong bao - tin tuc</span>
+          <span>Xem thông báo - tin tức</span>
         </button>
       </form>
     </AuthPageShell>
@@ -145,7 +151,7 @@ export default function LoginPage() {
       fallback={
         <AuthPageShell mode="login">
           <div className="rounded-[4px] border border-[#bfd4e4] bg-white px-4 py-3 text-sm text-[#355970]">
-            Dang tai trang dang nhap...
+            Đang tải trang đăng nhập...
           </div>
         </AuthPageShell>
       }

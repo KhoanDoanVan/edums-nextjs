@@ -3,8 +3,8 @@ import { AppProviders } from "@/providers/app-providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "EduMS Frontend",
-  description: "Frontend nền tảng cho hệ thống EduMS",
+  title: "Cổng thông tin EduMS",
+  description: "Giao diện nền tảng cho hệ thống quản lý đào tạo EduMS",
 };
 
 export default function RootLayout({
@@ -13,8 +13,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="vi" className="h-full antialiased">
-      <body className="min-h-full flex flex-col">
+    <html lang="vi" className="h-full antialiased" suppressHydrationWarning>
+      <body className="min-h-full flex flex-col" suppressHydrationWarning>
         <AppProviders>{children}</AppProviders>
       </body>
     </html>

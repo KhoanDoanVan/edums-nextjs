@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { useToastFeedback } from "@/hooks/use-toast-feedback";
 import {
   createRole,
   deleteRole,
@@ -28,7 +29,7 @@ const toErrorMessage = (error: unknown): string => {
     return error.message;
   }
 
-  return "Thao tac that bai. Vui long thu lai.";
+  return "Thao tác thất bại. Vui lòng thử lại.";
 };
 
 const formatFunctionCodes = (codes?: string[]): string => {
@@ -37,6 +38,18 @@ const formatFunctionCodes = (codes?: string[]): string => {
   }
 
   return codes.join(", ");
+};
+
+const buildPermissionLoadClass = (count: number): string => {
+  if (count >= 8) {
+    return "bg-[#edf9f1] text-[#23724b]";
+  }
+
+  if (count >= 4) {
+    return "bg-[#fff8e8] text-[#9a6a00]";
+  }
+
+  return "bg-[#eef4f8] text-[#47677e]";
 };
 
 export const RolePermissionPanel = ({
@@ -50,6 +63,13 @@ export const RolePermissionPanel = ({
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+
+  useToastFeedback({
+    errorMessage,
+    successMessage,
+    errorTitle: "Thao tác vai trò thất bại",
+    successTitle: "Thao tác vai trò thành công",
+  });
 
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
   const [roleModalMode, setRoleModalMode] = useState<RoleModalMode>("create");
@@ -74,7 +94,7 @@ export const RolePermissionPanel = ({
 
   const loadRolesAndPermissions = useCallback(async () => {
     if (!authorization) {
-      setErrorMessage("Khong tim thay token dang nhap. Vui long dang nhap lai.");
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
     }
 
@@ -87,7 +107,7 @@ export const RolePermissionPanel = ({
       setRoles(roleRows);
       setPermissions(permissionRows);
       setSuccessMessage(
-        `Da tai ${roleRows.length} role va ${permissionRows.length} permissions.`,
+        `Đã tải ${roleRows.length} vai trò và ${permissionRows.length} quyền.`,
       );
     });
   }, [authorization, runAction]);
@@ -120,6 +140,13 @@ export const RolePermissionPanel = ({
     );
   }, [permissionKeyword, permissions]);
 
+  const totalAssignedPermissions = useMemo(() => {
+    return roles.reduce(
+      (total, role) => total + (role.functionCodes?.length || 0),
+      0,
+    );
+  }, [roles]);
+
   const openCreateRoleModal = () => {
     setErrorMessage("");
     setRoleModalMode("create");
@@ -133,7 +160,7 @@ export const RolePermissionPanel = ({
 
   const openEditRoleModal = async (roleId: number) => {
     if (!authorization) {
-      setErrorMessage("Khong tim thay token dang nhap. Vui long dang nhap lai.");
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
     }
 
@@ -173,13 +200,13 @@ export const RolePermissionPanel = ({
     setErrorMessage("");
 
     if (!authorization) {
-      setErrorMessage("Khong tim thay token dang nhap. Vui long dang nhap lai.");
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
     }
 
     const roleName = roleForm.roleName.trim();
     if (!roleName) {
-      setErrorMessage("Vui long nhap ten role.");
+      setErrorMessage("Vui lòng nhập tên vai trò.");
       return;
     }
 
@@ -195,10 +222,12 @@ export const RolePermissionPanel = ({
           authorization,
         );
 
-        setSuccessMessage(`Tao role thanh cong: ${createdRole.roleName || roleName}.`);
+        setSuccessMessage(
+          `Tạo vai trò thành công: ${createdRole.roleName || roleName}.`,
+        );
       } else {
         if (!roleForm.id) {
-          throw new Error("Khong tim thay role ID de cap nhat.");
+          throw new Error("Không tìm thấy mã vai trò để cập nhật.");
         }
 
         const updatedRole = await updateRole(
@@ -211,7 +240,7 @@ export const RolePermissionPanel = ({
         );
 
         setSuccessMessage(
-          `Cap nhat role thanh cong: ${updatedRole.roleName || roleName}.`,
+          `Cập nhật vai trò thành công: ${updatedRole.roleName || roleName}.`,
         );
       }
 
@@ -223,17 +252,17 @@ export const RolePermissionPanel = ({
 
   const handleDeleteRole = async (role: RoleListItem) => {
     if (!authorization) {
-      setErrorMessage("Khong tim thay token dang nhap. Vui long dang nhap lai.");
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
     }
 
     if (!role.id) {
-      setErrorMessage("Khong tim thay role ID de xoa.");
+      setErrorMessage("Không tìm thấy mã vai trò để xóa.");
       return;
     }
 
     const accepted = window.confirm(
-      `Ban co chac muon xoa role "${role.roleName || role.id}"?`,
+      `Bạn có chắc muốn xóa vai trò "${role.roleName || role.id}"?`,
     );
     if (!accepted) {
       return;
@@ -243,15 +272,41 @@ export const RolePermissionPanel = ({
       await deleteRole(role.id, authorization);
       const roleRows = await getRoles(authorization);
       setRoles(roleRows);
-      setSuccessMessage(`Da xoa role ${role.roleName || role.id}.`);
+      setSuccessMessage(`Đã xóa vai trò ${role.roleName || role.id}.`);
     });
   };
 
   return (
     <div className="space-y-4">
-      <section className="rounded-[8px] border border-[#8ab3d1] bg-white shadow-[0_1px_2px_rgba(7,51,84,0.16)]">
-        <div className="flex items-center justify-between border-b border-[#c5dced] px-4 py-2 text-[18px] font-semibold text-[#1a4f75]">
-          <h2>Quan ly role</h2>
+      <div className="grid gap-3 md:grid-cols-3">
+        <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
+          <p className="text-sm font-medium text-[#5f7d93]">Tổng vai trò</p>
+          <p className="mt-2 text-[28px] font-bold text-[#1d5b82]">{roles.length}</p>
+        </article>
+        <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
+          <p className="text-sm font-medium text-[#5f7d93]">Quyền hệ thống</p>
+          <p className="mt-2 text-[28px] font-bold text-[#2b67a1]">
+            {permissions.length}
+          </p>
+        </article>
+        <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
+          <p className="text-sm font-medium text-[#5f7d93]">
+            Tổng quyền gán cho vai trò
+          </p>
+          <p className="mt-2 text-[28px] font-bold text-[#1d7a47]">
+            {totalAssignedPermissions}
+          </p>
+        </article>
+      </div>
+
+      <section className="rounded-[10px] border border-[#8ab3d1] bg-white shadow-[0_1px_2px_rgba(7,51,84,0.16)]">
+        <div className="flex items-center justify-between border-b border-[#c5dced] px-4 py-3 text-[18px] font-semibold text-[#1a4f75]">
+          <div>
+            <h2>Quản lý vai trò</h2>
+            <p className="mt-1 text-sm font-medium text-[#5a7890]">
+              Theo dõi vai trò theo tên và mức độ gán quyền.
+            </p>
+          </div>
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -259,7 +314,7 @@ export const RolePermissionPanel = ({
               disabled={isLoading}
               className="rounded-[4px] bg-[#0d6ea6] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
             >
-              Tao role
+              Tạo vai trò
             </button>
             <button
               type="button"
@@ -269,7 +324,7 @@ export const RolePermissionPanel = ({
               disabled={isLoading}
               className="rounded-[4px] border border-[#9ec3dd] bg-white px-3 py-1.5 text-sm font-semibold text-[#165a83] transition hover:bg-[#edf6fd] disabled:opacity-60"
             >
-              Lam moi
+              Làm mới
             </button>
           </div>
         </div>
@@ -278,7 +333,7 @@ export const RolePermissionPanel = ({
           <div className="max-w-[420px]">
             <input
               className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
-              placeholder="Tim role theo ten hoac function code..."
+              placeholder="Tìm vai trò theo tên hoặc mã quyền..."
               value={roleKeyword}
               onChange={(event) => setRoleKeyword(event.target.value)}
             />
@@ -301,18 +356,33 @@ export const RolePermissionPanel = ({
               <thead>
                 <tr className="border-b border-[#cfdfec] text-[#305970]">
                   <th className="px-2 py-2">ID</th>
-                  <th className="px-2 py-2">Role name</th>
-                  <th className="px-2 py-2">Function codes</th>
-                  <th className="px-2 py-2">Thao tac</th>
+                  <th className="px-2 py-2">Tên vai trò</th>
+                  <th className="px-2 py-2">Quyền</th>
+                  <th className="px-2 py-2">Thao tác</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredRoles.map((role) => (
                   <tr key={role.id} className="border-b border-[#e0ebf4] text-[#1f3344]">
                     <td className="px-2 py-2">{role.id}</td>
-                    <td className="px-2 py-2">{role.roleName || "-"}</td>
                     <td className="px-2 py-2">
-                      <span className="line-clamp-2">{formatFunctionCodes(role.functionCodes)}</span>
+                      <p className="font-semibold text-[#1f567b]">
+                        {role.roleName || "-"}
+                      </p>
+                    </td>
+                    <td className="px-2 py-2">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${buildPermissionLoadClass(
+                            role.functionCodes?.length || 0,
+                          )}`}
+                        >
+                          {(role.functionCodes?.length || 0)} quyền
+                        </span>
+                        <span className="line-clamp-2">
+                          {formatFunctionCodes(role.functionCodes)}
+                        </span>
+                      </div>
                     </td>
                     <td className="px-2 py-2">
                       <div className="flex min-w-[160px] items-center gap-2">
@@ -324,7 +394,7 @@ export const RolePermissionPanel = ({
                           disabled={isLoading}
                           className="h-9 rounded-[6px] border border-[#9ec3dd] bg-white px-3 text-xs font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
                         >
-                          Sua
+                          Sửa
                         </button>
                         <button
                           type="button"
@@ -334,7 +404,7 @@ export const RolePermissionPanel = ({
                           disabled={isLoading}
                           className="h-9 rounded-[6px] bg-[#cc3a3a] px-3 text-xs font-semibold text-white transition hover:bg-[#aa2e2e] disabled:opacity-60"
                         >
-                          Xoa
+                          Xóa
                         </button>
                       </div>
                     </td>
@@ -343,7 +413,7 @@ export const RolePermissionPanel = ({
                 {filteredRoles.length === 0 ? (
                   <tr>
                     <td colSpan={4} className="px-2 py-4 text-center text-[#577086]">
-                      Chua co du lieu role.
+                      Chưa có dữ liệu vai trò.
                     </td>
                   </tr>
                 ) : null}
@@ -353,18 +423,23 @@ export const RolePermissionPanel = ({
         </div>
       </section>
 
-      <section className="rounded-[8px] border border-[#8ab3d1] bg-white shadow-[0_1px_2px_rgba(7,51,84,0.16)]">
-        <div className="flex items-center justify-between border-b border-[#c5dced] px-4 py-2 text-[18px] font-semibold text-[#1a4f75]">
-          <h2>Tap permission he thong</h2>
+      <section className="rounded-[10px] border border-[#8ab3d1] bg-white shadow-[0_1px_2px_rgba(7,51,84,0.16)]">
+        <div className="flex items-center justify-between border-b border-[#c5dced] px-4 py-3 text-[18px] font-semibold text-[#1a4f75]">
+          <div>
+            <h2>Tập quyền hệ thống</h2>
+            <p className="mt-1 text-sm font-medium text-[#5a7890]">
+              Bộ lọc nhanh để tra cứu function code khi cấu hình vai trò.
+            </p>
+          </div>
           <span className="text-sm font-medium text-[#396786]">
-            {permissions.length} permissions
+            {permissions.length} quyền
           </span>
         </div>
         <div className="space-y-3 px-4 py-4">
           <div className="max-w-[420px]">
             <input
               className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
-              placeholder="Tim permission..."
+              placeholder="Tìm quyền..."
               value={permissionKeyword}
               onChange={(event) => setPermissionKeyword(event.target.value)}
             />
@@ -380,7 +455,7 @@ export const RolePermissionPanel = ({
                 </span>
               ))
             ) : (
-              <p className="text-sm text-[#577086]">Khong tim thay permission.</p>
+              <p className="text-sm text-[#577086]">Không tìm thấy quyền.</p>
             )}
           </div>
         </div>
@@ -398,15 +473,15 @@ export const RolePermissionPanel = ({
             <div className="flex items-center justify-between border-b border-[#d2e4f1] px-5 py-3">
               <h3 className="text-[20px] font-semibold text-[#154f75]">
                 {roleModalMode === "create"
-                  ? "Tao role moi"
-                  : `Cap nhat role #${roleForm.id}`}
+                  ? "Tạo vai trò mới"
+                  : `Cập nhật vai trò #${roleForm.id}`}
               </h3>
               <button
                 type="button"
                 onClick={closeRoleModal}
                 className="rounded-full border border-[#bdd5e7] px-2 py-0.5 text-xl leading-none text-[#346180] transition hover:bg-[#edf6fd]"
                 disabled={isLoading}
-                aria-label="Dong popup"
+                aria-label="Đóng popup"
               >
                 ×
               </button>
@@ -414,7 +489,7 @@ export const RolePermissionPanel = ({
 
             <form className="space-y-3 px-5 py-4" onSubmit={handleSubmitRole}>
               <label className="space-y-1">
-                <span className="text-sm font-semibold text-[#2c5877]">Role name</span>
+                <span className="text-sm font-semibold text-[#2c5877]">Tên vai trò</span>
                 <input
                   className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
                   placeholder="VD: STUDENT, LECTURER, ADMIN_SUPPORT"
@@ -430,7 +505,7 @@ export const RolePermissionPanel = ({
 
               <div className="space-y-1">
                 <p className="text-sm font-semibold text-[#2c5877]">
-                  Gan permissions (function codes)
+                  Gán quyền (function codes)
                 </p>
                 <div className="max-h-[280px] overflow-y-auto rounded-[8px] border border-[#d2e4f1] p-3">
                   <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -451,7 +526,7 @@ export const RolePermissionPanel = ({
                       );
                     })}
                     {permissions.length === 0 ? (
-                      <p className="text-sm text-[#577086]">Chua tai duoc permission.</p>
+                      <p className="text-sm text-[#577086]">Chưa tải được quyền.</p>
                     ) : null}
                   </div>
                 </div>
@@ -464,7 +539,7 @@ export const RolePermissionPanel = ({
                   className="h-10 rounded-[6px] border border-[#9ec3dd] bg-white px-4 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
                   disabled={isLoading}
                 >
-                  Huy
+                  Hủy
                 </button>
                 <button
                   type="submit"
@@ -472,10 +547,10 @@ export const RolePermissionPanel = ({
                   className="h-10 rounded-[6px] bg-[#0d6ea6] px-4 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                 >
                   {isLoading
-                    ? "Dang xu ly..."
+                    ? "Đang xử lý..."
                     : roleModalMode === "create"
-                      ? "Tao role"
-                      : "Luu thay doi"}
+                      ? "Tạo vai trò"
+                      : "Lưu thay đổi"}
                 </button>
               </div>
             </form>
