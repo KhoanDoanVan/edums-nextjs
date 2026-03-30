@@ -18,6 +18,7 @@ export interface StudentFeatureTab {
 }
 
 export interface ProfileResponse {
+  id?: number;
   username?: string;
   role?: string;
   fullName?: string;
@@ -27,7 +28,14 @@ export interface ProfileResponse {
   address?: string;
   dateOfBirth?: string;
   studentCode?: string;
+  classId?: number;
+  className?: string;
+  facultyId?: number;
+  facultyName?: string;
+  majorId?: number;
   majorName?: string;
+  specializationId?: number;
+  specializationName?: string;
 }
 
 export interface UpdateProfileRequest {
@@ -100,6 +108,74 @@ export interface CourseSectionResponse {
   maxCapacity?: number;
   status?: "DRAFT" | "OPEN" | "ONGOING" | "FINISHED" | "CANCELLED";
   createdAt?: string;
+}
+
+export interface FacultyResponse {
+  id: number;
+  facultyName?: string;
+  facultyCode?: string;
+}
+
+export interface CourseResponse {
+  id: number;
+  courseCode?: string;
+  courseName?: string;
+  credits?: number;
+  facultyId?: number;
+  facultyName?: string;
+  prerequisiteCourseId?: number;
+  prerequisiteCourseName?: string;
+  status?: string;
+}
+
+export interface MajorResponse {
+  id: number;
+  facultyId?: number;
+  facultyName?: string;
+  majorName?: string;
+  majorCode?: string;
+}
+
+export interface SpecializationResponse {
+  id: number;
+  majorId?: number;
+  majorName?: string;
+  specializationName?: string;
+}
+
+export interface AdministrativeClassResponse {
+  id: number;
+  className?: string;
+  maxCapacity?: number;
+  headLecturerId?: number;
+  headLecturerName?: string;
+  cohortId?: number;
+  cohortName?: string;
+  majorId?: number;
+  majorName?: string;
+}
+
+export interface CohortResponse {
+  id: number;
+  cohortName?: string;
+  startYear?: number;
+  endYear?: number;
+  status?: "ACTIVE" | "GRADUATED";
+}
+
+export interface LecturerResponse {
+  id?: number;
+  fullName?: string;
+  email?: string;
+  phone?: string;
+  academicDegree?: string;
+}
+
+export interface ClassroomResponse {
+  id: number;
+  roomName?: string;
+  capacity?: number;
+  roomType?: string;
 }
 
 export interface RecurringScheduleResponse {

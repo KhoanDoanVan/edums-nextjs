@@ -7,17 +7,37 @@ import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/context/toast-context";
 import { useToastFeedback } from "@/hooks/use-toast-feedback";
 import {
+  getAdministrativeClassById,
+  getAdministrativeClasses,
   changeMyPassword,
+  getCohortById,
+  getCohorts,
+  getClassroomById,
+  getClassrooms,
+  getCourseById,
+  getCourses,
+  getCoursesByFaculty,
   getCourseSectionById,
+  getFacultyById,
+  getFaculties,
+  getGradeReportById,
   getGradeComponentsByCourse,
+  getLecturerById,
   getCourseSections,
   getCourseSectionsByCourse,
   getCourseSectionsBySemester,
+  getMajorById,
+  getMajors,
+  getMajorsByFaculty,
   getMyAttendance,
   getMyGradeReports,
   getMyProfile,
+  getRecurringScheduleById,
   getRecurringScheduleSessions,
   getRecurringSchedulesBySection,
+  getSpecializations,
+  getSpecializationsByMajor,
+  getStudentById,
   registerCourseSection,
   updateMyProfile,
 } from "@/lib/student/service";
@@ -26,14 +46,22 @@ import {
   studentTopHeaderTabs,
 } from "@/lib/student/tabs";
 import type {
+  AdministrativeClassResponse,
   AttendanceResponse,
   ClassSessionResponse,
+  ClassroomResponse,
+  CohortResponse,
+  CourseResponse,
   CourseSectionResponse,
+  FacultyResponse,
   GradeComponentResponse,
   GradeDetailResponse,
   GradeReportResponse,
+  LecturerResponse,
+  MajorResponse,
   ProfileResponse,
   RecurringScheduleResponse,
+  SpecializationResponse,
   StudentFeatureTab,
 } from "@/lib/student/types";
 
@@ -43,6 +71,10 @@ const toErrorMessage = (error: unknown): string => {
   }
 
   return "Thao tác thất bại. Vui lòng thử lại.";
+};
+
+const isForbiddenOrNotFoundError = (errorMessage: string): boolean => {
+  return errorMessage.includes("[API 403]") || errorMessage.includes("[API 404]");
 };
 
 const formatDate = (value?: string): string => {
@@ -77,6 +109,45 @@ const formatScore = (value?: number): string => {
   }
 
   return value.toFixed(2);
+};
+
+const formatCohortStatus = (value?: "ACTIVE" | "GRADUATED"): string => {
+  if (value === "ACTIVE") {
+    return "Đang đào tạo";
+  }
+
+  if (value === "GRADUATED") {
+    return "Đã tốt nghiệp";
+  }
+
+  return "-";
+};
+
+const normalizeTextValue = (value?: string): string => {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+const normalizePhoneValue = (value?: string): string => {
+  return String(value || "").replace(/[^\d]/g, "");
+};
+
+const toDateOnlyValue = (value?: string): string => {
+  if (!value) {
+    return "";
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return toLocalIsoDate(date);
 };
 
 const toLocalIsoDate = (date: Date): string => {
@@ -156,6 +227,35 @@ interface CourseFilterOption {
   courseName: string;
 }
 
+interface FacultyFilterOption {
+  facultyId: number;
+  facultyName: string;
+  facultyCode?: string;
+}
+
+interface MajorFilterOption {
+  majorId: number;
+  majorName: string;
+  majorCode?: string;
+  facultyId?: number;
+  facultyName?: string;
+}
+
+interface SpecializationFilterOption {
+  specializationId: number;
+  specializationName: string;
+  majorId?: number;
+  majorName?: string;
+}
+
+interface AdministrativeClassFilterOption {
+  classId: number;
+  className: string;
+  majorId?: number;
+  majorName?: string;
+  cohortName?: string;
+}
+
 interface SemesterFilterOption {
   semesterId: number;
   semesterNumber?: number;
@@ -166,6 +266,9 @@ interface SemesterFilterOption {
 interface WeeklyScheduleBlock {
   key: string;
   sectionId: number;
+  recurringScheduleId?: number;
+  classroomId?: number;
+  lecturerId?: number;
   courseName: string;
   courseCode?: string;
   sectionCode?: string;
@@ -254,7 +357,14 @@ const getGroupLabel = (section: CourseSectionResponse): string => {
   return matched?.[1] || "-";
 };
 
-const getCreditsLabel = (section: CourseSectionResponse): string => {
+const getCreditsLabel = (
+  section: CourseSectionResponse,
+  course?: CourseResponse,
+): string => {
+  if (typeof course?.credits === "number" && Number.isFinite(course.credits)) {
+    return String(course.credits);
+  }
+
   void section;
   return "-";
 };
@@ -467,6 +577,28 @@ const getRegistrationStatusClass = (status?: string): string => {
   }
 };
 
+const getCourseStatusLabel = (status?: string): string => {
+  switch (status) {
+    case "ACTIVE":
+      return "Đang hoạt động";
+    case "INACTIVE":
+      return "Ngừng mở";
+    default:
+      return status || "-";
+  }
+};
+
+const getCourseStatusClass = (status?: string): string => {
+  switch (status) {
+    case "ACTIVE":
+      return "bg-[#eef8f1] text-[#1d7a46]";
+    case "INACTIVE":
+      return "bg-[#fff0f0] text-[#bf4e4e]";
+    default:
+      return "bg-[#eef4f8] text-[#47677e]";
+  }
+};
+
 const getGradeStatusLabel = (status?: string): string => {
   switch (status) {
     case "PUBLISHED":
@@ -488,6 +620,36 @@ const getGradeStatusClass = (status?: string): string => {
       return "bg-[#eef4fb] text-[#1f4f84]";
     case "DRAFT":
       return "bg-[#fff7e8] text-[#a16a00]";
+    default:
+      return "bg-[#eef4f8] text-[#47677e]";
+  }
+};
+
+const getAttendanceStatusLabel = (status?: string): string => {
+  switch (status) {
+    case "PRESENT":
+      return "Có mặt";
+    case "LATE":
+      return "Đi muộn";
+    case "EXCUSED":
+      return "Có phép";
+    case "ABSENT":
+      return "Vắng";
+    default:
+      return status || "-";
+  }
+};
+
+const getAttendanceStatusClass = (status?: string): string => {
+  switch (status) {
+    case "PRESENT":
+      return "bg-[#eef8f1] text-[#1d7a46]";
+    case "LATE":
+      return "bg-[#fff7e8] text-[#a16a00]";
+    case "EXCUSED":
+      return "bg-[#eef4fb] text-[#1f4f84]";
+    case "ABSENT":
+      return "bg-[#fff0f0] text-[#bf4e4e]";
     default:
       return "bg-[#eef4f8] text-[#47677e]";
   }
@@ -523,7 +685,7 @@ const getStudentTabDescription = (
   item: Pick<StudentFeatureTab, "key" | "description">,
 ): string => {
   if (item.key === "course-registration") {
-    return "Tra cứu học phần đang mở, lọc theo môn học và gửi yêu cầu đăng ký ngay trên trang này.";
+    return "Tra cứu học phần đang mở, lọc theo khoa, môn học, học kỳ và gửi yêu cầu đăng ký ngay trên trang này.";
   }
 
   return item.description;
@@ -600,6 +762,45 @@ export default function DashboardPage() {
     address: "",
     dateOfBirth: "",
   });
+  const [profileFormError, setProfileFormError] = useState("");
+  const [profileLastLoadedAt, setProfileLastLoadedAt] = useState<string>("");
+  const [majorCatalog, setMajorCatalog] = useState<MajorResponse[]>([]);
+  const [majorsBySelectedProfileFaculty, setMajorsBySelectedProfileFaculty] =
+    useState<MajorResponse[]>([]);
+  const [specializationCatalog, setSpecializationCatalog] = useState<
+    SpecializationResponse[]
+  >([]);
+  const [
+    specializationsBySelectedProfileMajor,
+    setSpecializationsBySelectedProfileMajor,
+  ] = useState<SpecializationResponse[]>([]);
+  const [administrativeClassCatalog, setAdministrativeClassCatalog] = useState<
+    AdministrativeClassResponse[]
+  >([]);
+  const [administrativeClassDetailsById, setAdministrativeClassDetailsById] =
+    useState<Record<number, AdministrativeClassResponse | null>>({});
+  const [cohortCatalog, setCohortCatalog] = useState<CohortResponse[]>([]);
+  const [cohortDetailsById, setCohortDetailsById] = useState<
+    Record<number, CohortResponse | null>
+  >({});
+  const [selectedProfileFacultyId, setSelectedProfileFacultyId] = useState("");
+  const [selectedProfileMajorId, setSelectedProfileMajorId] = useState("");
+  const [selectedProfileSpecializationId, setSelectedProfileSpecializationId] =
+    useState("");
+  const [selectedProfileClassId, setSelectedProfileClassId] = useState("");
+  const [isProfileMajorContextLoading, setIsProfileMajorContextLoading] =
+    useState(false);
+  const [
+    isProfileSpecializationContextLoading,
+    setIsProfileSpecializationContextLoading,
+  ] = useState(false);
+  const [isProfileClassContextLoading, setIsProfileClassContextLoading] =
+    useState(false);
+  const [loadingProfileClassDetailId, setLoadingProfileClassDetailId] = useState<
+    number | null
+  >(null);
+  const [loadingProfileCohortDetailId, setLoadingProfileCohortDetailId] =
+    useState<number | null>(null);
 
   const [gradeReports, setGradeReports] = useState<GradeReportResponse[]>([]);
   const [gradeKeyword, setGradeKeyword] = useState("");
@@ -609,6 +810,12 @@ export default function DashboardPage() {
   const [selectedGradeReportId, setSelectedGradeReportId] = useState<
     number | null
   >(null);
+  const [gradeReportDetailsById, setGradeReportDetailsById] = useState<
+    Record<number, GradeReportResponse | null>
+  >({});
+  const [loadingGradeReportId, setLoadingGradeReportId] = useState<number | null>(
+    null,
+  );
   const [gradeSectionsById, setGradeSectionsById] = useState<
     Record<number, CourseSectionResponse>
   >({});
@@ -619,6 +826,10 @@ export default function DashboardPage() {
   const [loadingGradeComponentCourseId, setLoadingGradeComponentCourseId] =
     useState<number | null>(null);
   const [attendanceItems, setAttendanceItems] = useState<AttendanceResponse[]>([]);
+  const [attendanceKeyword, setAttendanceKeyword] = useState("");
+  const [attendanceStatusFilter, setAttendanceStatusFilter] = useState("");
+  const [attendanceDateFrom, setAttendanceDateFrom] = useState("");
+  const [attendanceDateTo, setAttendanceDateTo] = useState("");
   const [allCourseSections, setAllCourseSections] = useState<
     CourseSectionResponse[]
   >([]);
@@ -627,8 +838,20 @@ export default function DashboardPage() {
   );
   const [selectedSectionId, setSelectedSectionId] = useState("");
   const [courseKeyword, setCourseKeyword] = useState("");
+  const [selectedFacultyId, setSelectedFacultyId] = useState("");
   const [selectedCourseId, setSelectedCourseId] = useState("");
   const [selectedSemesterId, setSelectedSemesterId] = useState("");
+  const [facultyCatalog, setFacultyCatalog] = useState<FacultyResponse[]>([]);
+  const [allCoursesCatalog, setAllCoursesCatalog] = useState<CourseResponse[]>([]);
+  const [coursesBySelectedFaculty, setCoursesBySelectedFaculty] = useState<
+    CourseResponse[]
+  >([]);
+  const [courseDetailsById, setCourseDetailsById] = useState<
+    Record<number, CourseResponse | null>
+  >({});
+  const [loadingCourseDetailId, setLoadingCourseDetailId] = useState<number | null>(
+    null,
+  );
   const [registrationNotice, setRegistrationNotice] =
     useState<RegistrationNotice | null>(null);
   const [registeredSections, setRegisteredSections] = useState<
@@ -647,6 +870,25 @@ export default function DashboardPage() {
   const [myScheduleBlocks, setMyScheduleBlocks] = useState<WeeklyScheduleBlock[]>(
     [],
   );
+  const [classroomCatalog, setClassroomCatalog] = useState<ClassroomResponse[]>([]);
+  const [selectedScheduleBlockKey, setSelectedScheduleBlockKey] = useState("");
+  const [recurringScheduleDetailsById, setRecurringScheduleDetailsById] =
+    useState<Record<number, RecurringScheduleResponse | null>>({});
+  const [classroomDetailsById, setClassroomDetailsById] = useState<
+    Record<number, ClassroomResponse | null>
+  >({});
+  const [lecturerDetailsById, setLecturerDetailsById] = useState<
+    Record<number, LecturerResponse | null>
+  >({});
+  const [loadingRecurringScheduleId, setLoadingRecurringScheduleId] = useState<
+    number | null
+  >(null);
+  const [loadingClassroomDetailId, setLoadingClassroomDetailId] = useState<
+    number | null
+  >(null);
+  const [loadingLecturerDetailId, setLoadingLecturerDetailId] = useState<
+    number | null
+  >(null);
   const [selectedScheduleSemesterId, setSelectedScheduleSemesterId] =
     useState("");
   const [selectedScheduleWeekKey, setSelectedScheduleWeekKey] = useState("");
@@ -678,6 +920,61 @@ export default function DashboardPage() {
     [activeTabKey],
   );
 
+  const normalizedProfileForm = useMemo(() => {
+    return {
+      fullName: normalizeTextValue(profileForm.fullName),
+      phone: normalizePhoneValue(profileForm.phone),
+      address: normalizeTextValue(profileForm.address),
+      dateOfBirth: toDateOnlyValue(profileForm.dateOfBirth),
+    };
+  }, [profileForm.address, profileForm.dateOfBirth, profileForm.fullName, profileForm.phone]);
+
+  const normalizedProfileSnapshot = useMemo(() => {
+    return {
+      fullName: normalizeTextValue(profile?.fullName),
+      phone: normalizePhoneValue(profile?.phone),
+      address: normalizeTextValue(profile?.address),
+      dateOfBirth: toDateOnlyValue(profile?.dateOfBirth),
+    };
+  }, [profile?.address, profile?.dateOfBirth, profile?.fullName, profile?.phone]);
+
+  const isProfileFormDirty = useMemo(() => {
+    return (
+      normalizedProfileForm.fullName !== normalizedProfileSnapshot.fullName ||
+      normalizedProfileForm.phone !== normalizedProfileSnapshot.phone ||
+      normalizedProfileForm.address !== normalizedProfileSnapshot.address ||
+      normalizedProfileForm.dateOfBirth !== normalizedProfileSnapshot.dateOfBirth
+    );
+  }, [normalizedProfileForm, normalizedProfileSnapshot]);
+
+  const profileCompletion = useMemo(() => {
+    const source = profile || {};
+    const profileFields = [
+      source.fullName,
+      source.email,
+      source.phone,
+      source.address,
+      source.dateOfBirth,
+      source.studentCode,
+      source.className,
+      source.majorName,
+      source.specializationName,
+      source.nationalId,
+    ];
+
+    const filledCount = profileFields.filter((value) =>
+      normalizeTextValue(String(value || "")),
+    ).length;
+    const total = profileFields.length;
+    const percentage = total > 0 ? Math.round((filledCount / total) * 100) : 0;
+
+    return {
+      filledCount,
+      total,
+      percentage,
+    };
+  }, [profile]);
+
   const selectedSection = useMemo(() => {
     return (
       courseSections.find((section) => String(section.id) === selectedSectionId) ||
@@ -693,7 +990,225 @@ export default function DashboardPage() {
     return selectedSection;
   }, [sectionDetail, selectedSection, selectedSectionId]);
 
+  const facultyFilterOptions = useMemo<FacultyFilterOption[]>(() => {
+    return facultyCatalog
+      .map((item) => ({
+        facultyId: item.id,
+        facultyName: item.facultyName || `Khoa ${item.id}`,
+        facultyCode: item.facultyCode,
+      }))
+      .sort((a, b) => a.facultyName.localeCompare(b.facultyName, "vi"));
+  }, [facultyCatalog]);
+
+  const profileMajorOptions = useMemo<MajorFilterOption[]>(() => {
+    const source = selectedProfileFacultyId
+      ? majorsBySelectedProfileFaculty
+      : majorCatalog;
+
+    return source
+      .map((item) => ({
+        majorId: item.id,
+        majorName: item.majorName || `Ngành ${item.id}`,
+        majorCode: item.majorCode,
+        facultyId: item.facultyId,
+        facultyName: item.facultyName,
+      }))
+      .sort((a, b) => a.majorName.localeCompare(b.majorName, "vi"));
+  }, [majorCatalog, majorsBySelectedProfileFaculty, selectedProfileFacultyId]);
+
+  const selectedProfileMajorResolved = useMemo(() => {
+    const majorId = parsePositiveInteger(selectedProfileMajorId);
+    if (!majorId) {
+      return null;
+    }
+
+    return (
+      profileMajorOptions.find((item) => item.majorId === majorId) ||
+      majorCatalog.find((item) => item.id === majorId) ||
+      null
+    );
+  }, [majorCatalog, profileMajorOptions, selectedProfileMajorId]);
+
+  const profileSpecializationOptions = useMemo<SpecializationFilterOption[]>(() => {
+    const source = selectedProfileMajorId
+      ? specializationsBySelectedProfileMajor
+      : specializationCatalog;
+
+    return source
+      .map((item) => ({
+        specializationId: item.id,
+        specializationName: item.specializationName || `Chuyên ngành ${item.id}`,
+        majorId: item.majorId,
+        majorName: item.majorName,
+      }))
+      .sort((a, b) =>
+        a.specializationName.localeCompare(b.specializationName, "vi"),
+      );
+  }, [
+    selectedProfileMajorId,
+    specializationCatalog,
+    specializationsBySelectedProfileMajor,
+  ]);
+
+  const selectedProfileSpecializationResolved = useMemo(() => {
+    const specializationId = parsePositiveInteger(selectedProfileSpecializationId);
+    if (!specializationId) {
+      return null;
+    }
+
+    return (
+      profileSpecializationOptions.find(
+        (item) => item.specializationId === specializationId,
+      ) ||
+      specializationCatalog.find((item) => item.id === specializationId) ||
+      null
+    );
+  }, [
+    profileSpecializationOptions,
+    selectedProfileSpecializationId,
+    specializationCatalog,
+  ]);
+
+  const profileClassOptions = useMemo<AdministrativeClassFilterOption[]>(() => {
+    const majorId = parsePositiveInteger(selectedProfileMajorId);
+    const source = majorId
+      ? administrativeClassCatalog.filter((item) => item.majorId === majorId)
+      : administrativeClassCatalog;
+
+    return source
+      .map((item) => ({
+        classId: item.id,
+        className: item.className || `Lớp ${item.id}`,
+        majorId: item.majorId,
+        majorName: item.majorName,
+        cohortName: item.cohortName,
+      }))
+      .sort((a, b) => a.className.localeCompare(b.className, "vi"));
+  }, [administrativeClassCatalog, selectedProfileMajorId]);
+
+  const selectedProfileClassResolved = useMemo(() => {
+    const classId = parsePositiveInteger(selectedProfileClassId);
+    if (!classId) {
+      return null;
+    }
+
+    return (
+      administrativeClassDetailsById[classId] ||
+      administrativeClassCatalog.find((item) => item.id === classId) ||
+      null
+    );
+  }, [administrativeClassCatalog, administrativeClassDetailsById, selectedProfileClassId]);
+
+  const selectedProfileClassIdValue = parsePositiveInteger(selectedProfileClassId);
+
+  const isLoadingSelectedProfileClassDetail =
+    selectedProfileClassIdValue !== null &&
+    loadingProfileClassDetailId === selectedProfileClassIdValue;
+
+  const selectedProfileCohortIdValue =
+    selectedProfileClassResolved?.cohortId &&
+    Number.isInteger(selectedProfileClassResolved.cohortId) &&
+    selectedProfileClassResolved.cohortId > 0
+      ? selectedProfileClassResolved.cohortId
+      : null;
+
+  const selectedProfileCohortResolved = useMemo(() => {
+    if (!selectedProfileCohortIdValue) {
+      return null;
+    }
+
+    return (
+      cohortDetailsById[selectedProfileCohortIdValue] ||
+      cohortCatalog.find((item) => item.id === selectedProfileCohortIdValue) ||
+      null
+    );
+  }, [cohortCatalog, cohortDetailsById, selectedProfileCohortIdValue]);
+
+  const isLoadingSelectedProfileCohortDetail =
+    selectedProfileCohortIdValue !== null &&
+    loadingProfileCohortDetailId === selectedProfileCohortIdValue;
+
+  const isProfileReferenceLoading =
+    isProfileMajorContextLoading ||
+    isProfileSpecializationContextLoading ||
+    isProfileClassContextLoading;
+
+  const courseMetadataById = useMemo(() => {
+    const entries = [...allCoursesCatalog, ...coursesBySelectedFaculty];
+    const byId = new Map<number, CourseResponse>();
+
+    entries.forEach((course) => {
+      if (!course.id) {
+        return;
+      }
+      byId.set(course.id, course);
+    });
+
+    return byId;
+  }, [allCoursesCatalog, coursesBySelectedFaculty]);
+
+  const courseMetadataByCode = useMemo(() => {
+    const byCode = new Map<string, CourseResponse>();
+
+    courseMetadataById.forEach((course) => {
+      const code = (course.courseCode || "").trim().toLowerCase();
+      if (!code || byCode.has(code)) {
+        return;
+      }
+      byCode.set(code, course);
+    });
+
+    return byCode;
+  }, [courseMetadataById]);
+
+  const availableCourseCatalog = useMemo(() => {
+    if (selectedFacultyId) {
+      return coursesBySelectedFaculty;
+    }
+
+    return allCoursesCatalog;
+  }, [allCoursesCatalog, coursesBySelectedFaculty, selectedFacultyId]);
+
+  const getCourseMetadataForSection = (
+    section?: CourseSectionResponse | null,
+  ): CourseResponse | null => {
+    if (!section) {
+      return null;
+    }
+
+    if (section.courseId && courseMetadataById.has(section.courseId)) {
+      return courseMetadataById.get(section.courseId) || null;
+    }
+
+    const sectionCode = (section.courseCode || "").trim().toLowerCase();
+    if (sectionCode && courseMetadataByCode.has(sectionCode)) {
+      return courseMetadataByCode.get(sectionCode) || null;
+    }
+
+    return null;
+  };
+
   const courseFilterOptions = useMemo(() => {
+    if (selectedFacultyId) {
+      return availableCourseCatalog
+        .map((course) => ({
+          courseId: course.id,
+          courseCode: course.courseCode,
+          courseName: course.courseName || course.courseCode || `Môn học ${course.id}`,
+        }))
+        .sort((a, b) => a.courseName.localeCompare(b.courseName, "vi"));
+    }
+
+    if (availableCourseCatalog.length > 0) {
+      return availableCourseCatalog
+        .map((course) => ({
+          courseId: course.id,
+          courseCode: course.courseCode,
+          courseName: course.courseName || course.courseCode || `Môn học ${course.id}`,
+        }))
+        .sort((a, b) => a.courseName.localeCompare(b.courseName, "vi"));
+    }
+
     const optionsMap = new Map<number, CourseFilterOption>();
 
     allCourseSections.forEach((section) => {
@@ -711,7 +1226,7 @@ export default function DashboardPage() {
     return Array.from(optionsMap.values()).sort((a, b) =>
       a.courseName.localeCompare(b.courseName, "vi"),
     );
-  }, [allCourseSections]);
+  }, [allCourseSections, availableCourseCatalog, selectedFacultyId]);
 
   const semesterFilterOptions = useMemo(() => {
     const optionsMap = new Map<number, SemesterFilterOption>();
@@ -751,10 +1266,52 @@ export default function DashboardPage() {
     return option?.label || null;
   }, [selectedSemesterId, semesterFilterOptions]);
 
+  const selectedSectionCourseMetadata = getCourseMetadataForSection(
+    selectedSectionDetails,
+  );
+
+  const selectedSectionCourseId = useMemo(() => {
+    if (
+      typeof selectedSectionDetails?.courseId === "number" &&
+      Number.isInteger(selectedSectionDetails.courseId) &&
+      selectedSectionDetails.courseId > 0
+    ) {
+      return selectedSectionDetails.courseId;
+    }
+
+    if (
+      typeof selectedSectionCourseMetadata?.id === "number" &&
+      Number.isInteger(selectedSectionCourseMetadata.id) &&
+      selectedSectionCourseMetadata.id > 0
+    ) {
+      return selectedSectionCourseMetadata.id;
+    }
+
+    return null;
+  }, [selectedSectionCourseMetadata, selectedSectionDetails]);
+
+  const selectedSectionCourseDetail = useMemo(() => {
+    if (!selectedSectionCourseId) {
+      return selectedSectionCourseMetadata || null;
+    }
+
+    return courseDetailsById[selectedSectionCourseId] || selectedSectionCourseMetadata || null;
+  }, [courseDetailsById, selectedSectionCourseId, selectedSectionCourseMetadata]);
+
+  const isLoadingSelectedCourseDetail =
+    selectedSectionCourseId !== null &&
+    loadingCourseDetailId === selectedSectionCourseId;
+
   const filteredSections = useMemo(() => {
     const normalizedKeyword = courseKeyword.trim().toLowerCase();
 
     return courseSections.filter((section) => {
+      const normalizedCode = (section.courseCode || "").trim().toLowerCase();
+      const courseMeta =
+        (typeof section.courseId === "number" && section.courseId > 0
+          ? courseMetadataById.get(section.courseId)
+          : undefined) ||
+        (normalizedCode ? courseMetadataByCode.get(normalizedCode) : undefined);
       const matchesKeyword =
         !normalizedKeyword ||
         [
@@ -763,6 +1320,8 @@ export default function DashboardPage() {
           getSectionDisplayName(section),
           section.sectionCode,
           section.lecturerName,
+          courseMeta?.facultyName,
+          courseMeta?.prerequisiteCourseName,
         ]
           .filter(Boolean)
           .some((value) =>
@@ -771,7 +1330,7 @@ export default function DashboardPage() {
 
       return matchesKeyword;
     });
-  }, [courseKeyword, courseSections]);
+  }, [courseKeyword, courseMetadataByCode, courseMetadataById, courseSections]);
 
   const scheduleSemesterOptions = useMemo(() => {
     const optionsMap = new Map<number, SemesterFilterOption>();
@@ -949,6 +1508,103 @@ export default function DashboardPage() {
     return buckets;
   }, [scheduleVisibleBlocks]);
 
+  const selectedScheduleBlock = useMemo(() => {
+    if (!selectedScheduleBlockKey) {
+      return null;
+    }
+
+    return (
+      scheduleVisibleBlocks.find((block) => block.key === selectedScheduleBlockKey) ||
+      null
+    );
+  }, [scheduleVisibleBlocks, selectedScheduleBlockKey]);
+
+  const selectedRecurringScheduleDetail = useMemo(() => {
+    const recurringScheduleId = selectedScheduleBlock?.recurringScheduleId;
+    if (!recurringScheduleId) {
+      return null;
+    }
+
+    return recurringScheduleDetailsById[recurringScheduleId] || null;
+  }, [recurringScheduleDetailsById, selectedScheduleBlock]);
+
+  const classroomCatalogById = useMemo(() => {
+    const byId = new Map<number, ClassroomResponse>();
+
+    classroomCatalog.forEach((classroom) => {
+      if (typeof classroom.id !== "number" || !Number.isInteger(classroom.id)) {
+        return;
+      }
+      byId.set(classroom.id, classroom);
+    });
+
+    return byId;
+  }, [classroomCatalog]);
+
+  const selectedScheduleClassroomId = useMemo(() => {
+    if (
+      typeof selectedRecurringScheduleDetail?.classroomId === "number" &&
+      Number.isInteger(selectedRecurringScheduleDetail.classroomId) &&
+      selectedRecurringScheduleDetail.classroomId > 0
+    ) {
+      return selectedRecurringScheduleDetail.classroomId;
+    }
+
+    if (
+      typeof selectedScheduleBlock?.classroomId === "number" &&
+      Number.isInteger(selectedScheduleBlock.classroomId) &&
+      selectedScheduleBlock.classroomId > 0
+    ) {
+      return selectedScheduleBlock.classroomId;
+    }
+
+    return null;
+  }, [selectedRecurringScheduleDetail, selectedScheduleBlock]);
+
+  const selectedScheduleClassroomDetail = useMemo(() => {
+    if (!selectedScheduleClassroomId) {
+      return null;
+    }
+
+    return (
+      classroomDetailsById[selectedScheduleClassroomId] ||
+      classroomCatalogById.get(selectedScheduleClassroomId) ||
+      null
+    );
+  }, [classroomCatalogById, classroomDetailsById, selectedScheduleClassroomId]);
+
+  const selectedScheduleLecturerId = useMemo(() => {
+    if (
+      typeof selectedScheduleBlock?.lecturerId === "number" &&
+      Number.isInteger(selectedScheduleBlock.lecturerId) &&
+      selectedScheduleBlock.lecturerId > 0
+    ) {
+      return selectedScheduleBlock.lecturerId;
+    }
+
+    return null;
+  }, [selectedScheduleBlock]);
+
+  const selectedScheduleLecturerDetail = useMemo(() => {
+    if (!selectedScheduleLecturerId) {
+      return null;
+    }
+
+    return lecturerDetailsById[selectedScheduleLecturerId] || null;
+  }, [lecturerDetailsById, selectedScheduleLecturerId]);
+
+  const isLoadingSelectedRecurringScheduleDetail =
+    typeof selectedScheduleBlock?.recurringScheduleId === "number" &&
+    loadingRecurringScheduleId === selectedScheduleBlock.recurringScheduleId;
+
+  const isLoadingSelectedClassroomDetail =
+    selectedScheduleClassroomId !== null &&
+    loadingClassroomDetailId === selectedScheduleClassroomId;
+
+  const isLoadingSelectedLecturerDetail =
+    selectedScheduleLecturerId !== null &&
+    loadingLecturerDetailId === selectedScheduleLecturerId;
+
   const gradeSemesterOptions = useMemo(() => {
     const optionsMap = new Map<string, { value: string; label: string }>();
 
@@ -1079,6 +1735,124 @@ export default function DashboardPage() {
     };
   }, [gradeReports]);
 
+  const attendanceStatusOptions = useMemo(() => {
+    const statusPriority: Record<string, number> = {
+      PRESENT: 1,
+      LATE: 2,
+      EXCUSED: 3,
+      ABSENT: 4,
+    };
+
+    return Array.from(
+      new Set(attendanceItems.map((item) => item.status).filter(Boolean)),
+    )
+      .map((status) => String(status))
+      .sort((first, second) => {
+        const firstPriority = statusPriority[first] ?? Number.MAX_SAFE_INTEGER;
+        const secondPriority = statusPriority[second] ?? Number.MAX_SAFE_INTEGER;
+
+        if (firstPriority === secondPriority) {
+          return first.localeCompare(second, "vi");
+        }
+
+        return firstPriority - secondPriority;
+      });
+  }, [attendanceItems]);
+
+  const filteredAttendanceItems = useMemo(() => {
+    const normalizedKeyword = attendanceKeyword.trim().toLowerCase();
+    const normalizedDateFrom = attendanceDateFrom.trim();
+    const normalizedDateTo = attendanceDateTo.trim();
+    if (
+      normalizedDateFrom !== "" &&
+      normalizedDateTo !== "" &&
+      normalizedDateFrom > normalizedDateTo
+    ) {
+      return [] as AttendanceResponse[];
+    }
+
+    return attendanceItems
+      .filter((item) => {
+        const statusMatched =
+          !attendanceStatusFilter || item.status === attendanceStatusFilter;
+        const sessionDateIso = item.sessionDate
+          ? toLocalIsoDate(parseIsoDateLocal(item.sessionDate))
+          : "";
+        const dateFromMatched =
+          !normalizedDateFrom ||
+          (sessionDateIso !== "" && sessionDateIso >= normalizedDateFrom);
+        const dateToMatched =
+          !normalizedDateTo ||
+          (sessionDateIso !== "" && sessionDateIso <= normalizedDateTo);
+        const keywordMatched =
+          !normalizedKeyword ||
+          [
+            item.status ? getAttendanceStatusLabel(item.status) : undefined,
+            item.note,
+            item.sessionDate ? formatDate(item.sessionDate) : undefined,
+            item.sessionId ? String(item.sessionId) : undefined,
+          ]
+            .filter(Boolean)
+            .some((value) =>
+              String(value).toLowerCase().includes(normalizedKeyword),
+            );
+
+        return statusMatched && dateFromMatched && dateToMatched && keywordMatched;
+      })
+      .sort((first, second) => {
+        const firstTime = first.sessionDate
+          ? parseIsoDateLocal(first.sessionDate).getTime()
+          : 0;
+        const secondTime = second.sessionDate
+          ? parseIsoDateLocal(second.sessionDate).getTime()
+          : 0;
+
+        if (firstTime === secondTime) {
+          return (second.id ?? 0) - (first.id ?? 0);
+        }
+
+        return secondTime - firstTime;
+      });
+  }, [
+    attendanceDateFrom,
+    attendanceDateTo,
+    attendanceItems,
+    attendanceKeyword,
+    attendanceStatusFilter,
+  ]);
+
+  const attendanceSummary = useMemo(() => {
+    const total = filteredAttendanceItems.length;
+    const presentCount = filteredAttendanceItems.filter(
+      (item) => item.status === "PRESENT",
+    ).length;
+    const lateCount = filteredAttendanceItems.filter(
+      (item) => item.status === "LATE",
+    ).length;
+    const excusedCount = filteredAttendanceItems.filter(
+      (item) => item.status === "EXCUSED",
+    ).length;
+    const absentCount = filteredAttendanceItems.filter(
+      (item) => item.status === "ABSENT",
+    ).length;
+    const participatedCount = presentCount + lateCount + excusedCount;
+
+    return {
+      total,
+      presentCount,
+      lateCount,
+      excusedCount,
+      absentCount,
+      participationRate:
+        total > 0 ? (participatedCount / total) * 100 : null,
+    };
+  }, [filteredAttendanceItems]);
+
+  const isAttendanceDateRangeInvalid =
+    attendanceDateFrom !== "" &&
+    attendanceDateTo !== "" &&
+    attendanceDateFrom > attendanceDateTo;
+
   const selectedGradeReport = useMemo(() => {
     if (selectedGradeReportId === null) {
       return filteredGradeReports[0] || gradeReports[0] || null;
@@ -1091,26 +1865,39 @@ export default function DashboardPage() {
     );
   }, [filteredGradeReports, gradeReports, selectedGradeReportId]);
 
-  const selectedGradeSection = useMemo(() => {
-    if (!selectedGradeReport?.sectionId) {
+  const selectedGradeReportResolved = useMemo(() => {
+    if (!selectedGradeReport) {
       return null;
     }
 
-    return gradeSectionsById[selectedGradeReport.sectionId] || null;
-  }, [gradeSectionsById, selectedGradeReport]);
+    const detail = gradeReportDetailsById[selectedGradeReport.id];
+    return detail || selectedGradeReport;
+  }, [gradeReportDetailsById, selectedGradeReport]);
+
+  const isLoadingSelectedGradeReportDetail =
+    selectedGradeReport !== null &&
+    loadingGradeReportId === selectedGradeReport.id;
+
+  const selectedGradeSection = useMemo(() => {
+    if (!selectedGradeReportResolved?.sectionId) {
+      return null;
+    }
+
+    return gradeSectionsById[selectedGradeReportResolved.sectionId] || null;
+  }, [gradeSectionsById, selectedGradeReportResolved]);
 
   const selectedGradeDetails = useMemo<GradeDetailItem[]>(() => {
-    if (!selectedGradeReport) {
+    if (!selectedGradeReportResolved) {
       return [];
     }
 
-    const details = selectedGradeReport.gradeDetails;
+    const details = selectedGradeReportResolved.gradeDetails;
     if (!Array.isArray(details)) {
       return [];
     }
 
     return details;
-  }, [selectedGradeReport]);
+  }, [selectedGradeReportResolved]);
 
   const selectedGradeCourseId = selectedGradeSection?.courseId || null;
 
@@ -1245,6 +2032,344 @@ export default function DashboardPage() {
   }, [scheduleWeekOptions, selectedScheduleWeekKey]);
 
   useEffect(() => {
+    if (!selectedScheduleBlockKey) {
+      return;
+    }
+
+    const stillVisible = scheduleVisibleBlocks.some(
+      (block) => block.key === selectedScheduleBlockKey,
+    );
+
+    if (!stillVisible) {
+      setSelectedScheduleBlockKey("");
+    }
+  }, [scheduleVisibleBlocks, selectedScheduleBlockKey]);
+
+  useEffect(() => {
+    if (activeTabKey !== "schedule") {
+      return;
+    }
+
+    const authorization = session?.authorization;
+    const recurringScheduleId = selectedScheduleBlock?.recurringScheduleId;
+
+    if (!authorization || !recurringScheduleId) {
+      return;
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(
+        recurringScheduleDetailsById,
+        recurringScheduleId,
+      )
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingRecurringScheduleId(recurringScheduleId);
+
+    const loadRecurringScheduleDetail = async () => {
+      try {
+        const detail = await getRecurringScheduleById(
+          recurringScheduleId,
+          authorization,
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        setRecurringScheduleDetailsById((current) => ({
+          ...current,
+          [recurringScheduleId]: detail,
+        }));
+      } catch {
+        if (cancelled) {
+          return;
+        }
+
+        setRecurringScheduleDetailsById((current) => ({
+          ...current,
+          [recurringScheduleId]: null,
+        }));
+      } finally {
+        if (!cancelled) {
+          setLoadingRecurringScheduleId((current) =>
+            current === recurringScheduleId ? null : current,
+          );
+        }
+      }
+    };
+
+    void loadRecurringScheduleDetail();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeTabKey,
+    recurringScheduleDetailsById,
+    selectedScheduleBlock,
+    session?.authorization,
+  ]);
+
+  useEffect(() => {
+    if (activeTabKey !== "schedule") {
+      return;
+    }
+
+    const authorization = session?.authorization;
+    if (!authorization || !selectedScheduleClassroomId) {
+      return;
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(
+        classroomDetailsById,
+        selectedScheduleClassroomId,
+      )
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingClassroomDetailId(selectedScheduleClassroomId);
+
+    const loadClassroomDetail = async () => {
+      try {
+        const detail = await getClassroomById(selectedScheduleClassroomId, authorization);
+
+        if (cancelled) {
+          return;
+        }
+
+        setClassroomDetailsById((current) => ({
+          ...current,
+          [selectedScheduleClassroomId]: detail,
+        }));
+      } catch {
+        if (cancelled) {
+          return;
+        }
+
+        setClassroomDetailsById((current) => ({
+          ...current,
+          [selectedScheduleClassroomId]: null,
+        }));
+      } finally {
+        if (!cancelled) {
+          setLoadingClassroomDetailId((current) =>
+            current === selectedScheduleClassroomId ? null : current,
+          );
+        }
+      }
+    };
+
+    void loadClassroomDetail();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeTabKey,
+    classroomDetailsById,
+    selectedScheduleClassroomId,
+    session?.authorization,
+  ]);
+
+  useEffect(() => {
+    if (activeTabKey !== "schedule") {
+      return;
+    }
+
+    const authorization = session?.authorization;
+    if (!authorization || !selectedScheduleLecturerId) {
+      return;
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(
+        lecturerDetailsById,
+        selectedScheduleLecturerId,
+      )
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingLecturerDetailId(selectedScheduleLecturerId);
+
+    const loadLecturerDetail = async () => {
+      try {
+        const detail = await getLecturerById(selectedScheduleLecturerId, authorization);
+
+        if (cancelled) {
+          return;
+        }
+
+        setLecturerDetailsById((current) => ({
+          ...current,
+          [selectedScheduleLecturerId]: detail,
+        }));
+      } catch {
+        if (cancelled) {
+          return;
+        }
+
+        setLecturerDetailsById((current) => ({
+          ...current,
+          [selectedScheduleLecturerId]: null,
+        }));
+      } finally {
+        if (!cancelled) {
+          setLoadingLecturerDetailId((current) =>
+            current === selectedScheduleLecturerId ? null : current,
+          );
+        }
+      }
+    };
+
+    void loadLecturerDetail();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeTabKey,
+    lecturerDetailsById,
+    selectedScheduleLecturerId,
+    session?.authorization,
+  ]);
+
+  useEffect(() => {
+    if (activeTabKey !== "course-registration") {
+      return;
+    }
+
+    const authorization = session?.authorization;
+    if (!authorization || !selectedSectionCourseId) {
+      return;
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(courseDetailsById, selectedSectionCourseId)
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingCourseDetailId(selectedSectionCourseId);
+
+    const loadCourseDetail = async () => {
+      try {
+        const detail = await getCourseById(selectedSectionCourseId, authorization);
+
+        if (cancelled) {
+          return;
+        }
+
+        setCourseDetailsById((current) => ({
+          ...current,
+          [selectedSectionCourseId]: detail,
+        }));
+      } catch {
+        if (cancelled) {
+          return;
+        }
+
+        setCourseDetailsById((current) => ({
+          ...current,
+          [selectedSectionCourseId]: null,
+        }));
+      } finally {
+        if (!cancelled) {
+          setLoadingCourseDetailId((current) =>
+            current === selectedSectionCourseId ? null : current,
+          );
+        }
+      }
+    };
+
+    void loadCourseDetail();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeTabKey,
+    courseDetailsById,
+    selectedSectionCourseId,
+    session?.authorization,
+  ]);
+
+  useEffect(() => {
+    if (activeTabKey !== "grades") {
+      return;
+    }
+
+    const authorization = session?.authorization;
+    const reportId = selectedGradeReport?.id;
+
+    if (!authorization || !reportId) {
+      return;
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(
+        gradeReportDetailsById,
+        reportId,
+      )
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingGradeReportId(reportId);
+
+    const loadSelectedGradeReportDetail = async () => {
+      try {
+        const detail = await getGradeReportById(reportId, authorization);
+
+        if (cancelled) {
+          return;
+        }
+
+        setGradeReportDetailsById((current) => ({
+          ...current,
+          [reportId]: detail,
+        }));
+      } catch {
+        if (cancelled) {
+          return;
+        }
+
+        setGradeReportDetailsById((current) => ({
+          ...current,
+          [reportId]: null,
+        }));
+      } finally {
+        if (!cancelled) {
+          setLoadingGradeReportId((current) =>
+            current === reportId ? null : current,
+          );
+        }
+      }
+    };
+
+    void loadSelectedGradeReportDetail();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeTabKey,
+    gradeReportDetailsById,
+    selectedGradeReport,
+    session?.authorization,
+  ]);
+
+  useEffect(() => {
     if (activeTabKey !== "grades") {
       return;
     }
@@ -1299,6 +2424,142 @@ export default function DashboardPage() {
     };
   }, [activeTabKey, gradeComponentsByCourseId, selectedGradeCourseId, session?.authorization]);
 
+  useEffect(() => {
+    if (!attendanceStatusFilter) {
+      return;
+    }
+
+    if (!attendanceStatusOptions.includes(attendanceStatusFilter)) {
+      setAttendanceStatusFilter("");
+    }
+  }, [attendanceStatusFilter, attendanceStatusOptions]);
+
+  useEffect(() => {
+    if (activeTabKey !== "profile") {
+      return;
+    }
+
+    const authorization = session?.authorization;
+    if (!authorization || !selectedProfileClassIdValue) {
+      return;
+    }
+
+    if (
+      Object.prototype.hasOwnProperty.call(
+        administrativeClassDetailsById,
+        selectedProfileClassIdValue,
+      )
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingProfileClassDetailId(selectedProfileClassIdValue);
+
+    const loadAdministrativeClassDetail = async () => {
+      try {
+        const detail = await getAdministrativeClassById(
+          selectedProfileClassIdValue,
+          authorization,
+        );
+
+        if (cancelled) {
+          return;
+        }
+
+        setAdministrativeClassDetailsById((current) => ({
+          ...current,
+          [selectedProfileClassIdValue]: detail,
+        }));
+      } catch {
+        if (cancelled) {
+          return;
+        }
+
+        setAdministrativeClassDetailsById((current) => ({
+          ...current,
+          [selectedProfileClassIdValue]: null,
+        }));
+      } finally {
+        if (!cancelled) {
+          setLoadingProfileClassDetailId((current) =>
+            current === selectedProfileClassIdValue ? null : current,
+          );
+        }
+      }
+    };
+
+    void loadAdministrativeClassDetail();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeTabKey,
+    administrativeClassDetailsById,
+    selectedProfileClassIdValue,
+    session?.authorization,
+  ]);
+
+  useEffect(() => {
+    if (activeTabKey !== "profile") {
+      return;
+    }
+
+    const authorization = session?.authorization;
+    if (!authorization || !selectedProfileCohortIdValue) {
+      return;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(cohortDetailsById, selectedProfileCohortIdValue)) {
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingProfileCohortDetailId(selectedProfileCohortIdValue);
+
+    const loadSelectedCohortDetail = async () => {
+      try {
+        const detail = await getCohortById(selectedProfileCohortIdValue, authorization);
+
+        if (cancelled) {
+          return;
+        }
+
+        setCohortDetailsById((current) => ({
+          ...current,
+          [selectedProfileCohortIdValue]: detail,
+        }));
+      } catch {
+        if (cancelled) {
+          return;
+        }
+
+        setCohortDetailsById((current) => ({
+          ...current,
+          [selectedProfileCohortIdValue]: null,
+        }));
+      } finally {
+        if (!cancelled) {
+          setLoadingProfileCohortDetailId((current) =>
+            current === selectedProfileCohortIdValue ? null : current,
+          );
+        }
+      }
+    };
+
+    void loadSelectedCohortDetail();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeTabKey,
+    cohortDetailsById,
+    selectedProfileCohortIdValue,
+    session?.authorization,
+  ]);
+
   const requireSession = (): string | null => {
     if (!session?.authorization) {
       setTabError("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
@@ -1332,11 +2593,410 @@ export default function DashboardPage() {
   };
 
   const buildFallbackProfile = (): ProfileResponse => {
+    const parsedStudentId = parsePositiveInteger(studentIdInput);
+
     return {
+      id: parsedStudentId || undefined,
       username: session?.username,
       role: session?.role,
       studentCode: studentIdInput || undefined,
     };
+  };
+
+  const mergeProfileData = (
+    preferred: ProfileResponse,
+    fallback: ProfileResponse,
+  ): ProfileResponse => {
+    const pickValue = (first?: string, second?: string): string | undefined => {
+      if (normalizeTextValue(first)) {
+        return first;
+      }
+
+      if (normalizeTextValue(second)) {
+        return second;
+      }
+
+      return undefined;
+    };
+
+    return {
+      id:
+        preferred.id && Number.isInteger(preferred.id)
+          ? preferred.id
+          : fallback.id,
+      username: pickValue(preferred.username, fallback.username),
+      role: pickValue(preferred.role, fallback.role),
+      fullName: pickValue(preferred.fullName, fallback.fullName),
+      email: pickValue(preferred.email, fallback.email),
+      phone: pickValue(preferred.phone, fallback.phone),
+      nationalId: pickValue(preferred.nationalId, fallback.nationalId),
+      address: pickValue(preferred.address, fallback.address),
+      dateOfBirth: pickValue(preferred.dateOfBirth, fallback.dateOfBirth),
+      studentCode: pickValue(preferred.studentCode, fallback.studentCode),
+      classId:
+        preferred.classId && Number.isInteger(preferred.classId)
+          ? preferred.classId
+          : fallback.classId,
+      className: pickValue(preferred.className, fallback.className),
+      facultyId:
+        preferred.facultyId && Number.isInteger(preferred.facultyId)
+          ? preferred.facultyId
+          : fallback.facultyId,
+      facultyName: pickValue(preferred.facultyName, fallback.facultyName),
+      majorId:
+        preferred.majorId && Number.isInteger(preferred.majorId)
+          ? preferred.majorId
+          : fallback.majorId,
+      majorName: pickValue(preferred.majorName, fallback.majorName),
+      specializationId:
+        preferred.specializationId && Number.isInteger(preferred.specializationId)
+          ? preferred.specializationId
+          : fallback.specializationId,
+      specializationName: pickValue(
+        preferred.specializationName,
+        fallback.specializationName,
+      ),
+    };
+  };
+
+  const hasProfileDataGap = (data: ProfileResponse): boolean => {
+    const requiredFields = [
+      data.fullName,
+      data.email,
+      data.phone,
+      data.address,
+      data.dateOfBirth,
+      data.studentCode,
+      data.className,
+      data.majorName,
+      data.specializationName,
+    ];
+
+    return requiredFields.some((value) => !normalizeTextValue(value));
+  };
+
+  const syncProfileMajorReferenceContext = async (
+    profileData: ProfileResponse,
+    authorization: string,
+  ) => {
+    setIsProfileMajorContextLoading(true);
+    setIsProfileSpecializationContextLoading(true);
+    setIsProfileClassContextLoading(true);
+
+    try {
+      const [faculties, majors, specializations, administrativeClasses, cohorts] =
+        await Promise.all([
+          getFaculties(authorization).catch(() => []),
+          getMajors(authorization).catch(() => []),
+          getSpecializations(authorization).catch(() => []),
+          getAdministrativeClasses(authorization).catch(() => []),
+          getCohorts(authorization).catch(() => []),
+        ]);
+
+      let resolvedFacultyCatalog = faculties;
+      let resolvedMajorCatalog = majors;
+
+      setSpecializationCatalog(specializations);
+      setAdministrativeClassCatalog(administrativeClasses);
+      setCohortCatalog(cohorts);
+
+      const preferredMajorId =
+        typeof profileData.majorId === "number" &&
+        Number.isInteger(profileData.majorId) &&
+        profileData.majorId > 0
+          ? profileData.majorId
+          : null;
+      const preferredSpecializationId =
+        typeof profileData.specializationId === "number" &&
+        Number.isInteger(profileData.specializationId) &&
+        profileData.specializationId > 0
+          ? profileData.specializationId
+          : null;
+      const preferredClassId =
+        typeof profileData.classId === "number" &&
+        Number.isInteger(profileData.classId) &&
+        profileData.classId > 0
+          ? profileData.classId
+          : null;
+
+      const normalizedMajorName = normalizeTextValue(profileData.majorName).toLowerCase();
+      const normalizedSpecializationName = normalizeTextValue(
+        profileData.specializationName,
+      ).toLowerCase();
+      const normalizedClassName = normalizeTextValue(profileData.className).toLowerCase();
+
+      const matchedSpecializationById =
+        preferredSpecializationId !== null
+          ? specializations.find((item) => item.id === preferredSpecializationId) || null
+          : null;
+      const matchedSpecializationByNameAll =
+        normalizedSpecializationName !== ""
+          ? specializations.find(
+              (item) =>
+                normalizeTextValue(item.specializationName).toLowerCase() ===
+                normalizedSpecializationName,
+            ) ||
+            specializations.find((item) => {
+              const specializationName = normalizeTextValue(
+                item.specializationName,
+              ).toLowerCase();
+              return (
+                specializationName !== "" &&
+                (specializationName.includes(normalizedSpecializationName) ||
+                  normalizedSpecializationName.includes(specializationName))
+              );
+            }) ||
+            null
+          : null;
+      const matchedClassById =
+        preferredClassId !== null
+          ? administrativeClasses.find((item) => item.id === preferredClassId) || null
+          : null;
+      const matchedClassByNameAll =
+        normalizedClassName !== ""
+          ? administrativeClasses.find(
+              (item) =>
+                normalizeTextValue(item.className).toLowerCase() === normalizedClassName,
+            ) ||
+            administrativeClasses.find((item) => {
+              const className = normalizeTextValue(item.className).toLowerCase();
+              return (
+                className !== "" &&
+                (className.includes(normalizedClassName) ||
+                  normalizedClassName.includes(className))
+              );
+            }) ||
+            null
+          : null;
+
+      let matchedMajor =
+        (preferredMajorId !== null
+          ? resolvedMajorCatalog.find((major) => major.id === preferredMajorId) || null
+          : null) ||
+        (matchedSpecializationById?.majorId
+          ? resolvedMajorCatalog.find(
+              (major) => major.id === matchedSpecializationById.majorId,
+            ) || null
+          : null);
+
+      if (!matchedMajor && normalizedMajorName) {
+        matchedMajor =
+          resolvedMajorCatalog.find(
+            (major) =>
+              normalizeTextValue(major.majorName).toLowerCase() === normalizedMajorName,
+          ) ||
+          resolvedMajorCatalog.find((major) => {
+            const majorName = normalizeTextValue(major.majorName).toLowerCase();
+            return (
+              majorName !== "" &&
+              (majorName.includes(normalizedMajorName) ||
+                normalizedMajorName.includes(majorName))
+            );
+          }) ||
+          null;
+      }
+
+      if (!matchedMajor && normalizedSpecializationName) {
+        if (matchedSpecializationByNameAll?.majorId) {
+          matchedMajor =
+            resolvedMajorCatalog.find(
+              (major) => major.id === matchedSpecializationByNameAll.majorId,
+            ) || null;
+        }
+      }
+
+      if (!matchedMajor && preferredMajorId !== null) {
+        const majorFromDetail = await getMajorById(
+          preferredMajorId,
+          authorization,
+        ).catch(() => null);
+
+        if (majorFromDetail?.id && Number.isInteger(majorFromDetail.id) && majorFromDetail.id > 0) {
+          matchedMajor = majorFromDetail;
+
+          if (!resolvedMajorCatalog.some((item) => item.id === majorFromDetail.id)) {
+            resolvedMajorCatalog = [...resolvedMajorCatalog, majorFromDetail];
+          }
+        }
+      }
+
+      if (
+        matchedMajor?.facultyId &&
+        Number.isInteger(matchedMajor.facultyId) &&
+        matchedMajor.facultyId > 0 &&
+        !resolvedFacultyCatalog.some((item) => item.id === matchedMajor?.facultyId)
+      ) {
+        const facultyFromDetail = await getFacultyById(
+          matchedMajor.facultyId,
+          authorization,
+        ).catch(() => null);
+
+        if (
+          facultyFromDetail?.id &&
+          Number.isInteger(facultyFromDetail.id) &&
+          facultyFromDetail.id > 0
+        ) {
+          resolvedFacultyCatalog = [...resolvedFacultyCatalog, facultyFromDetail];
+        }
+      }
+
+      setFacultyCatalog(resolvedFacultyCatalog);
+      setMajorCatalog(resolvedMajorCatalog);
+
+      if (
+        matchedMajor &&
+        typeof matchedMajor.facultyId === "number" &&
+        Number.isInteger(matchedMajor.facultyId) &&
+        matchedMajor.facultyId > 0
+      ) {
+        const majorsInFaculty = await getMajorsByFaculty(
+          matchedMajor.facultyId,
+          authorization,
+        ).catch(() =>
+          resolvedMajorCatalog.filter(
+            (item) => item.facultyId === matchedMajor.facultyId,
+          ),
+        );
+
+        const normalizedMajorsInFaculty = majorsInFaculty.some(
+          (item) => item.id === matchedMajor.id,
+        )
+          ? majorsInFaculty
+          : [...majorsInFaculty, matchedMajor];
+
+        setMajorsBySelectedProfileFaculty(normalizedMajorsInFaculty);
+        setSelectedProfileFacultyId(String(matchedMajor.facultyId));
+
+        const matchedMajorByName = normalizedMajorsInFaculty.find(
+          (item) =>
+            normalizeTextValue(item.majorName).toLowerCase() === normalizedMajorName,
+        );
+        const resolvedMajorId = normalizedMajorsInFaculty.some(
+          (item) => item.id === matchedMajor.id,
+        )
+          ? matchedMajor.id
+          : matchedMajorByName?.id;
+
+        setSelectedProfileMajorId(
+          resolvedMajorId && Number.isInteger(resolvedMajorId) && resolvedMajorId > 0
+            ? String(resolvedMajorId)
+            : "",
+        );
+
+        if (resolvedMajorId && Number.isInteger(resolvedMajorId) && resolvedMajorId > 0) {
+          const specializationsInMajor = await getSpecializationsByMajor(
+            resolvedMajorId,
+            authorization,
+          ).catch(() =>
+            specializations.filter((item) => item.majorId === resolvedMajorId),
+          );
+          const classesInMajor = administrativeClasses.filter(
+            (item) => item.majorId === resolvedMajorId,
+          );
+
+          setSpecializationsBySelectedProfileMajor(specializationsInMajor);
+
+          const matchedSpecialization =
+            (preferredSpecializationId !== null
+              ? specializationsInMajor.find(
+                  (item) => item.id === preferredSpecializationId,
+                ) || null
+              : null) ||
+            specializationsInMajor.find(
+              (item) =>
+                normalizeTextValue(item.specializationName).toLowerCase() ===
+                normalizedSpecializationName,
+            ) ||
+            specializationsInMajor.find((item) => {
+              const specializationName = normalizeTextValue(
+                item.specializationName,
+              ).toLowerCase();
+              return (
+                normalizedSpecializationName !== "" &&
+                specializationName !== "" &&
+                (specializationName.includes(normalizedSpecializationName) ||
+                  normalizedSpecializationName.includes(specializationName))
+              );
+            }) ||
+            null;
+
+          setSelectedProfileSpecializationId(
+            matchedSpecialization?.id &&
+              Number.isInteger(matchedSpecialization.id) &&
+              matchedSpecialization.id > 0
+              ? String(matchedSpecialization.id)
+              : "",
+          );
+
+          const matchedClass =
+            (preferredClassId !== null
+              ? classesInMajor.find((item) => item.id === preferredClassId) || null
+              : null) ||
+            classesInMajor.find(
+              (item) =>
+                normalizeTextValue(item.className).toLowerCase() === normalizedClassName,
+            ) ||
+            classesInMajor.find((item) => {
+              const className = normalizeTextValue(item.className).toLowerCase();
+              return (
+                normalizedClassName !== "" &&
+                className !== "" &&
+                (className.includes(normalizedClassName) ||
+                  normalizedClassName.includes(className))
+              );
+            }) ||
+            null;
+
+          setSelectedProfileClassId(
+            matchedClass?.id && Number.isInteger(matchedClass.id) && matchedClass.id > 0
+              ? String(matchedClass.id)
+              : "",
+          );
+          return;
+        }
+      }
+
+      setMajorsBySelectedProfileFaculty([]);
+      setSelectedProfileFacultyId("");
+      setSelectedProfileMajorId(
+        matchedMajor?.id &&
+          Number.isInteger(matchedMajor.id) &&
+          matchedMajor.id > 0
+          ? String(matchedMajor.id)
+          : "",
+      );
+      setSpecializationsBySelectedProfileMajor([]);
+      const resolvedFallbackSpecializationId =
+        matchedSpecializationById?.id || matchedSpecializationByNameAll?.id;
+      setSelectedProfileSpecializationId(
+        resolvedFallbackSpecializationId &&
+          Number.isInteger(resolvedFallbackSpecializationId) &&
+          resolvedFallbackSpecializationId > 0
+          ? String(resolvedFallbackSpecializationId)
+          : "",
+      );
+      const resolvedFallbackClassId = matchedClassById?.id || matchedClassByNameAll?.id;
+      setSelectedProfileClassId(
+        resolvedFallbackClassId &&
+          Number.isInteger(resolvedFallbackClassId) &&
+          resolvedFallbackClassId > 0
+          ? String(resolvedFallbackClassId)
+          : "",
+      );
+    } finally {
+      setIsProfileMajorContextLoading(false);
+      setIsProfileSpecializationContextLoading(false);
+      setIsProfileClassContextLoading(false);
+    }
+  };
+
+  const hydrateProfileForm = (data: ProfileResponse) => {
+    setProfileForm({
+      fullName: data.fullName || "",
+      phone: data.phone || "",
+      address: data.address || "",
+      dateOfBirth: toDateOnlyValue(data.dateOfBirth),
+    });
   };
 
   const handleLoadProfile = async () => {
@@ -1345,34 +3005,79 @@ export default function DashboardPage() {
       return;
     }
 
+    const studentId = parsePositiveInteger(studentIdInput);
+
     setIsWorking(true);
     setTabError("");
     setTabMessage("");
+    setProfileFormError("");
 
     try {
-      const data = await getMyProfile(authorization);
-      setProfile(data);
-      setProfileForm({
-        fullName: data.fullName || "",
-        phone: data.phone || "",
-        address: data.address || "",
-        dateOfBirth: data.dateOfBirth || "",
-      });
-      setTabMessage("Đã tải thông tin hồ sơ.");
+      const profileFromMe = await getMyProfile(authorization);
+      let resolvedProfile = profileFromMe;
+      let usedStudentFallback = false;
+      const hasGapFromProfileMe = hasProfileDataGap(profileFromMe);
+
+      if (studentId && hasGapFromProfileMe) {
+        try {
+          const profileFromStudent = await getStudentById(studentId, authorization);
+          resolvedProfile = mergeProfileData(profileFromMe, profileFromStudent);
+          usedStudentFallback = true;
+        } catch {
+          usedStudentFallback = false;
+        }
+      }
+
+      setProfile(resolvedProfile);
+      hydrateProfileForm(resolvedProfile);
+      await syncProfileMajorReferenceContext(resolvedProfile, authorization);
+      setProfileLastLoadedAt(new Date().toISOString());
+      setTabMessage(
+        usedStudentFallback
+          ? "Đã tải hồ sơ và bổ sung thêm dữ liệu từ hồ sơ sinh viên."
+          : hasGapFromProfileMe
+            ? "Đã tải hồ sơ. Một số trường vẫn chưa có dữ liệu trên hệ thống."
+            : "Đã tải thông tin hồ sơ.",
+      );
     } catch (error) {
       const errorMessage = toErrorMessage(error);
-      if (
-        errorMessage.includes("[API 403]") ||
-        errorMessage.includes("[API 404]")
-      ) {
+
+      if (studentId) {
+        try {
+          const profileFromStudent = await getStudentById(studentId, authorization);
+          const resolvedProfile = mergeProfileData(
+            profileFromStudent,
+            buildFallbackProfile(),
+          );
+          setProfile(resolvedProfile);
+          hydrateProfileForm(resolvedProfile);
+          await syncProfileMajorReferenceContext(resolvedProfile, authorization);
+          setProfileLastLoadedAt(new Date().toISOString());
+          setTabMessage(
+            isForbiddenOrNotFoundError(errorMessage)
+              ? "Không tải được hồ sơ đầy đủ. Đã dùng dữ liệu hồ sơ sinh viên để hiển thị."
+              : "Đã dùng nguồn dữ liệu dự phòng để hiển thị hồ sơ.",
+          );
+          return;
+        } catch (fallbackError) {
+          const fallbackErrorMessage = toErrorMessage(fallbackError);
+          const bothErrorsAreForbiddenOrNotFound =
+            isForbiddenOrNotFoundError(errorMessage) &&
+            isForbiddenOrNotFoundError(fallbackErrorMessage);
+
+          if (!bothErrorsAreForbiddenOrNotFound) {
+            setTabError(fallbackErrorMessage);
+            return;
+          }
+        }
+      }
+
+      if (isForbiddenOrNotFoundError(errorMessage)) {
         const fallbackProfile = buildFallbackProfile();
         setProfile(fallbackProfile);
-        setProfileForm({
-          fullName: fallbackProfile.fullName || "",
-          phone: fallbackProfile.phone || "",
-          address: fallbackProfile.address || "",
-          dateOfBirth: fallbackProfile.dateOfBirth || "",
-        });
+        hydrateProfileForm(fallbackProfile);
+        await syncProfileMajorReferenceContext(fallbackProfile, authorization);
+        setProfileLastLoadedAt(new Date().toISOString());
         setTabMessage(
           "Tài khoản hiện tại chưa có dữ liệu hồ sơ đầy đủ. Đang hiển thị thông tin cơ bản.",
         );
@@ -1385,6 +3090,127 @@ export default function DashboardPage() {
     }
   };
 
+  const handleProfileFacultyReferenceChange = async (nextFacultyId: string) => {
+    setSelectedProfileFacultyId(nextFacultyId);
+    setSelectedProfileMajorId("");
+    setSelectedProfileSpecializationId("");
+    setSelectedProfileClassId("");
+    setSpecializationsBySelectedProfileMajor([]);
+
+    const authorization = session?.authorization;
+    const facultyId = parsePositiveInteger(nextFacultyId);
+
+    if (!authorization || !facultyId) {
+      setMajorsBySelectedProfileFaculty([]);
+      return;
+    }
+
+    setIsProfileMajorContextLoading(true);
+    setTabError("");
+
+    try {
+      const majors = await getMajorsByFaculty(facultyId, authorization);
+      setMajorsBySelectedProfileFaculty(majors);
+    } catch (error) {
+      setMajorsBySelectedProfileFaculty([]);
+      setTabError(toErrorMessage(error));
+    } finally {
+      setIsProfileMajorContextLoading(false);
+    }
+  };
+
+  const handleProfileMajorReferenceChange = async (nextMajorId: string) => {
+    setSelectedProfileMajorId(nextMajorId);
+    setSelectedProfileSpecializationId("");
+    setSelectedProfileClassId("");
+
+    const authorization = session?.authorization;
+    const majorId = parsePositiveInteger(nextMajorId);
+
+    if (!authorization || !majorId) {
+      setSpecializationsBySelectedProfileMajor([]);
+      return;
+    }
+
+    setIsProfileSpecializationContextLoading(true);
+    setTabError("");
+
+    try {
+      const specializations = await getSpecializationsByMajor(majorId, authorization);
+      setSpecializationsBySelectedProfileMajor(specializations);
+    } catch (error) {
+      setSpecializationsBySelectedProfileMajor([]);
+      setTabError(toErrorMessage(error));
+    } finally {
+      setIsProfileSpecializationContextLoading(false);
+    }
+  };
+
+  const handleProfileClassReferenceChange = (nextClassId: string) => {
+    setSelectedProfileClassId(nextClassId);
+  };
+
+  const handleRefreshSelectedProfileClassDetail = async () => {
+    const authorization = requireSession();
+    if (!authorization || !selectedProfileClassIdValue) {
+      return;
+    }
+
+    setLoadingProfileClassDetailId(selectedProfileClassIdValue);
+    setTabError("");
+
+    try {
+      const detail = await getAdministrativeClassById(
+        selectedProfileClassIdValue,
+        authorization,
+      );
+      setAdministrativeClassDetailsById((current) => ({
+        ...current,
+        [selectedProfileClassIdValue]: detail,
+      }));
+      setTabMessage("Đã làm mới chi tiết lớp hành chính.");
+    } catch (error) {
+      setAdministrativeClassDetailsById((current) => ({
+        ...current,
+        [selectedProfileClassIdValue]: null,
+      }));
+      setTabError(toErrorMessage(error));
+    } finally {
+      setLoadingProfileClassDetailId((current) =>
+        current === selectedProfileClassIdValue ? null : current,
+      );
+    }
+  };
+
+  const handleRefreshSelectedProfileCohortDetail = async () => {
+    const authorization = requireSession();
+    if (!authorization || !selectedProfileCohortIdValue) {
+      return;
+    }
+
+    setLoadingProfileCohortDetailId(selectedProfileCohortIdValue);
+    setTabError("");
+
+    try {
+      const detail = await getCohortById(selectedProfileCohortIdValue, authorization);
+      setCohortDetailsById((current) => ({
+        ...current,
+        [selectedProfileCohortIdValue]: detail,
+      }));
+      setTabMessage("Đã làm mới thông tin niên khóa.");
+    } catch (error) {
+      setCohortDetailsById((current) => ({
+        ...current,
+        [selectedProfileCohortIdValue]: null,
+      }));
+      setTabError(toErrorMessage(error));
+    } finally {
+      setLoadingProfileCohortDetailId((current) =>
+        current === selectedProfileCohortIdValue ? null : current,
+      );
+    }
+  };
+
   const handleSaveProfile = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -1393,20 +3219,85 @@ export default function DashboardPage() {
       return;
     }
 
+    setProfileFormError("");
+
+    const normalizedFullName = normalizeTextValue(profileForm.fullName);
+    const normalizedPhone = normalizePhoneValue(profileForm.phone);
+    const normalizedAddress = normalizeTextValue(profileForm.address);
+    const normalizedDateOfBirth = toDateOnlyValue(profileForm.dateOfBirth);
+
+    if (!normalizedFullName) {
+      setProfileFormError("Họ và tên không được để trống.");
+      return;
+    }
+
+    if (normalizedFullName.length < 2) {
+      setProfileFormError("Họ và tên cần tối thiểu 2 ký tự.");
+      return;
+    }
+
+    if (normalizedPhone && (normalizedPhone.length < 9 || normalizedPhone.length > 15)) {
+      setProfileFormError("Số điện thoại không hợp lệ. Vui lòng kiểm tra lại.");
+      return;
+    }
+
+    if (normalizedDateOfBirth) {
+      const birthDate = parseIsoDateLocal(normalizedDateOfBirth);
+      const today = new Date();
+      const todayOnly = new Date(
+        today.getFullYear(),
+        today.getMonth(),
+        today.getDate(),
+      );
+
+      if (birthDate.getTime() > todayOnly.getTime()) {
+        setProfileFormError("Ngày sinh không thể lớn hơn ngày hiện tại.");
+        return;
+      }
+
+      let age = todayOnly.getFullYear() - birthDate.getFullYear();
+      const monthDelta = todayOnly.getMonth() - birthDate.getMonth();
+      if (
+        monthDelta < 0 ||
+        (monthDelta === 0 && todayOnly.getDate() < birthDate.getDate())
+      ) {
+        age -= 1;
+      }
+
+      if (age < 14) {
+        setProfileFormError("Ngày sinh chưa hợp lệ với hồ sơ sinh viên (tối thiểu 14 tuổi).");
+        return;
+      }
+    }
+
+    if (!isProfileFormDirty) {
+      setTabMessage("Không có thay đổi mới để cập nhật hồ sơ.");
+      return;
+    }
+
     await runAction(async () => {
       const data = await updateMyProfile(
         {
-          fullName: profileForm.fullName.trim(),
-          phone: profileForm.phone.trim() || undefined,
-          address: profileForm.address.trim() || undefined,
-          dateOfBirth: profileForm.dateOfBirth || undefined,
+          fullName: normalizedFullName,
+          phone: normalizedPhone || undefined,
+          address: normalizedAddress || undefined,
+          dateOfBirth: normalizedDateOfBirth || undefined,
         },
         authorization,
       );
       setProfile(data);
+      hydrateProfileForm(data);
+      await syncProfileMajorReferenceContext(data, authorization);
+      setProfileLastLoadedAt(new Date().toISOString());
       setTabMessage("Cập nhật hồ sơ thành công.");
       toast.success("Cập nhật hồ sơ thành công.", "Thành công");
     });
+  };
+
+  const handleResetProfileForm = () => {
+    hydrateProfileForm(profile || {});
+    setProfileFormError("");
+    setTabMessage("Đã hoàn tác các thay đổi chưa lưu.");
   };
 
   const handleLoadGrades = async () => {
@@ -1421,6 +3312,8 @@ export default function DashboardPage() {
       const data = await getMyGradeReports(studentId, authorization);
       setGradeReports(data);
       setSelectedGradeReportId(data[0]?.id ?? null);
+      setGradeReportDetailsById({});
+      setLoadingGradeReportId(null);
       setGradeComponentsByCourseId({});
       setLoadingGradeComponentCourseId(null);
 
@@ -1467,6 +3360,38 @@ export default function DashboardPage() {
     });
   };
 
+  const handleRefreshSelectedGradeDetail = async () => {
+    const authorization = requireSession();
+    const reportId = selectedGradeReport?.id;
+
+    if (!authorization || !reportId) {
+      return;
+    }
+
+    setLoadingGradeReportId(reportId);
+    setTabError("");
+
+    try {
+      const detail = await getGradeReportById(reportId, authorization);
+
+      setGradeReportDetailsById((current) => ({
+        ...current,
+        [reportId]: detail,
+      }));
+      setTabMessage("Đã làm mới chi tiết điểm môn học.");
+    } catch (error) {
+      setGradeReportDetailsById((current) => ({
+        ...current,
+        [reportId]: null,
+      }));
+      setTabError(toErrorMessage(error));
+    } finally {
+      setLoadingGradeReportId((current) =>
+        current === reportId ? null : current,
+      );
+    }
+  };
+
   const handleLoadAttendance = async () => {
     const authorization = requireSession();
     const studentId = getStudentIdValue();
@@ -1495,7 +3420,11 @@ export default function DashboardPage() {
     setTabMessage("");
 
     try {
-      const reports = await getMyGradeReports(studentId, authorization);
+      const [reports, classrooms] = await Promise.all([
+        getMyGradeReports(studentId, authorization),
+        getClassrooms(authorization).catch(() => []),
+      ]);
+      setClassroomCatalog(classrooms);
       const reportSectionIds = reports
         .map((item) => item.sectionId)
         .filter(
@@ -1565,6 +3494,9 @@ export default function DashboardPage() {
                   nextBlocks.push({
                     key: `session-${session.id || `${section.id}-${schedule.id || "x"}-${session.sessionDate || ""}-${parsedStart}-${parsedEnd}`}`,
                     sectionId: section.id,
+                    recurringScheduleId: schedule.id,
+                    classroomId: session.classroomId || schedule.classroomId,
+                    lecturerId: section.lecturerId,
                     courseName: getCourseDisplayName(section),
                     courseCode: section.courseCode,
                     sectionCode: section.sectionCode,
@@ -1595,6 +3527,9 @@ export default function DashboardPage() {
               nextBlocks.push({
                 key: `template-${section.id}-${schedule.id || `${dayIndex}-${parsedStart}-${parsedEnd}`}`,
                 sectionId: section.id,
+                recurringScheduleId: schedule.id,
+                classroomId: schedule.classroomId,
+                lecturerId: section.lecturerId,
                 courseName: getCourseDisplayName(section),
                 courseCode: section.courseCode,
                 sectionCode: section.sectionCode,
@@ -1647,6 +3582,131 @@ export default function DashboardPage() {
     setSelectedScheduleWeekKey(toLocalIsoDate(nextWeekStart));
   };
 
+  const handleRefreshSelectedRecurringScheduleDetail = async () => {
+    const authorization = requireSession();
+    const recurringScheduleId = selectedScheduleBlock?.recurringScheduleId;
+
+    if (!authorization || !recurringScheduleId) {
+      return;
+    }
+
+    setLoadingRecurringScheduleId(recurringScheduleId);
+    setTabError("");
+
+    try {
+      const detail = await getRecurringScheduleById(
+        recurringScheduleId,
+        authorization,
+      );
+
+      setRecurringScheduleDetailsById((current) => ({
+        ...current,
+        [recurringScheduleId]: detail,
+      }));
+      setTabMessage("Đã làm mới chi tiết lịch định kỳ.");
+    } catch (error) {
+      setRecurringScheduleDetailsById((current) => ({
+        ...current,
+        [recurringScheduleId]: null,
+      }));
+      setTabError(toErrorMessage(error));
+    } finally {
+      setLoadingRecurringScheduleId((current) =>
+        current === recurringScheduleId ? null : current,
+      );
+    }
+  };
+
+  const handleRefreshSelectedClassroomDetail = async () => {
+    const authorization = requireSession();
+    if (!authorization || !selectedScheduleClassroomId) {
+      return;
+    }
+
+    setLoadingClassroomDetailId(selectedScheduleClassroomId);
+    setTabError("");
+
+    try {
+      const detail = await getClassroomById(selectedScheduleClassroomId, authorization);
+
+      setClassroomDetailsById((current) => ({
+        ...current,
+        [selectedScheduleClassroomId]: detail,
+      }));
+      setTabMessage("Đã làm mới chi tiết phòng học.");
+    } catch (error) {
+      setClassroomDetailsById((current) => ({
+        ...current,
+        [selectedScheduleClassroomId]: null,
+      }));
+      setTabError(toErrorMessage(error));
+    } finally {
+      setLoadingClassroomDetailId((current) =>
+        current === selectedScheduleClassroomId ? null : current,
+      );
+    }
+  };
+
+  const handleRefreshSelectedLecturerDetail = async () => {
+    const authorization = requireSession();
+    if (!authorization || !selectedScheduleLecturerId) {
+      return;
+    }
+
+    setLoadingLecturerDetailId(selectedScheduleLecturerId);
+    setTabError("");
+
+    try {
+      const detail = await getLecturerById(selectedScheduleLecturerId, authorization);
+
+      setLecturerDetailsById((current) => ({
+        ...current,
+        [selectedScheduleLecturerId]: detail,
+      }));
+      setTabMessage("Đã làm mới chi tiết giảng viên.");
+    } catch (error) {
+      setLecturerDetailsById((current) => ({
+        ...current,
+        [selectedScheduleLecturerId]: null,
+      }));
+      setTabError(toErrorMessage(error));
+    } finally {
+      setLoadingLecturerDetailId((current) =>
+        current === selectedScheduleLecturerId ? null : current,
+      );
+    }
+  };
+
+  const handleRefreshSelectedCourseDetail = async () => {
+    const authorization = requireSession();
+    if (!authorization || !selectedSectionCourseId) {
+      return;
+    }
+
+    setLoadingCourseDetailId(selectedSectionCourseId);
+    setTabError("");
+
+    try {
+      const detail = await getCourseById(selectedSectionCourseId, authorization);
+
+      setCourseDetailsById((current) => ({
+        ...current,
+        [selectedSectionCourseId]: detail,
+      }));
+      setTabMessage("Đã làm mới thông tin chi tiết môn học.");
+    } catch (error) {
+      setCourseDetailsById((current) => ({
+        ...current,
+        [selectedSectionCourseId]: null,
+      }));
+      setTabError(toErrorMessage(error));
+    } finally {
+      setLoadingCourseDetailId((current) =>
+        current === selectedSectionCourseId ? null : current,
+      );
+    }
+  };
+
   const syncSelectedSection = (nextSections: CourseSectionResponse[]) => {
     setSelectedSectionId((currentSectionId) => {
       if (
@@ -1694,6 +3754,7 @@ export default function DashboardPage() {
   const handleLoadRegistrationSections = async (
     courseIdValue = selectedCourseId,
     semesterIdValue = selectedSemesterId,
+    facultyIdValue = selectedFacultyId,
   ) => {
     const authorization = requireSession();
     if (!authorization) {
@@ -1702,32 +3763,110 @@ export default function DashboardPage() {
 
     await runAction(async () => {
       setRegistrationNotice(null);
-      const allSections = await getCourseSections(authorization);
+      const [allSections, faculties, allCourses] = await Promise.all([
+        getCourseSections(authorization),
+        getFaculties(authorization).catch(() => []),
+        getCourses(authorization).catch(() => []),
+      ]);
+
       setAllCourseSections(allSections);
+      setFacultyCatalog(faculties);
+      setAllCoursesCatalog(allCourses);
+
+      const facultyId = parsePositiveInteger(facultyIdValue);
+      let coursesInSelectedFaculty: CourseResponse[] = [];
+
+      if (facultyId) {
+        coursesInSelectedFaculty = await getCoursesByFaculty(
+          facultyId,
+          authorization,
+        ).catch(() =>
+          allCourses.filter((course) => course.facultyId === facultyId),
+        );
+      }
+
+      setCoursesBySelectedFaculty(coursesInSelectedFaculty);
+
+      let resolvedCourseIdValue = courseIdValue;
+      if (resolvedCourseIdValue) {
+        const candidateCourses = facultyId
+          ? coursesInSelectedFaculty
+          : allCourses;
+
+        const matched = candidateCourses.some(
+          (course) => String(course.id) === resolvedCourseIdValue,
+        );
+
+        if (!matched) {
+          resolvedCourseIdValue = "";
+          setSelectedCourseId("");
+        }
+      }
 
       const filteredByBackend = await resolveRegistrationSectionsByFilters(
         authorization,
-        courseIdValue,
+        resolvedCourseIdValue,
         semesterIdValue,
         allSections,
       );
 
-      setCourseSections(filteredByBackend);
-      syncSelectedSection(filteredByBackend);
+      let filteredSectionsByScope = filteredByBackend;
+
+      if (facultyId) {
+        const allowedCourseIds = new Set(
+          coursesInSelectedFaculty
+            .map((course) => course.id)
+            .filter((value): value is number => Number.isInteger(value) && value > 0),
+        );
+        const allowedCourseCodes = new Set(
+          coursesInSelectedFaculty
+            .map((course) => (course.courseCode || "").trim().toLowerCase())
+            .filter(Boolean),
+        );
+
+        filteredSectionsByScope = filteredByBackend.filter((section) => {
+          if (
+            typeof section.courseId === "number" &&
+            allowedCourseIds.has(section.courseId)
+          ) {
+            return true;
+          }
+
+          const normalizedCode = (section.courseCode || "").trim().toLowerCase();
+          return Boolean(normalizedCode && allowedCourseCodes.has(normalizedCode));
+        });
+      }
+
+      setCourseSections(filteredSectionsByScope);
+      syncSelectedSection(filteredSectionsByScope);
       setTabMessage(
-        `Đã tải ${filteredByBackend.length} lớp học phần phù hợp bộ lọc.`,
+        `Đã tải ${filteredSectionsByScope.length} lớp học phần phù hợp bộ lọc.`,
       );
     });
   };
 
+  const handleFacultyFilterChange = (nextFacultyId: string) => {
+    setSelectedFacultyId(nextFacultyId);
+    setSelectedCourseId("");
+    void handleLoadRegistrationSections("", selectedSemesterId, nextFacultyId);
+  };
+
   const handleCourseFilterChange = (nextCourseId: string) => {
     setSelectedCourseId(nextCourseId);
-    void handleLoadRegistrationSections(nextCourseId, selectedSemesterId);
+    void handleLoadRegistrationSections(
+      nextCourseId,
+      selectedSemesterId,
+      selectedFacultyId,
+    );
   };
 
   const handleSemesterFilterChange = (nextSemesterId: string) => {
     setSelectedSemesterId(nextSemesterId);
-    void handleLoadRegistrationSections(selectedCourseId, nextSemesterId);
+    void handleLoadRegistrationSections(
+      selectedCourseId,
+      nextSemesterId,
+      selectedFacultyId,
+    );
   };
 
   const handleRegisterSection = async () => {
@@ -2124,20 +4263,45 @@ export default function DashboardPage() {
             {activeTab.key === "profile" ? (
               <section className={contentCardClass}>
                 <div className={sectionTitleClass}>
-                  <h2>Ho so ca nhan sinh viên</h2>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void handleLoadProfile();
-                    }}
-                    disabled={isWorking}
-                    className="rounded-[4px] bg-[#0d6ea6] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
-                  >
-                    Làm mới
-                  </button>
+                  <h2>Hồ sơ cá nhân sinh viên</h2>
+                  <div className="flex items-center gap-3">
+                    <p className="text-xs font-medium text-[#6a8599]">
+                      Đồng bộ:{" "}
+                      <span className="font-semibold text-[#2a5877]">
+                        {profileLastLoadedAt ? formatDateTime(profileLastLoadedAt) : "Chưa tải"}
+                      </span>
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleLoadProfile();
+                      }}
+                      disabled={isWorking}
+                      className="rounded-[4px] bg-[#0d6ea6] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
+                    >
+                      Làm mới
+                    </button>
+                  </div>
                 </div>
                 <div className="grid gap-4 px-4 py-4 lg:grid-cols-[1fr_1fr]">
                   <div className="space-y-3">
+                    <div className="rounded-[6px] border border-[#c8dceb] bg-[#f5fbff] px-3 py-2">
+                      <p className="text-sm text-[#3f637a]">
+                        Mức độ hoàn thiện hồ sơ:{" "}
+                        <span className="font-semibold text-[#1f567b]">
+                          {profileCompletion.filledCount}/{profileCompletion.total} trường
+                        </span>
+                      </p>
+                      <div className="mt-2 h-2 rounded-full bg-[#e1edf6]">
+                        <div
+                          className="h-full rounded-full bg-[#4b9fd4]"
+                          style={{ width: `${profileCompletion.percentage}%` }}
+                        />
+                      </div>
+                      <p className="mt-1 text-xs text-[#5f7e93]">
+                        {profileCompletion.percentage}% hoàn thiện
+                      </p>
+                    </div>
                     <div className="rounded-[6px] border border-[#c8dceb] bg-[#f5fbff] p-3 text-sm text-[#335a72]">
                       {isWorking && !profile ? (
                         <p className="text-[#4c6e86]">Đang tải thông tin hồ sơ...</p>
@@ -2156,15 +4320,31 @@ export default function DashboardPage() {
                             </p>
                           </div>
                           <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
-                            <p className="text-xs text-[#6f8798]">Student code</p>
+                            <p className="text-xs text-[#6f8798]">Mã sinh viên</p>
                             <p className="font-semibold text-[#1c4f72]">
                               {profile?.studentCode || "-"}
                             </p>
                           </div>
                           <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
-                            <p className="text-xs text-[#6f8798]">Major</p>
+                            <p className="text-xs text-[#6f8798]">Lớp hành chính</p>
+                            <p className="font-semibold text-[#1c4f72]">
+                              {profile?.className ||
+                                selectedProfileClassResolved?.className ||
+                                "-"}
+                            </p>
+                          </div>
+                          <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
+                            <p className="text-xs text-[#6f8798]">Ngành học</p>
                             <p className="font-semibold text-[#1c4f72]">
                               {profile?.majorName || "-"}
+                            </p>
+                          </div>
+                          <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
+                            <p className="text-xs text-[#6f8798]">Chuyên ngành</p>
+                            <p className="font-semibold text-[#1c4f72]">
+                              {profile?.specializationName ||
+                                selectedProfileSpecializationResolved?.specializationName ||
+                                "-"}
                             </p>
                           </div>
                           <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
@@ -2174,13 +4354,27 @@ export default function DashboardPage() {
                             </p>
                           </div>
                           <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
-                            <p className="text-xs text-[#6f8798]">Phone</p>
+                            <p className="text-xs text-[#6f8798]">Điện thoại</p>
                             <p className="font-semibold text-[#1c4f72]">
                               {profile?.phone || "-"}
                             </p>
                           </div>
+                          <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
+                            <p className="text-xs text-[#6f8798]">CCCD/CMND</p>
+                            <p className="font-semibold text-[#1c4f72]">
+                              {profile?.nationalId || "-"}
+                            </p>
+                          </div>
+                          <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
+                            <p className="text-xs text-[#6f8798]">Ngày sinh</p>
+                            <p className="font-semibold text-[#1c4f72]">
+                              {profile?.dateOfBirth
+                                ? formatDate(toDateOnlyValue(profile.dateOfBirth))
+                                : "-"}
+                            </p>
+                          </div>
                           <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2 sm:col-span-2">
-                            <p className="text-xs text-[#6f8798]">Address</p>
+                            <p className="text-xs text-[#6f8798]">Địa chỉ</p>
                             <p className="font-semibold text-[#1c4f72]">
                               {profile?.address || "-"}
                             </p>
@@ -2188,60 +4382,354 @@ export default function DashboardPage() {
                         </div>
                       )}
                     </div>
+
+                    <div className="rounded-[6px] border border-[#c8dceb] bg-[#f5fbff] p-3 text-sm text-[#335a72]">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h4 className="text-sm font-semibold text-[#1f567b]">
+                          Thông tin khoa - ngành
+                        </h4>
+                        {isProfileReferenceLoading ? (
+                          <span className="text-xs text-[#5f7e93]">Đang tải danh mục...</span>
+                        ) : null}
+                      </div>
+
+                      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-[#5f7e93]">
+                            Khoa
+                          </label>
+                          <select
+                            className="h-10 w-full rounded-[6px] border border-[#c8d3dd] bg-white px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                            value={selectedProfileFacultyId}
+                            onChange={(event) => {
+                              void handleProfileFacultyReferenceChange(
+                                event.target.value,
+                              );
+                            }}
+                            disabled={isProfileReferenceLoading}
+                          >
+                            <option value="">Tất cả khoa</option>
+                            {facultyFilterOptions.map((option) => (
+                              <option key={option.facultyId} value={option.facultyId}>
+                                {option.facultyCode
+                                  ? `${option.facultyCode} - ${option.facultyName}`
+                                  : option.facultyName}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-[#5f7e93]">
+                            Ngành
+                          </label>
+                          <select
+                            className="h-10 w-full rounded-[6px] border border-[#c8d3dd] bg-white px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                            value={selectedProfileMajorId}
+                            onChange={(event) => {
+                              void handleProfileMajorReferenceChange(event.target.value);
+                            }}
+                            disabled={isProfileReferenceLoading}
+                          >
+                            <option value="">Chọn ngành</option>
+                            {profileMajorOptions.map((option) => (
+                              <option key={option.majorId} value={option.majorId}>
+                                {option.majorCode
+                                  ? `${option.majorCode} - ${option.majorName}`
+                                  : option.majorName}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-[#5f7e93]">
+                            Chuyên ngành
+                          </label>
+                          <select
+                            className="h-10 w-full rounded-[6px] border border-[#c8d3dd] bg-white px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                            value={selectedProfileSpecializationId}
+                            onChange={(event) =>
+                              setSelectedProfileSpecializationId(event.target.value)
+                            }
+                            disabled={isProfileReferenceLoading}
+                          >
+                            <option value="">Chọn chuyên ngành</option>
+                            {profileSpecializationOptions.map((option) => (
+                              <option
+                                key={option.specializationId}
+                                value={option.specializationId}
+                              >
+                                {option.specializationName}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-xs font-semibold text-[#5f7e93]">
+                            Lớp hành chính
+                          </label>
+                          <select
+                            className="h-10 w-full rounded-[6px] border border-[#c8d3dd] bg-white px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                            value={selectedProfileClassId}
+                            onChange={(event) => {
+                              handleProfileClassReferenceChange(event.target.value);
+                            }}
+                            disabled={isProfileReferenceLoading}
+                          >
+                            <option value="">Chọn lớp hành chính</option>
+                            {profileClassOptions.map((option) => (
+                              <option key={option.classId} value={option.classId}>
+                                {option.className}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {selectedProfileMajorResolved ? (
+                        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                          <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
+                            <p className="text-xs text-[#6f8798]">Mã ngành</p>
+                            <p className="font-semibold text-[#1c4f72]">
+                              {selectedProfileMajorResolved.majorCode || "-"}
+                            </p>
+                          </div>
+                          <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
+                            <p className="text-xs text-[#6f8798]">Khoa quản lý</p>
+                            <p className="font-semibold text-[#1c4f72]">
+                              {selectedProfileMajorResolved.facultyName || "-"}
+                            </p>
+                          </div>
+                          <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
+                            <p className="text-xs text-[#6f8798]">Chuyên ngành</p>
+                            <p className="font-semibold text-[#1c4f72]">
+                              {selectedProfileSpecializationResolved?.specializationName ||
+                                normalizeTextValue(profile?.specializationName) ||
+                                "-"}
+                            </p>
+                          </div>
+                          <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
+                            <p className="text-xs text-[#6f8798]">Lớp hành chính</p>
+                            <p className="font-semibold text-[#1c4f72]">
+                              {selectedProfileClassResolved?.className ||
+                                normalizeTextValue(profile?.className) ||
+                                "-"}
+                            </p>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {selectedProfileClassResolved ? (
+                        <div className="mt-3 rounded-[6px] border border-[#d4e6f2] bg-white p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <h5 className="text-sm font-semibold text-[#1c4f72]">
+                              Chi tiết lớp hành chính
+                            </h5>
+                            <div className="flex flex-wrap gap-2">
+                              {selectedProfileCohortIdValue ? (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    void handleRefreshSelectedProfileCohortDetail();
+                                  }}
+                                  disabled={
+                                    isProfileReferenceLoading ||
+                                    isLoadingSelectedProfileCohortDetail
+                                  }
+                                  className="rounded-[6px] border border-[#6da8c9] bg-white px-3 py-1.5 text-xs font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
+                                >
+                                  {isLoadingSelectedProfileCohortDetail
+                                    ? "Đang làm mới niên khóa..."
+                                    : "Làm mới niên khóa"}
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  void handleRefreshSelectedProfileClassDetail();
+                                }}
+                                disabled={
+                                  isProfileReferenceLoading ||
+                                  !selectedProfileClassIdValue ||
+                                  isLoadingSelectedProfileClassDetail
+                                }
+                                className="rounded-[6px] border border-[#6da8c9] bg-white px-3 py-1.5 text-xs font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
+                              >
+                                {isLoadingSelectedProfileClassDetail
+                                  ? "Đang làm mới lớp..."
+                                  : "Làm mới chi tiết lớp"}
+                              </button>
+                            </div>
+                          </div>
+                          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                            <div className="rounded-[4px] border border-[#d4e6f2] bg-[#f9fcff] px-3 py-2">
+                              <p className="text-xs text-[#6f8798]">Sĩ số tối đa</p>
+                              <p className="font-semibold text-[#1c4f72]">
+                                {typeof selectedProfileClassResolved.maxCapacity === "number"
+                                  ? selectedProfileClassResolved.maxCapacity
+                                  : "-"}
+                              </p>
+                            </div>
+                            <div className="rounded-[4px] border border-[#d4e6f2] bg-[#f9fcff] px-3 py-2">
+                              <p className="text-xs text-[#6f8798]">Cố vấn học tập</p>
+                              <p className="font-semibold text-[#1c4f72]">
+                                {selectedProfileClassResolved.headLecturerName || "-"}
+                              </p>
+                            </div>
+                            <div className="rounded-[4px] border border-[#d4e6f2] bg-[#f9fcff] px-3 py-2">
+                              <p className="text-xs text-[#6f8798]">Niên khóa</p>
+                              <p className="font-semibold text-[#1c4f72]">
+                                {selectedProfileCohortResolved?.cohortName ||
+                                  selectedProfileClassResolved.cohortName ||
+                                  "-"}
+                              </p>
+                            </div>
+                            <div className="rounded-[4px] border border-[#d4e6f2] bg-[#f9fcff] px-3 py-2">
+                              <p className="text-xs text-[#6f8798]">Ngành quản lý</p>
+                              <p className="font-semibold text-[#1c4f72]">
+                                {selectedProfileClassResolved.majorName || "-"}
+                              </p>
+                            </div>
+                            <div className="rounded-[4px] border border-[#d4e6f2] bg-[#f9fcff] px-3 py-2">
+                              <p className="text-xs text-[#6f8798]">Khóa từ năm</p>
+                              <p className="font-semibold text-[#1c4f72]">
+                                {selectedProfileCohortResolved?.startYear || "-"}
+                              </p>
+                            </div>
+                            <div className="rounded-[4px] border border-[#d4e6f2] bg-[#f9fcff] px-3 py-2">
+                              <p className="text-xs text-[#6f8798]">Khóa đến năm</p>
+                              <p className="font-semibold text-[#1c4f72]">
+                                {selectedProfileCohortResolved?.endYear || "-"}
+                              </p>
+                            </div>
+                            <div className="rounded-[4px] border border-[#d4e6f2] bg-[#f9fcff] px-3 py-2">
+                              <p className="text-xs text-[#6f8798]">Trạng thái khóa</p>
+                              <p className="font-semibold text-[#1c4f72]">
+                                {formatCohortStatus(selectedProfileCohortResolved?.status)}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {!selectedProfileMajorResolved && normalizeTextValue(profile?.majorName) ? (
+                        <p className="mt-2 text-xs text-[#5f7e93]">
+                          Chưa tìm thấy ngành phù hợp với dữ liệu hiện tại.
+                        </p>
+                      ) : null}
+
+                      {!selectedProfileSpecializationResolved &&
+                      normalizeTextValue(profile?.specializationName) ? (
+                        <p className="mt-2 text-xs text-[#5f7e93]">
+                          Chưa tìm thấy chuyên ngành phù hợp với dữ liệu hiện tại.
+                        </p>
+                      ) : null}
+
+                      {!selectedProfileClassResolved && normalizeTextValue(profile?.className) ? (
+                        <p className="mt-2 text-xs text-[#5f7e93]">
+                          Chưa tìm thấy lớp hành chính phù hợp với dữ liệu hiện tại.
+                        </p>
+                      ) : null}
+                    </div>
                   </div>
 
-                  <form className="space-y-2" onSubmit={handleSaveProfile}>
-                    <input
-                      className="h-10 w-full rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                      placeholder="Full name"
-                      value={profileForm.fullName}
-                      onChange={(event) =>
-                        setProfileForm((prev) => ({
-                          ...prev,
-                          fullName: event.target.value,
-                        }))
-                      }
-                    />
-                    <input
-                      className="h-10 w-full rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                      placeholder="Phone"
-                      value={profileForm.phone}
-                      onChange={(event) =>
-                        setProfileForm((prev) => ({
-                          ...prev,
-                          phone: event.target.value,
-                        }))
-                      }
-                    />
-                    <input
-                      className="h-10 w-full rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                      placeholder="Address"
-                      value={profileForm.address}
-                      onChange={(event) =>
-                        setProfileForm((prev) => ({
-                          ...prev,
-                          address: event.target.value,
-                        }))
-                      }
-                    />
-                    <input
-                      type="date"
-                      className="h-10 w-full rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                      value={profileForm.dateOfBirth}
-                      onChange={(event) =>
-                        setProfileForm((prev) => ({
-                          ...prev,
-                          dateOfBirth: event.target.value,
-                        }))
-                      }
-                    />
-                    <button
-                      type="submit"
-                      disabled={isWorking}
-                      className="rounded-[4px] bg-[#0d6ea6] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
-                    >
+                  <form className="space-y-3 rounded-[6px] border border-[#d5e4ef] bg-[#f9fcff] p-3" onSubmit={handleSaveProfile}>
+                    <h3 className="text-base font-semibold text-[#1f567b]">
                       Cập nhật hồ sơ
-                    </button>
+                    </h3>
+
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium text-[#335a72]">Họ và tên</label>
+                      <input
+                        className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                        placeholder="Nhập họ và tên"
+                        value={profileForm.fullName}
+                        onChange={(event) => {
+                          setProfileFormError("");
+                          setProfileForm((prev) => ({
+                            ...prev,
+                            fullName: event.target.value,
+                          }));
+                        }}
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium text-[#335a72]">Số điện thoại</label>
+                      <input
+                        className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                        placeholder="Ví dụ: 0912345678"
+                        value={profileForm.phone}
+                        onChange={(event) => {
+                          setProfileFormError("");
+                          setProfileForm((prev) => ({
+                            ...prev,
+                            phone: event.target.value,
+                          }));
+                        }}
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium text-[#335a72]">Địa chỉ</label>
+                      <input
+                        className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                        placeholder="Nhập địa chỉ liên hệ"
+                        value={profileForm.address}
+                        onChange={(event) => {
+                          setProfileFormError("");
+                          setProfileForm((prev) => ({
+                            ...prev,
+                            address: event.target.value,
+                          }));
+                        }}
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <label className="text-sm font-medium text-[#335a72]">Ngày sinh</label>
+                      <input
+                        type="date"
+                        className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                        value={profileForm.dateOfBirth}
+                        onChange={(event) => {
+                          setProfileFormError("");
+                          setProfileForm((prev) => ({
+                            ...prev,
+                            dateOfBirth: event.target.value,
+                          }));
+                        }}
+                      />
+                      <p className="text-xs text-[#5f7e93]">
+                        Hệ thống yêu cầu ngày sinh không vượt quá ngày hiện tại.
+                      </p>
+                    </div>
+
+                    {profileFormError ? (
+                      <p className="rounded-[6px] border border-[#e8b2b2] bg-[#fff4f4] px-3 py-2 text-sm text-[#b03d3d]">
+                        {profileFormError}
+                      </p>
+                    ) : null}
+
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <button
+                        type="submit"
+                        disabled={isWorking || !isProfileFormDirty}
+                        className="rounded-[6px] bg-[#0d6ea6] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
+                      >
+                        {isProfileFormDirty ? "Lưu cập nhật" : "Chưa có thay đổi"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleResetProfileForm}
+                        disabled={isWorking || !isProfileFormDirty}
+                        className="rounded-[6px] border border-[#6da8c9] bg-white px-4 py-2 text-sm font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
+                      >
+                        Hoàn tác
+                      </button>
+                    </div>
                   </form>
                 </div>
               </section>
@@ -2262,8 +4750,8 @@ export default function DashboardPage() {
                             : "Đăng ký môn học"}
                         </h2>
                         <p className="mt-1 text-sm text-[#5f7e93]">
-                          Lọc theo môn học và học kỳ từ backend, sau đó chọn lớp học phần
-                          để đăng ký.
+                          Lọc theo khoa, môn học và học kỳ từ hệ thống, sau đó chọn lớp
+                          học phần để đăng ký.
                         </p>
                       </div>
                     </div>
@@ -2282,10 +4770,11 @@ export default function DashboardPage() {
                       <button
                         type="button"
                         onClick={() => {
+                          setSelectedFacultyId("");
                           setSelectedCourseId("");
                           setSelectedSemesterId("");
                           setCourseKeyword("");
-                          void handleLoadRegistrationSections("", "");
+                          void handleLoadRegistrationSections("", "", "");
                         }}
                         disabled={isWorking}
                         className="h-10 rounded-[8px] border border-[#6da8c9] bg-white px-4 text-sm font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
@@ -2309,13 +4798,29 @@ export default function DashboardPage() {
                     </div>
                   ) : null}
 
-                  <div className="grid gap-3 md:grid-cols-3">
+                  <div className="grid gap-3 md:grid-cols-4">
                     <input
                       className="h-11 rounded-[8px] border border-[#d4e2ec] bg-white px-4 text-sm text-[#214b66] outline-none focus:border-[#5fa7d0]"
                       placeholder="Tìm theo mã môn, tên môn, mã lớp, giảng viên..."
                       value={courseKeyword}
                       onChange={(event) => setCourseKeyword(event.target.value)}
                     />
+                    <select
+                      className="h-11 rounded-[8px] border border-[#d4e2ec] bg-white px-4 text-sm text-[#214b66] outline-none focus:border-[#5fa7d0]"
+                      value={selectedFacultyId}
+                      onChange={(event) =>
+                        handleFacultyFilterChange(event.target.value)
+                      }
+                    >
+                      <option value="">Tất cả khoa</option>
+                      {facultyFilterOptions.map((option) => (
+                        <option key={option.facultyId} value={option.facultyId}>
+                          {option.facultyCode
+                            ? `${option.facultyCode} - ${option.facultyName}`
+                            : option.facultyName}
+                        </option>
+                      ))}
+                    </select>
                     <select
                       className="h-11 rounded-[8px] border border-[#d4e2ec] bg-white px-4 text-sm text-[#214b66] outline-none focus:border-[#5fa7d0]"
                       value={selectedCourseId}
@@ -2360,6 +4865,8 @@ export default function DashboardPage() {
                             <th className="w-10 px-3 py-3">Chọn</th>
                             <th className="px-3 py-3">Mã MH</th>
                             <th className="px-3 py-3">Tên môn học</th>
+                            <th className="px-3 py-3">Số TC</th>
+                            <th className="px-3 py-3">Môn tiên quyết</th>
                             <th className="px-3 py-3">Lớp</th>
                             <th className="px-3 py-3">Giảng viên</th>
                             <th className="px-3 py-3">Học kỳ</th>
@@ -2372,6 +4879,7 @@ export default function DashboardPage() {
                           {filteredSections.map((section) => {
                             const selected = String(section.id) === selectedSectionId;
                             const capacity = section.maxCapacity ?? "-";
+                            const courseMeta = getCourseMetadataForSection(section);
 
                             return (
                               <tr
@@ -2398,6 +4906,12 @@ export default function DashboardPage() {
                                   <p className="max-w-[260px] leading-5">
                                     {getCourseDisplayName(section)}
                                   </p>
+                                </td>
+                                <td className="px-3 py-3 align-top">
+                                  {getCreditsLabel(section, courseMeta || undefined)}
+                                </td>
+                                <td className="px-3 py-3 align-top text-[#58758a]">
+                                  {courseMeta?.prerequisiteCourseName || "-"}
                                 </td>
                                 <td className="px-3 py-3 align-top">
                                   {section.sectionCode || getSectionDisplayName(section)}
@@ -2430,7 +4944,7 @@ export default function DashboardPage() {
                           {filteredSections.length === 0 ? (
                             <tr>
                               <td
-                                colSpan={9}
+                                colSpan={11}
                                 className="px-3 py-8 text-center text-[#5d7b91]"
                               >
                                 Chưa có học phần phù hợp với bộ lọc hiện tại.
@@ -2444,9 +4958,23 @@ export default function DashboardPage() {
 
                   <div className="rounded-[12px] border border-[#6da8c9]">
                     <div className="border-b border-[#c5dced] px-4 py-3">
-                      <h3 className="text-[18px] font-semibold text-[#1a4f75]">
-                        Chi tiết lớp học phần đã chọn
-                      </h3>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="text-[18px] font-semibold text-[#1a4f75]">
+                          Chi tiết lớp học phần đã chọn
+                        </h3>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handleRefreshSelectedCourseDetail();
+                          }}
+                          disabled={!selectedSectionCourseId || isLoadingSelectedCourseDetail}
+                          className="h-9 rounded-[8px] border border-[#6da8c9] bg-white px-3 text-sm font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
+                        >
+                          {isLoadingSelectedCourseDetail
+                            ? "Đang tải..."
+                            : "Làm mới chi tiết môn học"}
+                        </button>
+                      </div>
                     </div>
 
                     <div className="space-y-4 px-4 py-4">
@@ -2455,6 +4983,12 @@ export default function DashboardPage() {
                           Đang tải thông tin chi tiết lớp học phần...
                         </p>
                       ) : null}
+
+                        {isLoadingSelectedCourseDetail ? (
+                          <p className="text-sm text-[#5d7b91]">
+                            Đang tải thông tin chi tiết môn học từ hệ thống...
+                          </p>
+                        ) : null}
 
                       {selectedSectionDetails ? (
                         <div className="grid gap-3 md:grid-cols-3">
@@ -2472,9 +5006,38 @@ export default function DashboardPage() {
                             </p>
                           </div>
                           <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f8fcff] px-3 py-2">
+                            <p className="text-xs text-[#65839a]">Mã môn học</p>
+                            <p className="text-sm font-semibold text-[#1d4e71]">
+                              {selectedSectionCourseDetail?.courseCode ||
+                                selectedSectionDetails.courseCode ||
+                                "-"}
+                            </p>
+                          </div>
+                          <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f8fcff] px-3 py-2">
+                            <p className="text-xs text-[#65839a]">Số tín chỉ</p>
+                            <p className="text-sm font-semibold text-[#1d4e71]">
+                              {getCreditsLabel(
+                                selectedSectionDetails,
+                                selectedSectionCourseDetail || undefined,
+                              )}
+                            </p>
+                          </div>
+                          <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f8fcff] px-3 py-2">
                             <p className="text-xs text-[#65839a]">Giảng viên</p>
                             <p className="text-sm font-semibold text-[#1d4e71]">
                               {selectedSectionDetails.lecturerName || "-"}
+                            </p>
+                          </div>
+                          <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f8fcff] px-3 py-2">
+                            <p className="text-xs text-[#65839a]">Khoa quản lý</p>
+                            <p className="text-sm font-semibold text-[#1d4e71]">
+                              {selectedSectionCourseDetail?.facultyName || "-"}
+                            </p>
+                          </div>
+                          <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f8fcff] px-3 py-2">
+                            <p className="text-xs text-[#65839a]">Môn tiên quyết</p>
+                            <p className="text-sm font-semibold text-[#1d4e71]">
+                              {selectedSectionCourseDetail?.prerequisiteCourseName || "-"}
                             </p>
                           </div>
                           <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f8fcff] px-3 py-2">
@@ -2500,6 +5063,16 @@ export default function DashboardPage() {
                               )}`}
                             >
                               {getRegistrationStatusLabel(selectedSectionDetails.status)}
+                            </span>
+                          </div>
+                          <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f8fcff] px-3 py-2">
+                            <p className="text-xs text-[#65839a]">Trạng thái môn học</p>
+                            <span
+                              className={`mt-1 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getCourseStatusClass(
+                                selectedSectionCourseDetail?.status,
+                              )}`}
+                            >
+                              {getCourseStatusLabel(selectedSectionCourseDetail?.status)}
                             </span>
                           </div>
                         </div>
@@ -2631,6 +5204,7 @@ export default function DashboardPage() {
                             <th className="px-3 py-3">Tên môn học</th>
                             <th className="px-3 py-3">Nhóm tổ</th>
                             <th className="px-3 py-3">Số TC</th>
+                            <th className="px-3 py-3">Môn tiên quyết</th>
                             <th className="px-3 py-3">Lớp</th>
                             <th className="px-3 py-3">Ngày đăng ký</th>
                             <th className="px-3 py-3">Trạng thái</th>
@@ -2638,48 +5212,55 @@ export default function DashboardPage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {registeredSections.map((item) => (
-                            <tr
-                              key={item.registrationId}
-                              className="border-b border-[#d7e7f1] text-[#375d75]"
-                            >
-                              <td className="px-3 py-3 align-top text-[#d16d6d]">x</td>
-                              <td className="px-3 py-3 align-top font-semibold text-[#1b547a]">
-                                {item.section.courseCode || "-"}
-                              </td>
-                              <td className="px-3 py-3 align-top">
-                                {getCourseDisplayName(item.section)}
-                              </td>
-                              <td className="px-3 py-3 align-top">
-                                {getGroupLabel(item.section)}
-                              </td>
-                              <td className="px-3 py-3 align-top">
-                                {getCreditsLabel(item.section)}
-                              </td>
-                              <td className="px-3 py-3 align-top">
-                                {item.section.sectionCode || getSectionDisplayName(item.section)}
-                              </td>
-                              <td className="px-3 py-3 align-top">
-                                {formatDateTime(item.registrationTime)}
-                              </td>
-                              <td className="px-3 py-3 align-top">
-                                <span
-                                  className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getRegistrationStatusClass(
-                                    item.status,
-                                  )}`}
-                                >
-                                  {getRegistrationStatusLabel(item.status)}
-                                </span>
-                              </td>
-                              <td className="px-3 py-3 align-top text-[#58758a]">
-                                {getScheduleLabel(item.section)}
-                              </td>
-                            </tr>
-                          ))}
+                          {registeredSections.map((item) => {
+                            const courseMeta = getCourseMetadataForSection(item.section);
+
+                            return (
+                              <tr
+                                key={item.registrationId}
+                                className="border-b border-[#d7e7f1] text-[#375d75]"
+                              >
+                                <td className="px-3 py-3 align-top text-[#d16d6d]">x</td>
+                                <td className="px-3 py-3 align-top font-semibold text-[#1b547a]">
+                                  {item.section.courseCode || "-"}
+                                </td>
+                                <td className="px-3 py-3 align-top">
+                                  {getCourseDisplayName(item.section)}
+                                </td>
+                                <td className="px-3 py-3 align-top">
+                                  {getGroupLabel(item.section)}
+                                </td>
+                                <td className="px-3 py-3 align-top">
+                                  {getCreditsLabel(item.section, courseMeta || undefined)}
+                                </td>
+                                <td className="px-3 py-3 align-top text-[#58758a]">
+                                  {courseMeta?.prerequisiteCourseName || "-"}
+                                </td>
+                                <td className="px-3 py-3 align-top">
+                                  {item.section.sectionCode || getSectionDisplayName(item.section)}
+                                </td>
+                                <td className="px-3 py-3 align-top">
+                                  {formatDateTime(item.registrationTime)}
+                                </td>
+                                <td className="px-3 py-3 align-top">
+                                  <span
+                                    className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getRegistrationStatusClass(
+                                      item.status,
+                                    )}`}
+                                  >
+                                    {getRegistrationStatusLabel(item.status)}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-3 align-top text-[#58758a]">
+                                  {getScheduleLabel(item.section)}
+                                </td>
+                              </tr>
+                            );
+                          })}
                           {registeredSections.length === 0 ? (
                             <tr>
                               <td
-                                colSpan={9}
+                                colSpan={10}
                                 className="px-3 py-8 text-center text-[#5d7b91]"
                               >
                                 Chưa có học phần nào được đăng ký trong phiên hiện tại.
@@ -2862,12 +5443,18 @@ export default function DashboardPage() {
                                 >
                                   <div className="flex h-full flex-col gap-1">
                                     {startingBlocks.map((block) => (
-                                      <article
+                                      <button
                                         key={block.key}
-                                        className={`h-full rounded-[4px] border px-2 py-1 leading-4 ${getScheduleCardClassName(
+                                        type="button"
+                                        onClick={() => setSelectedScheduleBlockKey(block.key)}
+                                        className={`h-full rounded-[4px] border px-2 py-1 text-left leading-4 transition ${getScheduleCardClassName(
                                           block.status,
                                           block.courseCode,
-                                        )}`}
+                                        )} ${
+                                          selectedScheduleBlockKey === block.key
+                                            ? "ring-2 ring-[#1f5f8f] ring-offset-1"
+                                            : "hover:brightness-95"
+                                        }`}
                                       >
                                         <p className="font-semibold">
                                           {block.courseName}
@@ -2879,7 +5466,7 @@ export default function DashboardPage() {
                                         <p>Phòng: {block.classroomName || "-"}</p>
                                         <p>GV: {block.lecturerName || "-"}</p>
                                         <p>{getPeriodClockRange(block.startPeriod, block.endPeriod)}</p>
-                                      </article>
+                                      </button>
                                     ))}
                                   </div>
                                 </td>
@@ -2927,6 +5514,284 @@ export default function DashboardPage() {
                         </tr>
                       </tfoot>
                     </table>
+                  </div>
+
+                  <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f9fcff] p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h4 className="text-sm font-semibold text-[#1a4f75]">
+                        Chi tiết block lịch học
+                      </h4>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handleRefreshSelectedRecurringScheduleDetail();
+                          }}
+                          disabled={
+                            !selectedScheduleBlock?.recurringScheduleId ||
+                            isLoadingSelectedRecurringScheduleDetail
+                          }
+                          className="rounded-[6px] border border-[#6da8c9] bg-white px-2.5 py-1 text-xs font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
+                        >
+                          {isLoadingSelectedRecurringScheduleDetail
+                            ? "Đang tải lịch..."
+                            : "Làm mới lịch"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handleRefreshSelectedClassroomDetail();
+                          }}
+                          disabled={
+                            !selectedScheduleClassroomId ||
+                            isLoadingSelectedClassroomDetail
+                          }
+                          className="rounded-[6px] border border-[#6da8c9] bg-white px-2.5 py-1 text-xs font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
+                        >
+                          {isLoadingSelectedClassroomDetail
+                            ? "Đang tải phòng..."
+                            : "Làm mới phòng"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handleRefreshSelectedLecturerDetail();
+                          }}
+                          disabled={
+                            !selectedScheduleLecturerId ||
+                            isLoadingSelectedLecturerDetail
+                          }
+                          className="rounded-[6px] border border-[#6da8c9] bg-white px-2.5 py-1 text-xs font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
+                        >
+                          {isLoadingSelectedLecturerDetail
+                            ? "Đang tải giảng viên..."
+                            : "Làm mới giảng viên"}
+                        </button>
+                      </div>
+                    </div>
+
+                    {!selectedScheduleBlock ? (
+                      <p className="mt-2 text-sm text-[#5d7b91]">
+                        Chọn một block trên lưới thời khóa biểu để xem chi tiết lịch định
+                        kỳ.
+                      </p>
+                    ) : (
+                      <div className="mt-2 space-y-3">
+                        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
+                            <p className="text-[11px] text-[#69849a]">Môn học</p>
+                            <p className="text-sm font-semibold text-[#1f567b]">
+                              {selectedScheduleBlock.courseName}
+                            </p>
+                          </div>
+                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
+                            <p className="text-[11px] text-[#69849a]">Lớp học phần</p>
+                            <p className="text-sm font-semibold text-[#1f567b]">
+                              {selectedScheduleBlock.sectionCode || "-"}
+                            </p>
+                          </div>
+                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
+                            <p className="text-[11px] text-[#69849a]">Ca học</p>
+                            <p className="text-sm font-semibold text-[#1f567b]">
+                              {getPeriodClockRange(
+                                selectedScheduleBlock.startPeriod,
+                                selectedScheduleBlock.endPeriod,
+                              )}
+                            </p>
+                          </div>
+                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
+                            <p className="text-[11px] text-[#69849a]">Ngày học</p>
+                            <p className="text-sm font-semibold text-[#1f567b]">
+                              {selectedScheduleBlock.sessionDate
+                                ? formatDate(selectedScheduleBlock.sessionDate)
+                                : "Theo lịch định kỳ"}
+                            </p>
+                          </div>
+                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
+                            <p className="text-[11px] text-[#69849a]">Phòng</p>
+                            <p className="text-sm font-semibold text-[#1f567b]">
+                              {selectedScheduleClassroomDetail?.roomName ||
+                                selectedScheduleBlock.classroomName ||
+                                "-"}
+                            </p>
+                          </div>
+                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
+                            <p className="text-[11px] text-[#69849a]">Giảng viên</p>
+                            <p className="text-sm font-semibold text-[#1f567b]">
+                              {selectedScheduleLecturerDetail?.fullName ||
+                                selectedScheduleBlock.lecturerName ||
+                                "-"}
+                            </p>
+                          </div>
+                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
+                            <p className="text-[11px] text-[#69849a]">Trạng thái</p>
+                            <p className="text-sm font-semibold text-[#1f567b]">
+                              {selectedScheduleBlock.status || "-"}
+                            </p>
+                          </div>
+                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
+                            <p className="text-[11px] text-[#69849a]">Recurring Schedule ID</p>
+                            <p className="text-sm font-semibold text-[#1f567b]">
+                              {selectedScheduleBlock.recurringScheduleId || "-"}
+                            </p>
+                          </div>
+                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
+                            <p className="text-[11px] text-[#69849a]">Classroom ID</p>
+                            <p className="text-sm font-semibold text-[#1f567b]">
+                              {selectedScheduleClassroomId || "-"}
+                            </p>
+                          </div>
+                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
+                            <p className="text-[11px] text-[#69849a]">Lecturer ID</p>
+                            <p className="text-sm font-semibold text-[#1f567b]">
+                              {selectedScheduleLecturerId || "-"}
+                            </p>
+                          </div>
+                        </div>
+
+                        {selectedScheduleBlock.recurringScheduleId ? (
+                          selectedRecurringScheduleDetail ? (
+                            <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2">
+                              <p className="text-sm font-semibold text-[#1f567b]">
+                                Chi tiết lịch định kỳ từ hệ thống
+                              </p>
+                              <div className="mt-2 grid gap-2 text-sm text-[#355970] sm:grid-cols-2 xl:grid-cols-3">
+                                <p>
+                                  <span className="text-[#69849a]">Thứ học:</span>{" "}
+                                  {selectedRecurringScheduleDetail.dayOfWeekName ||
+                                    selectedRecurringScheduleDetail.dayOfWeek ||
+                                    "-"}
+                                </p>
+                                <p>
+                                  <span className="text-[#69849a]">Tiết:</span>{" "}
+                                  {getPeriodRangeLabel(
+                                    selectedRecurringScheduleDetail.startPeriod,
+                                    selectedRecurringScheduleDetail.endPeriod,
+                                  )}
+                                </p>
+                                <p>
+                                  <span className="text-[#69849a]">Giờ học:</span>{" "}
+                                  {typeof selectedRecurringScheduleDetail.startPeriod ===
+                                    "number" &&
+                                  typeof selectedRecurringScheduleDetail.endPeriod === "number"
+                                    ? getPeriodClockRange(
+                                        selectedRecurringScheduleDetail.startPeriod,
+                                        selectedRecurringScheduleDetail.endPeriod,
+                                      )
+                                    : "-"}
+                                </p>
+                                <p>
+                                  <span className="text-[#69849a]">Phòng học:</span>{" "}
+                                  {selectedRecurringScheduleDetail.classroomName || "-"}
+                                </p>
+                                <p>
+                                  <span className="text-[#69849a]">Mã lớp học phần:</span>{" "}
+                                  {selectedRecurringScheduleDetail.sectionCode || "-"}
+                                </p>
+                                <p>
+                                  <span className="text-[#69849a]">Ngày tạo:</span>{" "}
+                                  {formatDateTime(selectedRecurringScheduleDetail.createdAt)}
+                                </p>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-sm text-[#5d7b91]">
+                              Không thể lấy thêm chi tiết cho lịch định kỳ này từ hệ thống.
+                            </p>
+                          )
+                        ) : (
+                          <p className="text-sm text-[#5d7b91]">
+                            Block này không có `recurringScheduleId` để tra cứu chi tiết.
+                          </p>
+                        )}
+
+                        {isLoadingSelectedClassroomDetail ? (
+                          <p className="text-sm text-[#5d7b91]">
+                            Đang tải chi tiết phòng học...
+                          </p>
+                        ) : null}
+
+                        {selectedScheduleClassroomId ? (
+                          selectedScheduleClassroomDetail ? (
+                            <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2">
+                              <p className="text-sm font-semibold text-[#1f567b]">
+                                Chi tiết phòng học từ hệ thống
+                              </p>
+                              <div className="mt-2 grid gap-2 text-sm text-[#355970] sm:grid-cols-2 xl:grid-cols-3">
+                                <p>
+                                  <span className="text-[#69849a]">Tên phòng:</span>{" "}
+                                  {selectedScheduleClassroomDetail.roomName || "-"}
+                                </p>
+                                <p>
+                                  <span className="text-[#69849a]">Sức chứa:</span>{" "}
+                                  {selectedScheduleClassroomDetail.capacity ?? "-"}
+                                </p>
+                                <p>
+                                  <span className="text-[#69849a]">Loại phòng:</span>{" "}
+                                  {selectedScheduleClassroomDetail.roomType || "-"}
+                                </p>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-sm text-[#5d7b91]">
+                              Không thể lấy thêm chi tiết cho phòng học này từ hệ thống.
+                            </p>
+                          )
+                        ) : (
+                          <p className="text-sm text-[#5d7b91]">
+                            Block này không có `classroomId` để tra cứu chi tiết phòng.
+                          </p>
+                        )}
+
+                        {isLoadingSelectedLecturerDetail ? (
+                          <p className="text-sm text-[#5d7b91]">
+                            Đang tải chi tiết giảng viên...
+                          </p>
+                        ) : null}
+
+                        {selectedScheduleLecturerId ? (
+                          selectedScheduleLecturerDetail ? (
+                            <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2">
+                              <p className="text-sm font-semibold text-[#1f567b]">
+                                Chi tiết giảng viên từ hệ thống
+                              </p>
+                              <div className="mt-2 grid gap-2 text-sm text-[#355970] sm:grid-cols-2 xl:grid-cols-3">
+                                <p>
+                                  <span className="text-[#69849a]">Họ tên:</span>{" "}
+                                  {selectedScheduleLecturerDetail.fullName ||
+                                    selectedScheduleBlock.lecturerName ||
+                                    "-"}
+                                </p>
+                                <p>
+                                  <span className="text-[#69849a]">Email:</span>{" "}
+                                  {selectedScheduleLecturerDetail.email || "-"}
+                                </p>
+                                <p>
+                                  <span className="text-[#69849a]">Điện thoại:</span>{" "}
+                                  {selectedScheduleLecturerDetail.phone || "-"}
+                                </p>
+                                <p>
+                                  <span className="text-[#69849a]">Học vị:</span>{" "}
+                                  {selectedScheduleLecturerDetail.academicDegree || "-"}
+                                </p>
+                                <p>
+                                  <span className="text-[#69849a]">Lecturer ID:</span>{" "}
+                                  {selectedScheduleLecturerId}
+                                </p>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-sm text-[#5d7b91]">
+                              Không thể lấy thêm chi tiết cho giảng viên này từ hệ thống.
+                            </p>
+                          )
+                        ) : (
+                          <p className="text-sm text-[#5d7b91]">
+                            Block này không có `lecturerId` để tra cứu chi tiết giảng viên.
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {isScheduleLoading ? (
@@ -3131,39 +5996,59 @@ export default function DashboardPage() {
                     </div>
 
                     <div className="space-y-3 rounded-[8px] border border-[#d5e4ef] bg-[#f9fcff] p-3">
-                      <h3 className="text-base font-semibold text-[#1f567b]">
-                        Chi tiết môn học
-                      </h3>
+                      <div className="flex items-center justify-between gap-2">
+                        <h3 className="text-base font-semibold text-[#1f567b]">
+                          Chi tiết môn học
+                        </h3>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handleRefreshSelectedGradeDetail();
+                          }}
+                          disabled={!selectedGradeReport || isLoadingSelectedGradeReportDetail}
+                          className="rounded-[6px] border border-[#6da8c9] bg-white px-2.5 py-1 text-xs font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
+                        >
+                          {isLoadingSelectedGradeReportDetail
+                            ? "Đang tải..."
+                            : "Làm mới chi tiết"}
+                        </button>
+                      </div>
 
-                      {selectedGradeReport ? (
+                      {isLoadingSelectedGradeReportDetail ? (
+                        <p className="text-sm text-[#5f7e93]">
+                          Đang tải chi tiết điểm theo từng môn...
+                        </p>
+                      ) : null}
+
+                      {selectedGradeReportResolved ? (
                         <>
                           <div className="grid gap-2 sm:grid-cols-2">
                             <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2">
                               <p className="text-xs text-[#69849a]">Môn học</p>
                               <p className="text-sm font-semibold text-[#1f567b]">
-                                {selectedGradeReport.courseName || "-"}
+                                {selectedGradeReportResolved.courseName || "-"}
                               </p>
                             </div>
                             <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2">
                               <p className="text-xs text-[#69849a]">Điểm tổng</p>
                               <p className="text-sm font-semibold text-[#1f567b]">
-                                {formatScore(selectedGradeReport.finalScore)}
+                                {formatScore(selectedGradeReportResolved.finalScore)}
                               </p>
                             </div>
                             <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2">
                               <p className="text-xs text-[#69849a]">Điểm chữ</p>
                               <p className="text-sm font-semibold text-[#1f567b]">
-                                {selectedGradeReport.letterGrade || "-"}
+                                {selectedGradeReportResolved.letterGrade || "-"}
                               </p>
                             </div>
                             <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2">
                               <p className="text-xs text-[#69849a]">Trạng thái</p>
                               <span
                                 className={`mt-1 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getGradeStatusClass(
-                                  selectedGradeReport.status,
+                                  selectedGradeReportResolved.status,
                                 )}`}
                               >
-                                {getGradeStatusLabel(selectedGradeReport.status)}
+                                {getGradeStatusLabel(selectedGradeReportResolved.status)}
                               </span>
                             </div>
                             <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2 sm:col-span-2">
@@ -3311,37 +6196,141 @@ export default function DashboardPage() {
                     </button>
                   </div>
                 </div>
-                <div className="overflow-x-auto px-4 py-4">
-                  <table className="min-w-full text-left text-sm">
-                    <thead>
-                      <tr className="border-b border-[#cfdfec] text-[#305970]">
-                        <th className="px-2 py-2">Ngay hoc</th>
-                        <th className="px-2 py-2">Session ID</th>
-                        <th className="px-2 py-2">Trạng thái</th>
-                        <th className="px-2 py-2">Ghi chu</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {attendanceItems.map((item) => (
-                        <tr
-                          key={item.id}
-                          className="border-b border-[#e0ebf4] text-[#3f6178]"
-                        >
-                          <td className="px-2 py-2">{formatDate(item.sessionDate)}</td>
-                          <td className="px-2 py-2">{item.sessionId || "-"}</td>
-                          <td className="px-2 py-2">{item.status || "-"}</td>
-                          <td className="px-2 py-2">{item.note || "-"}</td>
-                        </tr>
+                <div className="space-y-4 px-4 py-4">
+                  <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_220px_170px_170px_auto]">
+                    <input
+                      className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                      placeholder="Tìm theo trạng thái, ghi chú, ngày học, session..."
+                      value={attendanceKeyword}
+                      onChange={(event) => setAttendanceKeyword(event.target.value)}
+                    />
+                    <select
+                      className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                      value={attendanceStatusFilter}
+                      onChange={(event) =>
+                        setAttendanceStatusFilter(event.target.value)
+                      }
+                    >
+                      <option value="">Tất cả trạng thái</option>
+                      {attendanceStatusOptions.map((status) => (
+                        <option key={status} value={status}>
+                          {getAttendanceStatusLabel(status)}
+                        </option>
                       ))}
-                      {attendanceItems.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} className="px-2 py-4 text-center text-[#577086]">
-                            Chưa có dữ liệu chuyên cần.
-                          </td>
+                    </select>
+                    <input
+                      type="date"
+                      className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                      value={attendanceDateFrom}
+                      onChange={(event) => setAttendanceDateFrom(event.target.value)}
+                    />
+                    <input
+                      type="date"
+                      className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                      value={attendanceDateTo}
+                      onChange={(event) => setAttendanceDateTo(event.target.value)}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAttendanceKeyword("");
+                        setAttendanceStatusFilter("");
+                        setAttendanceDateFrom("");
+                        setAttendanceDateTo("");
+                      }}
+                      className="h-10 rounded-[6px] border border-[#6da8c9] bg-white px-3 text-sm font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff]"
+                    >
+                      Xóa lọc
+                    </button>
+                  </div>
+
+                  {isAttendanceDateRangeInvalid ? (
+                    <p className="rounded-[6px] border border-[#e8b2b2] bg-[#fff4f4] px-3 py-2 text-sm text-[#b03d3d]">
+                      Khoảng ngày không hợp lệ: ngày bắt đầu đang lớn hơn ngày kết thúc.
+                    </p>
+                  ) : null}
+
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+                    <div className="rounded-[8px] border border-[#d5e4ef] bg-[#f6fbff] px-3 py-2">
+                      <p className="text-xs text-[#648095]">Buổi đã điểm danh</p>
+                      <p className="mt-1 text-xl font-semibold text-[#1e4d6f]">
+                        {attendanceSummary.total}
+                      </p>
+                    </div>
+                    <div className="rounded-[8px] border border-[#d5e4ef] bg-[#f6fbff] px-3 py-2">
+                      <p className="text-xs text-[#648095]">Có mặt</p>
+                      <p className="mt-1 text-xl font-semibold text-[#1e4d6f]">
+                        {attendanceSummary.presentCount}
+                      </p>
+                    </div>
+                    <div className="rounded-[8px] border border-[#d5e4ef] bg-[#f6fbff] px-3 py-2">
+                      <p className="text-xs text-[#648095]">Đi muộn</p>
+                      <p className="mt-1 text-xl font-semibold text-[#1e4d6f]">
+                        {attendanceSummary.lateCount}
+                      </p>
+                    </div>
+                    <div className="rounded-[8px] border border-[#d5e4ef] bg-[#f6fbff] px-3 py-2">
+                      <p className="text-xs text-[#648095]">Có phép</p>
+                      <p className="mt-1 text-xl font-semibold text-[#1e4d6f]">
+                        {attendanceSummary.excusedCount}
+                      </p>
+                    </div>
+                    <div className="rounded-[8px] border border-[#d5e4ef] bg-[#f6fbff] px-3 py-2">
+                      <p className="text-xs text-[#648095]">Vắng</p>
+                      <p className="mt-1 text-xl font-semibold text-[#1e4d6f]">
+                        {attendanceSummary.absentCount}
+                      </p>
+                    </div>
+                    <div className="rounded-[8px] border border-[#d5e4ef] bg-[#f6fbff] px-3 py-2">
+                      <p className="text-xs text-[#648095]">Tỷ lệ tham dự</p>
+                      <p className="mt-1 text-xl font-semibold text-[#1e4d6f]">
+                        {attendanceSummary.participationRate !== null
+                          ? `${formatScore(attendanceSummary.participationRate)}%`
+                          : "-"}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="overflow-x-auto rounded-[8px] border border-[#d5e4ef]">
+                    <table className="min-w-full text-left text-sm">
+                      <thead className="bg-[#f7fbff]">
+                        <tr className="border-b border-[#cfdfec] text-[#305970]">
+                          <th className="px-2 py-2">Ngày học</th>
+                          <th className="px-2 py-2">Session ID</th>
+                          <th className="px-2 py-2">Trạng thái</th>
+                          <th className="px-2 py-2">Ghi chú</th>
                         </tr>
-                      ) : null}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {filteredAttendanceItems.map((item) => (
+                          <tr
+                            key={item.id}
+                            className="border-b border-[#e0ebf4] text-[#3f6178]"
+                          >
+                            <td className="px-2 py-2">{formatDate(item.sessionDate)}</td>
+                            <td className="px-2 py-2">{item.sessionId || "-"}</td>
+                            <td className="px-2 py-2">
+                              <span
+                                className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getAttendanceStatusClass(
+                                  item.status,
+                                )}`}
+                              >
+                                {getAttendanceStatusLabel(item.status)}
+                              </span>
+                            </td>
+                            <td className="px-2 py-2">{item.note || "-"}</td>
+                          </tr>
+                        ))}
+                        {filteredAttendanceItems.length === 0 ? (
+                          <tr>
+                            <td colSpan={4} className="px-2 py-4 text-center text-[#577086]">
+                              Chưa có dữ liệu điểm danh phù hợp với bộ lọc.
+                            </td>
+                          </tr>
+                        ) : null}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </section>
             ) : null}
