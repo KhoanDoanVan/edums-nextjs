@@ -10,6 +10,19 @@ interface UseToastFeedbackOptions {
   errorTitle?: string;
 }
 
+export const shouldHideFeedbackMessage = (message: string): boolean => {
+  const normalizedMessage = message.trim();
+
+  return [
+    /^Đã tải\b/i,
+    /^Đang lọc\b/i,
+    /^Đã xóa bộ lọc\b/i,
+    /^Đã chuyển về\b/i,
+    /^Sử dụng module\b/i,
+    /^Đã tìm thấy\b/i,
+  ].some((pattern) => pattern.test(normalizedMessage));
+};
+
 export const useToastFeedback = ({
   successMessage,
   errorMessage,
@@ -26,6 +39,11 @@ export const useToastFeedback = ({
     }
 
     lastSuccessRef.current = successMessage;
+
+    if (shouldHideFeedbackMessage(successMessage)) {
+      return;
+    }
+
     toast.success(successMessage, successTitle);
   }, [successMessage, successTitle, toast]);
 

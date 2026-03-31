@@ -1,7 +1,10 @@
 ﻿"use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { useToastFeedback } from "@/hooks/use-toast-feedback";
+import {
+  shouldHideFeedbackMessage,
+  useToastFeedback,
+} from "@/hooks/use-toast-feedback";
 import {
   createDynamicByPath,
   deleteDynamicByPath,
@@ -875,7 +878,7 @@ export const DynamicCrudPanel = ({
           </p>
         ) : null}
 
-        {successMessage ? (
+        {successMessage && !shouldHideFeedbackMessage(successMessage) ? (
           <p className="rounded-[4px] border border-[#b3dbc1] bg-[#f2fbf5] px-3 py-2 text-sm text-[#2f7b4f]">
             {successMessage}
           </p>

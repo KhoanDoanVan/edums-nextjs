@@ -5,7 +5,10 @@ import Link from "next/link";
 import { AuthGuard } from "@/components/auth/auth-guard";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/context/toast-context";
-import { useToastFeedback } from "@/hooks/use-toast-feedback";
+import {
+  shouldHideFeedbackMessage,
+  useToastFeedback,
+} from "@/hooks/use-toast-feedback";
 import {
   getAdministrativeClassById,
   getAdministrativeClasses,
@@ -14,7 +17,6 @@ import {
   getCohorts,
   getClassroomById,
   getClassrooms,
-  getCourseById,
   getCourses,
   getCoursesByFaculty,
   getCourseSectionById,
@@ -30,6 +32,7 @@ import {
   getMajors,
   getMajorsByFaculty,
   getMyAttendance,
+  getMyCourseRegistrations,
   getMyGradeReports,
   getMyProfile,
   getRecurringScheduleById,
@@ -48,10 +51,10 @@ import {
 import type {
   AdministrativeClassResponse,
   AttendanceResponse,
-  ClassSessionResponse,
   ClassroomResponse,
   CohortResponse,
   CourseResponse,
+  CourseRegistrationResponse,
   CourseSectionResponse,
   FacultyResponse,
   GradeComponentResponse,
@@ -109,18 +112,6 @@ const formatScore = (value?: number): string => {
   }
 
   return value.toFixed(2);
-};
-
-const formatCohortStatus = (value?: "ACTIVE" | "GRADUATED"): string => {
-  if (value === "ACTIVE") {
-    return "Đang đào tạo";
-  }
-
-  if (value === "GRADUATED") {
-    return "Đã tốt nghiệp";
-  }
-
-  return "-";
 };
 
 const normalizeTextValue = (value?: string): string => {
@@ -248,14 +239,6 @@ interface SpecializationFilterOption {
   majorName?: string;
 }
 
-interface AdministrativeClassFilterOption {
-  classId: number;
-  className: string;
-  majorId?: number;
-  majorName?: string;
-  cohortName?: string;
-}
-
 interface SemesterFilterOption {
   semesterId: number;
   semesterNumber?: number;
@@ -369,17 +352,57 @@ const getCreditsLabel = (
   return "-";
 };
 
-const getScheduleLabel = (section: CourseSectionResponse): string => {
-  const term = [
-    section.semesterNumber ? `Học kỳ ${section.semesterNumber}` : null,
-    section.academicYear || null,
-  ]
-    .filter(Boolean)
-    .join(" - ");
+const getRecurringScheduleDayLabel = (
+  schedule: RecurringScheduleResponse,
+): string => {
+  const normalizedDayIndex = normalizeDayIndex(
+    schedule.dayOfWeek,
+    schedule.dayOfWeekName,
+  );
 
-  const lecturer = section.lecturerName ? `GV ${section.lecturerName}` : "";
+  if (normalizedDayIndex !== null) {
+    return scheduleDayLabels[normalizedDayIndex];
+  }
 
-  return [term, lecturer].filter(Boolean).join(", ") || "Chưa có thời khóa biểu";
+  if (schedule.dayOfWeekName) {
+    return schedule.dayOfWeekName;
+  }
+
+  if (typeof schedule.dayOfWeek === "number") {
+    return schedule.dayOfWeek === 7 ? "Chủ nhật" : `Thứ ${schedule.dayOfWeek + 1}`;
+  }
+
+  return "Chưa rõ thứ";
+};
+
+const getRecurringScheduleSummaryLines = (
+  schedules?: RecurringScheduleResponse[] | null,
+): string[] => {
+  if (!Array.isArray(schedules) || schedules.length === 0) {
+    return [];
+  }
+
+  return [...schedules]
+    .sort((first, second) => {
+      const firstDay = normalizeDayIndex(first.dayOfWeek, first.dayOfWeekName) ?? 99;
+      const secondDay =
+        normalizeDayIndex(second.dayOfWeek, second.dayOfWeekName) ?? 99;
+
+      if (firstDay === secondDay) {
+        return (first.startPeriod ?? 99) - (second.startPeriod ?? 99);
+      }
+
+      return firstDay - secondDay;
+    })
+    .map((schedule) =>
+      [
+        getRecurringScheduleDayLabel(schedule),
+        getPeriodRangeLabel(schedule.startPeriod, schedule.endPeriod),
+        schedule.classroomName ? `Phòng ${schedule.classroomName}` : null,
+      ]
+        .filter(Boolean)
+        .join(", "),
+    );
 };
 
 const getSemesterDisplayLabel = (
@@ -577,28 +600,6 @@ const getRegistrationStatusClass = (status?: string): string => {
   }
 };
 
-const getCourseStatusLabel = (status?: string): string => {
-  switch (status) {
-    case "ACTIVE":
-      return "Đang hoạt động";
-    case "INACTIVE":
-      return "Ngừng mở";
-    default:
-      return status || "-";
-  }
-};
-
-const getCourseStatusClass = (status?: string): string => {
-  switch (status) {
-    case "ACTIVE":
-      return "bg-[#eef8f1] text-[#1d7a46]";
-    case "INACTIVE":
-      return "bg-[#fff0f0] text-[#bf4e4e]";
-    default:
-      return "bg-[#eef4f8] text-[#47677e]";
-  }
-};
-
 const getGradeStatusLabel = (status?: string): string => {
   switch (status) {
     case "PUBLISHED":
@@ -710,21 +711,45 @@ const parseRegistrationError = (error: unknown): RegistrationNotice => {
         status?: number;
         message?: string;
         path?: string;
+        data?: string;
       };
+      const backendDetail =
+        typeof payload.path === "string" && payload.path.trim()
+          ? payload.path.trim()
+          : typeof payload.data === "string" && payload.data.trim()
+            ? payload.data.trim()
+            : "";
 
       if (
         payload.status === 400 &&
-        typeof payload.path === "string" &&
-        payload.path.includes("schedule conflicts with section")
+        backendDetail.includes("schedule conflicts with section")
       ) {
-        const matched = payload.path.match(/section\s+([A-Za-z0-9_-]+)/i);
+        const matched = backendDetail.match(/section\s+([A-Za-z0-9_-]+)/i);
 
         return {
           title: "Không thể đăng ký học phần",
           message: matched
             ? `Lớp học phần bạn chọn bị trùng lịch với lớp ${matched[1]} đã đăng ký. Vui lòng chọn lớp khác hoặc hủy lớp đang bị trùng trước khi đăng ký lại.`
             : "Lớp học phần bạn chọn đang bị trùng lịch với một lớp đã đăng ký. Vui lòng kiểm tra lại thời khóa biểu trước khi đăng ký.",
-          detail: payload.path,
+        };
+      }
+
+      if (
+        payload.status === 400 &&
+        backendDetail.toLowerCase().includes(
+          "student has already registered for this course section",
+        )
+      ) {
+        return {
+          title: "Không thể đăng ký học phần",
+          message: "Bạn đã đăng ký lớp học phần này rồi.",
+        };
+      }
+
+      if (payload.status === 400 && backendDetail) {
+        return {
+          title: fallback.title,
+          message: backendDetail,
         };
       }
     } catch {
@@ -739,6 +764,18 @@ const parseRegistrationError = (error: unknown): RegistrationNotice => {
     title: fallback.title,
     message: error.message,
   };
+};
+
+const isActiveCourseRegistration = (
+  registration: CourseRegistrationResponse,
+): boolean => {
+  return (
+    registration.status !== "CANCELLED" &&
+    registration.status !== "DROPPED" &&
+    typeof registration.courseSectionId === "number" &&
+    Number.isInteger(registration.courseSectionId) &&
+    registration.courseSectionId > 0
+  );
 };
 
 export default function DashboardPage() {
@@ -846,27 +883,13 @@ export default function DashboardPage() {
   const [coursesBySelectedFaculty, setCoursesBySelectedFaculty] = useState<
     CourseResponse[]
   >([]);
-  const [courseDetailsById, setCourseDetailsById] = useState<
-    Record<number, CourseResponse | null>
-  >({});
-  const [loadingCourseDetailId, setLoadingCourseDetailId] = useState<number | null>(
-    null,
-  );
   const [registrationNotice, setRegistrationNotice] =
     useState<RegistrationNotice | null>(null);
   const [registeredSections, setRegisteredSections] = useState<
     RegisteredCourseItem[]
   >([]);
-  const [sectionDetail, setSectionDetail] = useState<CourseSectionResponse | null>(
-    null,
-  );
-  const [sectionSchedules, setSectionSchedules] = useState<
-    RecurringScheduleResponse[]
-  >([]);
-  const [sectionSessions, setSectionSessions] = useState<ClassSessionResponse[]>(
-    [],
-  );
-  const [isSectionDetailLoading, setIsSectionDetailLoading] = useState(false);
+  const [registrationSchedulesBySectionId, setRegistrationSchedulesBySectionId] =
+    useState<Record<number, RecurringScheduleResponse[] | null>>({});
   const [myScheduleBlocks, setMyScheduleBlocks] = useState<WeeklyScheduleBlock[]>(
     [],
   );
@@ -904,14 +927,49 @@ export default function DashboardPage() {
   const [isWorking, setIsWorking] = useState(false);
 
   useEffect(() => {
-    if (!session) {
+    if (!session?.authorization) {
       return;
     }
 
-    if (!studentIdInput) {
-      setStudentIdInput(String(session.accountId));
-    }
-  }, [session, studentIdInput]);
+    let cancelled = false;
+
+    const preloadStudentProfile = async () => {
+      try {
+        const myProfile = await getMyProfile(session.authorization);
+
+        if (cancelled) {
+          return;
+        }
+
+        setProfile((current) => current || myProfile);
+
+        if (
+          typeof myProfile.id === "number" &&
+          Number.isInteger(myProfile.id) &&
+          myProfile.id > 0
+        ) {
+          setStudentIdInput((current) => {
+            const currentValue = current.trim();
+            const accountIdValue = String(session.accountId);
+
+            if (!currentValue || currentValue === accountIdValue) {
+              return String(myProfile.id);
+            }
+
+            return current;
+          });
+        }
+      } catch {
+        // Leave the field untouched if the profile API is unavailable.
+      }
+    };
+
+    void preloadStudentProfile();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.accountId, session?.authorization]);
 
   const activeTab = useMemo(
     () =>
@@ -946,49 +1004,6 @@ export default function DashboardPage() {
       normalizedProfileForm.dateOfBirth !== normalizedProfileSnapshot.dateOfBirth
     );
   }, [normalizedProfileForm, normalizedProfileSnapshot]);
-
-  const profileCompletion = useMemo(() => {
-    const source = profile || {};
-    const profileFields = [
-      source.fullName,
-      source.email,
-      source.phone,
-      source.address,
-      source.dateOfBirth,
-      source.studentCode,
-      source.className,
-      source.majorName,
-      source.specializationName,
-      source.nationalId,
-    ];
-
-    const filledCount = profileFields.filter((value) =>
-      normalizeTextValue(String(value || "")),
-    ).length;
-    const total = profileFields.length;
-    const percentage = total > 0 ? Math.round((filledCount / total) * 100) : 0;
-
-    return {
-      filledCount,
-      total,
-      percentage,
-    };
-  }, [profile]);
-
-  const selectedSection = useMemo(() => {
-    return (
-      courseSections.find((section) => String(section.id) === selectedSectionId) ||
-      null
-    );
-  }, [courseSections, selectedSectionId]);
-
-  const selectedSectionDetails = useMemo(() => {
-    if (sectionDetail && String(sectionDetail.id) === selectedSectionId) {
-      return sectionDetail;
-    }
-
-    return selectedSection;
-  }, [sectionDetail, selectedSection, selectedSectionId]);
 
   const facultyFilterOptions = useMemo<FacultyFilterOption[]>(() => {
     return facultyCatalog
@@ -1068,23 +1083,6 @@ export default function DashboardPage() {
     selectedProfileSpecializationId,
     specializationCatalog,
   ]);
-
-  const profileClassOptions = useMemo<AdministrativeClassFilterOption[]>(() => {
-    const majorId = parsePositiveInteger(selectedProfileMajorId);
-    const source = majorId
-      ? administrativeClassCatalog.filter((item) => item.majorId === majorId)
-      : administrativeClassCatalog;
-
-    return source
-      .map((item) => ({
-        classId: item.id,
-        className: item.className || `Lớp ${item.id}`,
-        majorId: item.majorId,
-        majorName: item.majorName,
-        cohortName: item.cohortName,
-      }))
-      .sort((a, b) => a.className.localeCompare(b.className, "vi"));
-  }, [administrativeClassCatalog, selectedProfileMajorId]);
 
   const selectedProfileClassResolved = useMemo(() => {
     const classId = parsePositiveInteger(selectedProfileClassId);
@@ -1266,42 +1264,6 @@ export default function DashboardPage() {
     return option?.label || null;
   }, [selectedSemesterId, semesterFilterOptions]);
 
-  const selectedSectionCourseMetadata = getCourseMetadataForSection(
-    selectedSectionDetails,
-  );
-
-  const selectedSectionCourseId = useMemo(() => {
-    if (
-      typeof selectedSectionDetails?.courseId === "number" &&
-      Number.isInteger(selectedSectionDetails.courseId) &&
-      selectedSectionDetails.courseId > 0
-    ) {
-      return selectedSectionDetails.courseId;
-    }
-
-    if (
-      typeof selectedSectionCourseMetadata?.id === "number" &&
-      Number.isInteger(selectedSectionCourseMetadata.id) &&
-      selectedSectionCourseMetadata.id > 0
-    ) {
-      return selectedSectionCourseMetadata.id;
-    }
-
-    return null;
-  }, [selectedSectionCourseMetadata, selectedSectionDetails]);
-
-  const selectedSectionCourseDetail = useMemo(() => {
-    if (!selectedSectionCourseId) {
-      return selectedSectionCourseMetadata || null;
-    }
-
-    return courseDetailsById[selectedSectionCourseId] || selectedSectionCourseMetadata || null;
-  }, [courseDetailsById, selectedSectionCourseId, selectedSectionCourseMetadata]);
-
-  const isLoadingSelectedCourseDetail =
-    selectedSectionCourseId !== null &&
-    loadingCourseDetailId === selectedSectionCourseId;
-
   const filteredSections = useMemo(() => {
     const normalizedKeyword = courseKeyword.trim().toLowerCase();
 
@@ -1331,6 +1293,19 @@ export default function DashboardPage() {
       return matchesKeyword;
     });
   }, [courseKeyword, courseMetadataByCode, courseMetadataById, courseSections]);
+
+  const registrationScheduleSectionIds = useMemo(() => {
+    return Array.from(
+      new Set(
+        [...filteredSections, ...registeredSections.map((item) => item.section)]
+          .map((section) => section.id)
+          .filter(
+            (sectionId): sectionId is number =>
+              Number.isInteger(sectionId) && sectionId > 0,
+          ),
+      ),
+    );
+  }, [filteredSections, registeredSections]);
 
   const scheduleSemesterOptions = useMemo(() => {
     const optionsMap = new Map<number, SemesterFilterOption>();
@@ -2248,58 +2223,64 @@ export default function DashboardPage() {
     }
 
     const authorization = session?.authorization;
-    if (!authorization || !selectedSectionCourseId) {
+    if (!authorization || registrationScheduleSectionIds.length === 0) {
       return;
     }
 
-    if (
-      Object.prototype.hasOwnProperty.call(courseDetailsById, selectedSectionCourseId)
-    ) {
+    const pendingSectionIds = registrationScheduleSectionIds.filter(
+      (sectionId) =>
+        !Object.prototype.hasOwnProperty.call(
+          registrationSchedulesBySectionId,
+          sectionId,
+        ),
+    );
+
+    if (pendingSectionIds.length === 0) {
       return;
     }
 
     let cancelled = false;
-    setLoadingCourseDetailId(selectedSectionCourseId);
 
-    const loadCourseDetail = async () => {
-      try {
-        const detail = await getCourseById(selectedSectionCourseId, authorization);
+    const loadRegistrationSchedules = async () => {
+      const entries = await Promise.all(
+        pendingSectionIds.map(async (sectionId) => {
+          try {
+            const schedules = await getRecurringSchedulesBySection(
+              sectionId,
+              authorization,
+            );
 
-        if (cancelled) {
-          return;
-        }
+            return [sectionId, schedules] as const;
+          } catch {
+            return [sectionId, null] as const;
+          }
+        }),
+      );
 
-        setCourseDetailsById((current) => ({
-          ...current,
-          [selectedSectionCourseId]: detail,
-        }));
-      } catch {
-        if (cancelled) {
-          return;
-        }
-
-        setCourseDetailsById((current) => ({
-          ...current,
-          [selectedSectionCourseId]: null,
-        }));
-      } finally {
-        if (!cancelled) {
-          setLoadingCourseDetailId((current) =>
-            current === selectedSectionCourseId ? null : current,
-          );
-        }
+      if (cancelled) {
+        return;
       }
+
+      setRegistrationSchedulesBySectionId((current) => {
+        const next = { ...current };
+
+        entries.forEach(([sectionId, schedules]) => {
+          next[sectionId] = schedules;
+        });
+
+        return next;
+      });
     };
 
-    void loadCourseDetail();
+    void loadRegistrationSchedules();
 
     return () => {
       cancelled = true;
     };
   }, [
     activeTabKey,
-    courseDetailsById,
-    selectedSectionCourseId,
+    registrationScheduleSectionIds,
+    registrationSchedulesBySectionId,
     session?.authorization,
   ]);
 
@@ -2571,12 +2552,22 @@ export default function DashboardPage() {
 
   const getStudentIdValue = (): number | null => {
     const parsed = Number(studentIdInput);
-    if (!Number.isInteger(parsed) || parsed <= 0) {
-      setTabError("Mã sinh viên không hợp le.");
-      return null;
+    if (Number.isInteger(parsed) && parsed > 0) {
+      return parsed;
     }
 
-    return parsed;
+    if (
+      typeof profile?.id === "number" &&
+      Number.isInteger(profile.id) &&
+      profile.id > 0
+    ) {
+      return profile.id;
+    }
+
+    setTabError(
+      "Không xác định được mã định danh sinh viên từ hồ sơ. Vui lòng tải lại thông tin cá nhân.",
+    );
+    return null;
   };
 
   const runAction = async (action: () => Promise<void>) => {
@@ -2590,6 +2581,96 @@ export default function DashboardPage() {
     } finally {
       setIsWorking(false);
     }
+  };
+
+  const resolveRegisteredSectionItems = async (
+    registrations: CourseRegistrationResponse[],
+    authorization: string,
+  ): Promise<RegisteredCourseItem[]> => {
+    const sortedRegistrations = registrations
+      .filter(isActiveCourseRegistration)
+      .sort((first, second) => {
+        const firstTime = first.registrationTime
+          ? new Date(first.registrationTime).getTime()
+          : 0;
+        const secondTime = second.registrationTime
+          ? new Date(second.registrationTime).getTime()
+          : 0;
+
+        if (firstTime === secondTime) {
+          return second.id - first.id;
+        }
+
+        return secondTime - firstTime;
+      });
+
+    const registrationsBySectionId = new Map<number, CourseRegistrationResponse>();
+    sortedRegistrations.forEach((registration) => {
+      const sectionId = registration.courseSectionId;
+      if (!sectionId || registrationsBySectionId.has(sectionId)) {
+        return;
+      }
+
+      registrationsBySectionId.set(sectionId, registration);
+    });
+
+    const sectionIds = Array.from(registrationsBySectionId.keys());
+    if (sectionIds.length === 0) {
+      return [];
+    }
+
+    const sectionResponses = await Promise.all(
+      sectionIds.map((sectionId) =>
+        getCourseSectionById(sectionId, authorization).catch(() => null),
+      ),
+    );
+
+    const sectionById = new Map<number, CourseSectionResponse>();
+    sectionResponses.forEach((section) => {
+      if (!section || !Number.isInteger(section.id) || section.id <= 0) {
+        return;
+      }
+
+      sectionById.set(section.id, section);
+    });
+
+    return Array.from(registrationsBySectionId.values()).flatMap((registration) => {
+      const sectionId = registration.courseSectionId;
+      if (!sectionId) {
+        return [];
+      }
+
+      const section = sectionById.get(sectionId);
+      if (!section) {
+        return [];
+      }
+
+      return [
+        {
+          registrationId: registration.id,
+          registrationTime: registration.registrationTime,
+          status: registration.status,
+          section: {
+            ...section,
+            sectionCode: registration.sectionCode || section.sectionCode,
+            courseId: registration.courseId || section.courseId,
+            courseCode: registration.courseCode || section.courseCode,
+            courseName: registration.courseName || section.courseName,
+            semesterId: registration.semesterId || section.semesterId,
+          },
+        },
+      ];
+    });
+  };
+
+  const loadMyRegisteredSections = async (
+    authorization: string,
+    semesterId?: number,
+  ): Promise<RegisteredCourseItem[]> => {
+    const registrations = await getMyCourseRegistrations(authorization, semesterId);
+    const items = await resolveRegisteredSectionItems(registrations, authorization);
+    setRegisteredSections(items);
+    return items;
   };
 
   const buildFallbackProfile = (): ProfileResponse => {
@@ -3029,6 +3110,13 @@ export default function DashboardPage() {
       }
 
       setProfile(resolvedProfile);
+      if (
+        typeof resolvedProfile.id === "number" &&
+        Number.isInteger(resolvedProfile.id) &&
+        resolvedProfile.id > 0
+      ) {
+        setStudentIdInput(String(resolvedProfile.id));
+      }
       hydrateProfileForm(resolvedProfile);
       await syncProfileMajorReferenceContext(resolvedProfile, authorization);
       setProfileLastLoadedAt(new Date().toISOString());
@@ -3050,6 +3138,13 @@ export default function DashboardPage() {
             buildFallbackProfile(),
           );
           setProfile(resolvedProfile);
+          if (
+            typeof resolvedProfile.id === "number" &&
+            Number.isInteger(resolvedProfile.id) &&
+            resolvedProfile.id > 0
+          ) {
+            setStudentIdInput(String(resolvedProfile.id));
+          }
           hydrateProfileForm(resolvedProfile);
           await syncProfileMajorReferenceContext(resolvedProfile, authorization);
           setProfileLastLoadedAt(new Date().toISOString());
@@ -3088,66 +3183,6 @@ export default function DashboardPage() {
     } finally {
       setIsWorking(false);
     }
-  };
-
-  const handleProfileFacultyReferenceChange = async (nextFacultyId: string) => {
-    setSelectedProfileFacultyId(nextFacultyId);
-    setSelectedProfileMajorId("");
-    setSelectedProfileSpecializationId("");
-    setSelectedProfileClassId("");
-    setSpecializationsBySelectedProfileMajor([]);
-
-    const authorization = session?.authorization;
-    const facultyId = parsePositiveInteger(nextFacultyId);
-
-    if (!authorization || !facultyId) {
-      setMajorsBySelectedProfileFaculty([]);
-      return;
-    }
-
-    setIsProfileMajorContextLoading(true);
-    setTabError("");
-
-    try {
-      const majors = await getMajorsByFaculty(facultyId, authorization);
-      setMajorsBySelectedProfileFaculty(majors);
-    } catch (error) {
-      setMajorsBySelectedProfileFaculty([]);
-      setTabError(toErrorMessage(error));
-    } finally {
-      setIsProfileMajorContextLoading(false);
-    }
-  };
-
-  const handleProfileMajorReferenceChange = async (nextMajorId: string) => {
-    setSelectedProfileMajorId(nextMajorId);
-    setSelectedProfileSpecializationId("");
-    setSelectedProfileClassId("");
-
-    const authorization = session?.authorization;
-    const majorId = parsePositiveInteger(nextMajorId);
-
-    if (!authorization || !majorId) {
-      setSpecializationsBySelectedProfileMajor([]);
-      return;
-    }
-
-    setIsProfileSpecializationContextLoading(true);
-    setTabError("");
-
-    try {
-      const specializations = await getSpecializationsByMajor(majorId, authorization);
-      setSpecializationsBySelectedProfileMajor(specializations);
-    } catch (error) {
-      setSpecializationsBySelectedProfileMajor([]);
-      setTabError(toErrorMessage(error));
-    } finally {
-      setIsProfileSpecializationContextLoading(false);
-    }
-  };
-
-  const handleProfileClassReferenceChange = (nextClassId: string) => {
-    setSelectedProfileClassId(nextClassId);
   };
 
   const handleRefreshSelectedProfileClassDetail = async () => {
@@ -3409,9 +3444,8 @@ export default function DashboardPage() {
 
   const handleLoadStudentWeeklySchedule = async () => {
     const authorization = requireSession();
-    const studentId = getStudentIdValue();
 
-    if (!authorization || !studentId) {
+    if (!authorization) {
       return;
     }
 
@@ -3420,42 +3454,25 @@ export default function DashboardPage() {
     setTabMessage("");
 
     try {
-      const [reports, classrooms] = await Promise.all([
-        getMyGradeReports(studentId, authorization),
+      const [registrations, classrooms] = await Promise.all([
+        getMyCourseRegistrations(authorization),
         getClassrooms(authorization).catch(() => []),
       ]);
       setClassroomCatalog(classrooms);
-      const reportSectionIds = reports
-        .map((item) => item.sectionId)
-        .filter(
-          (value): value is number =>
-            typeof value === "number" && Number.isInteger(value) && value > 0,
-        );
-      const localRegisteredSectionIds = registeredSections
-        .map((item) => item.section.id)
-        .filter((value): value is number => Number.isInteger(value) && value > 0);
-
-      const sectionIds = Array.from(
-        new Set([...reportSectionIds, ...localRegisteredSectionIds]),
+      const registeredItems = await resolveRegisteredSectionItems(
+        registrations,
+        authorization,
       );
 
-      if (sectionIds.length === 0) {
+      if (registeredItems.length === 0) {
         setMyScheduleBlocks([]);
         setTabMessage(
-          "Chưa tìm thấy lớp học phần của sinh viên để tạo thời khóa biểu.",
+          "Sinh viên chưa có lớp học phần đã đăng ký để tạo thời khóa biểu.",
         );
         return;
       }
 
-      const sectionResponses = await Promise.all(
-        sectionIds.map((sectionId) =>
-          getCourseSectionById(sectionId, authorization).catch(() => null),
-        ),
-      );
-
-      const validSections = sectionResponses.filter(
-        (section): section is CourseSectionResponse => Boolean(section),
-      );
+      const validSections = registeredItems.map((item) => item.section);
 
       const nextBlocks: WeeklyScheduleBlock[] = [];
 
@@ -3483,6 +3500,10 @@ export default function DashboardPage() {
 
               if (sessions.length > 0) {
                 sessions.forEach((session) => {
+                  if (!session.sessionDate || session.status === "CANCELLED") {
+                    return;
+                  }
+
                   const dayIndex =
                     getDayIndexFromSessionDate(session.sessionDate) ??
                     normalizeDayIndex(schedule.dayOfWeek, schedule.dayOfWeekName);
@@ -3515,34 +3536,6 @@ export default function DashboardPage() {
 
                 return;
               }
-
-              const dayIndex = normalizeDayIndex(
-                schedule.dayOfWeek,
-                schedule.dayOfWeekName,
-              );
-              if (dayIndex === null) {
-                return;
-              }
-
-              nextBlocks.push({
-                key: `template-${section.id}-${schedule.id || `${dayIndex}-${parsedStart}-${parsedEnd}`}`,
-                sectionId: section.id,
-                recurringScheduleId: schedule.id,
-                classroomId: schedule.classroomId,
-                lecturerId: section.lecturerId,
-                courseName: getCourseDisplayName(section),
-                courseCode: section.courseCode,
-                sectionCode: section.sectionCode,
-                lecturerName: section.lecturerName,
-                classroomName: schedule.classroomName,
-                startPeriod: parsedStart,
-                endPeriod: parsedEnd,
-                dayIndex,
-                status: section.status,
-                semesterId: section.semesterId,
-                semesterNumber: section.semesterNumber,
-                academicYear: section.academicYear,
-              });
             }),
           );
         }),
@@ -3564,7 +3557,13 @@ export default function DashboardPage() {
       });
 
       setMyScheduleBlocks(dedupedBlocks);
-      setTabMessage(`Đã tải thời khóa biểu cá nhân với ${dedupedBlocks.length} ca học.`);
+      if (dedupedBlocks.length === 0) {
+        setTabMessage(
+          "Chưa có buổi học cụ thể trong thời khóa biểu của các học phần đã đăng ký.",
+        );
+      } else {
+        setTabMessage(`Đã tải thời khóa biểu cá nhân với ${dedupedBlocks.length} ca học.`);
+      }
     } catch (error) {
       setTabError(toErrorMessage(error));
       setMyScheduleBlocks([]);
@@ -3673,36 +3672,6 @@ export default function DashboardPage() {
     } finally {
       setLoadingLecturerDetailId((current) =>
         current === selectedScheduleLecturerId ? null : current,
-      );
-    }
-  };
-
-  const handleRefreshSelectedCourseDetail = async () => {
-    const authorization = requireSession();
-    if (!authorization || !selectedSectionCourseId) {
-      return;
-    }
-
-    setLoadingCourseDetailId(selectedSectionCourseId);
-    setTabError("");
-
-    try {
-      const detail = await getCourseById(selectedSectionCourseId, authorization);
-
-      setCourseDetailsById((current) => ({
-        ...current,
-        [selectedSectionCourseId]: detail,
-      }));
-      setTabMessage("Đã làm mới thông tin chi tiết môn học.");
-    } catch (error) {
-      setCourseDetailsById((current) => ({
-        ...current,
-        [selectedSectionCourseId]: null,
-      }));
-      setTabError(toErrorMessage(error));
-    } finally {
-      setLoadingCourseDetailId((current) =>
-        current === selectedSectionCourseId ? null : current,
       );
     }
   };
@@ -3839,6 +3808,10 @@ export default function DashboardPage() {
 
       setCourseSections(filteredSectionsByScope);
       syncSelectedSection(filteredSectionsByScope);
+      await loadMyRegisteredSections(
+        authorization,
+        parsePositiveInteger(semesterIdValue) || undefined,
+      );
       setTabMessage(
         `Đã tải ${filteredSectionsByScope.length} lớp học phần phù hợp bộ lọc.`,
       );
@@ -3882,7 +3855,6 @@ export default function DashboardPage() {
         message: "Vui lòng chọn một lớp học phần trước khi đăng ký.",
       };
       setRegistrationNotice(notice);
-      toast.error(notice.message, notice.title);
       return;
     }
 
@@ -3894,7 +3866,7 @@ export default function DashboardPage() {
       setTabMessage("");
       setRegistrationNotice(null);
 
-      const response = await registerCourseSection(
+      await registerCourseSection(
         {
           courseSectionId: parsedSectionId,
           studentId:
@@ -3905,145 +3877,20 @@ export default function DashboardPage() {
         authorization,
       );
 
-      const registeredSectionSnapshot = selectedSectionDetails || selectedSection;
-
-      if (registeredSectionSnapshot) {
-        setRegisteredSections((currentItems) => {
-          const nextItem: RegisteredCourseItem = {
-            registrationId: response.id,
-            registrationTime: response.registrationTime,
-            status: response.status,
-            section: registeredSectionSnapshot,
-          };
-
-          return [
-            nextItem,
-            ...currentItems.filter(
-              (item) => item.section.id !== registeredSectionSnapshot.id,
-            ),
-          ];
-        });
-      }
+      await loadMyRegisteredSections(
+        authorization,
+        parsePositiveInteger(selectedSemesterId) || undefined,
+      );
 
       setTabMessage("Đăng ký học phần thành công.");
       toast.success("Đăng ký học phần thành công.", "Thành công");
     } catch (error) {
       const notice = parseRegistrationError(error);
       setRegistrationNotice(notice);
-      toast.error(notice.message, notice.title);
     } finally {
       setIsWorking(false);
     }
   };
-
-  useEffect(() => {
-    if (activeTabKey !== "course-registration") {
-      return;
-    }
-
-    const authorization = session?.authorization;
-    const parsedSectionId = parsePositiveInteger(selectedSectionId);
-
-    if (!authorization || !parsedSectionId) {
-      setSectionDetail(null);
-      setSectionSchedules([]);
-      setSectionSessions([]);
-      return;
-    }
-
-    let isCancelled = false;
-
-    const loadSelectedSectionDetail = async () => {
-      setIsSectionDetailLoading(true);
-
-      try {
-        const detail = await getCourseSectionById(parsedSectionId, authorization);
-        if (isCancelled) {
-          return;
-        }
-        setSectionDetail(detail);
-
-        try {
-          const schedules = await getRecurringSchedulesBySection(
-            parsedSectionId,
-            authorization,
-          );
-          if (isCancelled) {
-            return;
-          }
-          setSectionSchedules(schedules);
-
-          if (schedules.length === 0) {
-            setSectionSessions([]);
-            return;
-          }
-
-          const sessionGroups = await Promise.all(
-            schedules.map((schedule) => {
-              if (!schedule.id) {
-                return Promise.resolve([]);
-              }
-
-              return getRecurringScheduleSessions(
-                schedule.id,
-                authorization,
-              ).catch(() => []);
-            }),
-          );
-
-          if (isCancelled) {
-            return;
-          }
-
-          const mergedSessions = sessionGroups
-            .flat()
-            .sort((first, second) => {
-              const firstTime = first.sessionDate
-                ? new Date(first.sessionDate).getTime()
-                : Number.MAX_SAFE_INTEGER;
-              const secondTime = second.sessionDate
-                ? new Date(second.sessionDate).getTime()
-                : Number.MAX_SAFE_INTEGER;
-
-              if (firstTime === secondTime) {
-                return (
-                  (first.startPeriod ?? Number.MAX_SAFE_INTEGER) -
-                  (second.startPeriod ?? Number.MAX_SAFE_INTEGER)
-                );
-              }
-
-              return firstTime - secondTime;
-            });
-
-          setSectionSessions(mergedSessions);
-        } catch {
-          if (isCancelled) {
-            return;
-          }
-          setSectionSchedules([]);
-          setSectionSessions([]);
-        }
-      } catch (error) {
-        if (isCancelled) {
-          return;
-        }
-        setTabError(toErrorMessage(error));
-        setSectionDetail(null);
-        setSectionSchedules([]);
-        setSectionSessions([]);
-      } finally {
-        if (!isCancelled) {
-          setIsSectionDetailLoading(false);
-        }
-      }
-    };
-
-    void loadSelectedSectionDetail();
-
-    return () => {
-      isCancelled = true;
-    };
-  }, [activeTabKey, selectedSectionId, session?.authorization]);
 
   const handleChangePassword = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -4107,7 +3954,7 @@ export default function DashboardPage() {
             <div className="text-right leading-tight">
               <p className="text-sm font-semibold">{session?.username || "-"}</p>
               <p className="text-xs opacity-90">
-                Mã sinh viên: {studentIdInput || "-"}
+                Mã sinh viên: {profile?.studentCode || studentIdInput || "-"}
               </p>
             </div>
             <button
@@ -4185,7 +4032,7 @@ export default function DashboardPage() {
                     {tabError}
                   </p>
                 ) : null}
-                {tabMessage ? (
+                {tabMessage && !shouldHideFeedbackMessage(tabMessage) ? (
                   <p className="rounded-[4px] border border-[#b3dbc1] bg-[#f2fbf5] px-3 py-2 text-[#2f7b4f]">
                     {tabMessage}
                   </p>
@@ -4285,38 +4132,15 @@ export default function DashboardPage() {
                 </div>
                 <div className="grid gap-4 px-4 py-4 lg:grid-cols-[1fr_1fr]">
                   <div className="space-y-3">
-                    <div className="rounded-[6px] border border-[#c8dceb] bg-[#f5fbff] px-3 py-2">
-                      <p className="text-sm text-[#3f637a]">
-                        Mức độ hoàn thiện hồ sơ:{" "}
-                        <span className="font-semibold text-[#1f567b]">
-                          {profileCompletion.filledCount}/{profileCompletion.total} trường
-                        </span>
-                      </p>
-                      <div className="mt-2 h-2 rounded-full bg-[#e1edf6]">
-                        <div
-                          className="h-full rounded-full bg-[#4b9fd4]"
-                          style={{ width: `${profileCompletion.percentage}%` }}
-                        />
-                      </div>
-                      <p className="mt-1 text-xs text-[#5f7e93]">
-                        {profileCompletion.percentage}% hoàn thiện
-                      </p>
-                    </div>
                     <div className="rounded-[6px] border border-[#c8dceb] bg-[#f5fbff] p-3 text-sm text-[#335a72]">
                       {isWorking && !profile ? (
                         <p className="text-[#4c6e86]">Đang tải thông tin hồ sơ...</p>
                       ) : (
                         <div className="grid gap-2 sm:grid-cols-2">
                           <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
-                            <p className="text-xs text-[#6f8798]">Username</p>
+                            <p className="text-xs text-[#6f8798]">Họ và tên</p>
                             <p className="font-semibold text-[#1c4f72]">
-                              {profile?.username || "-"}
-                            </p>
-                          </div>
-                          <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
-                            <p className="text-xs text-[#6f8798]">Vai trò</p>
-                            <p className="font-semibold text-[#1c4f72]">
-                              {profile?.role || "-"}
+                              {profile?.fullName || "-"}
                             </p>
                           </div>
                           <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
@@ -4360,12 +4184,6 @@ export default function DashboardPage() {
                             </p>
                           </div>
                           <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
-                            <p className="text-xs text-[#6f8798]">CCCD/CMND</p>
-                            <p className="font-semibold text-[#1c4f72]">
-                              {profile?.nationalId || "-"}
-                            </p>
-                          </div>
-                          <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
                             <p className="text-xs text-[#6f8798]">Ngày sinh</p>
                             <p className="font-semibold text-[#1c4f72]">
                               {profile?.dateOfBirth
@@ -4386,250 +4204,101 @@ export default function DashboardPage() {
                     <div className="rounded-[6px] border border-[#c8dceb] bg-[#f5fbff] p-3 text-sm text-[#335a72]">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <h4 className="text-sm font-semibold text-[#1f567b]">
-                          Thông tin khoa - ngành
+                          Thông tin học tập
                         </h4>
-                        {isProfileReferenceLoading ? (
-                          <span className="text-xs text-[#5f7e93]">Đang tải danh mục...</span>
-                        ) : null}
-                      </div>
-
-                      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-                        <div className="space-y-1">
-                          <label className="text-xs font-semibold text-[#5f7e93]">
-                            Khoa
-                          </label>
-                          <select
-                            className="h-10 w-full rounded-[6px] border border-[#c8d3dd] bg-white px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
-                            value={selectedProfileFacultyId}
-                            onChange={(event) => {
-                              void handleProfileFacultyReferenceChange(
-                                event.target.value,
-                              );
+                        <div className="flex flex-wrap gap-2">
+                          {selectedProfileCohortIdValue ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handleRefreshSelectedProfileCohortDetail();
+                              }}
+                              disabled={
+                                isProfileReferenceLoading ||
+                                isLoadingSelectedProfileCohortDetail
+                              }
+                              className="rounded-[6px] border border-[#6da8c9] bg-white px-3 py-1.5 text-xs font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
+                            >
+                              {isLoadingSelectedProfileCohortDetail
+                                ? "Đang tải niên khóa..."
+                                : "Làm mới niên khóa"}
+                            </button>
+                          ) : null}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void handleRefreshSelectedProfileClassDetail();
                             }}
-                            disabled={isProfileReferenceLoading}
-                          >
-                            <option value="">Tất cả khoa</option>
-                            {facultyFilterOptions.map((option) => (
-                              <option key={option.facultyId} value={option.facultyId}>
-                                {option.facultyCode
-                                  ? `${option.facultyCode} - ${option.facultyName}`
-                                  : option.facultyName}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-semibold text-[#5f7e93]">
-                            Ngành
-                          </label>
-                          <select
-                            className="h-10 w-full rounded-[6px] border border-[#c8d3dd] bg-white px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
-                            value={selectedProfileMajorId}
-                            onChange={(event) => {
-                              void handleProfileMajorReferenceChange(event.target.value);
-                            }}
-                            disabled={isProfileReferenceLoading}
-                          >
-                            <option value="">Chọn ngành</option>
-                            {profileMajorOptions.map((option) => (
-                              <option key={option.majorId} value={option.majorId}>
-                                {option.majorCode
-                                  ? `${option.majorCode} - ${option.majorName}`
-                                  : option.majorName}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-semibold text-[#5f7e93]">
-                            Chuyên ngành
-                          </label>
-                          <select
-                            className="h-10 w-full rounded-[6px] border border-[#c8d3dd] bg-white px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
-                            value={selectedProfileSpecializationId}
-                            onChange={(event) =>
-                              setSelectedProfileSpecializationId(event.target.value)
+                            disabled={
+                              isProfileReferenceLoading ||
+                              !selectedProfileClassIdValue ||
+                              isLoadingSelectedProfileClassDetail
                             }
-                            disabled={isProfileReferenceLoading}
+                            className="rounded-[6px] border border-[#6da8c9] bg-white px-3 py-1.5 text-xs font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
                           >
-                            <option value="">Chọn chuyên ngành</option>
-                            {profileSpecializationOptions.map((option) => (
-                              <option
-                                key={option.specializationId}
-                                value={option.specializationId}
-                              >
-                                {option.specializationName}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div className="space-y-1">
-                          <label className="text-xs font-semibold text-[#5f7e93]">
-                            Lớp hành chính
-                          </label>
-                          <select
-                            className="h-10 w-full rounded-[6px] border border-[#c8d3dd] bg-white px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
-                            value={selectedProfileClassId}
-                            onChange={(event) => {
-                              handleProfileClassReferenceChange(event.target.value);
-                            }}
-                            disabled={isProfileReferenceLoading}
-                          >
-                            <option value="">Chọn lớp hành chính</option>
-                            {profileClassOptions.map((option) => (
-                              <option key={option.classId} value={option.classId}>
-                                {option.className}
-                              </option>
-                            ))}
-                          </select>
+                            {isLoadingSelectedProfileClassDetail
+                              ? "Đang tải lớp..."
+                              : "Làm mới lớp"}
+                          </button>
                         </div>
                       </div>
 
-                      {selectedProfileMajorResolved ? (
-                        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-                          <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
-                            <p className="text-xs text-[#6f8798]">Mã ngành</p>
-                            <p className="font-semibold text-[#1c4f72]">
-                              {selectedProfileMajorResolved.majorCode || "-"}
-                            </p>
-                          </div>
-                          <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
-                            <p className="text-xs text-[#6f8798]">Khoa quản lý</p>
-                            <p className="font-semibold text-[#1c4f72]">
-                              {selectedProfileMajorResolved.facultyName || "-"}
-                            </p>
-                          </div>
-                          <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
-                            <p className="text-xs text-[#6f8798]">Chuyên ngành</p>
-                            <p className="font-semibold text-[#1c4f72]">
-                              {selectedProfileSpecializationResolved?.specializationName ||
-                                normalizeTextValue(profile?.specializationName) ||
-                                "-"}
-                            </p>
-                          </div>
-                          <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
-                            <p className="text-xs text-[#6f8798]">Lớp hành chính</p>
-                            <p className="font-semibold text-[#1c4f72]">
-                              {selectedProfileClassResolved?.className ||
-                                normalizeTextValue(profile?.className) ||
-                                "-"}
-                            </p>
-                          </div>
-                        </div>
+                      {isProfileReferenceLoading ? (
+                        <p className="mt-2 text-xs text-[#5f7e93]">
+                          Đang đồng bộ dữ liệu học tập từ hệ thống...
+                        </p>
                       ) : null}
 
-                      {selectedProfileClassResolved ? (
-                        <div className="mt-3 rounded-[6px] border border-[#d4e6f2] bg-white p-3">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <h5 className="text-sm font-semibold text-[#1c4f72]">
-                              Chi tiết lớp hành chính
-                            </h5>
-                            <div className="flex flex-wrap gap-2">
-                              {selectedProfileCohortIdValue ? (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    void handleRefreshSelectedProfileCohortDetail();
-                                  }}
-                                  disabled={
-                                    isProfileReferenceLoading ||
-                                    isLoadingSelectedProfileCohortDetail
-                                  }
-                                  className="rounded-[6px] border border-[#6da8c9] bg-white px-3 py-1.5 text-xs font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
-                                >
-                                  {isLoadingSelectedProfileCohortDetail
-                                    ? "Đang làm mới niên khóa..."
-                                    : "Làm mới niên khóa"}
-                                </button>
-                              ) : null}
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  void handleRefreshSelectedProfileClassDetail();
-                                }}
-                                disabled={
-                                  isProfileReferenceLoading ||
-                                  !selectedProfileClassIdValue ||
-                                  isLoadingSelectedProfileClassDetail
-                                }
-                                className="rounded-[6px] border border-[#6da8c9] bg-white px-3 py-1.5 text-xs font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
-                              >
-                                {isLoadingSelectedProfileClassDetail
-                                  ? "Đang làm mới lớp..."
-                                  : "Làm mới chi tiết lớp"}
-                              </button>
-                            </div>
-                          </div>
-                          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                            <div className="rounded-[4px] border border-[#d4e6f2] bg-[#f9fcff] px-3 py-2">
-                              <p className="text-xs text-[#6f8798]">Sĩ số tối đa</p>
-                              <p className="font-semibold text-[#1c4f72]">
-                                {typeof selectedProfileClassResolved.maxCapacity === "number"
-                                  ? selectedProfileClassResolved.maxCapacity
-                                  : "-"}
-                              </p>
-                            </div>
-                            <div className="rounded-[4px] border border-[#d4e6f2] bg-[#f9fcff] px-3 py-2">
-                              <p className="text-xs text-[#6f8798]">Cố vấn học tập</p>
-                              <p className="font-semibold text-[#1c4f72]">
-                                {selectedProfileClassResolved.headLecturerName || "-"}
-                              </p>
-                            </div>
-                            <div className="rounded-[4px] border border-[#d4e6f2] bg-[#f9fcff] px-3 py-2">
-                              <p className="text-xs text-[#6f8798]">Niên khóa</p>
-                              <p className="font-semibold text-[#1c4f72]">
-                                {selectedProfileCohortResolved?.cohortName ||
-                                  selectedProfileClassResolved.cohortName ||
-                                  "-"}
-                              </p>
-                            </div>
-                            <div className="rounded-[4px] border border-[#d4e6f2] bg-[#f9fcff] px-3 py-2">
-                              <p className="text-xs text-[#6f8798]">Ngành quản lý</p>
-                              <p className="font-semibold text-[#1c4f72]">
-                                {selectedProfileClassResolved.majorName || "-"}
-                              </p>
-                            </div>
-                            <div className="rounded-[4px] border border-[#d4e6f2] bg-[#f9fcff] px-3 py-2">
-                              <p className="text-xs text-[#6f8798]">Khóa từ năm</p>
-                              <p className="font-semibold text-[#1c4f72]">
-                                {selectedProfileCohortResolved?.startYear || "-"}
-                              </p>
-                            </div>
-                            <div className="rounded-[4px] border border-[#d4e6f2] bg-[#f9fcff] px-3 py-2">
-                              <p className="text-xs text-[#6f8798]">Khóa đến năm</p>
-                              <p className="font-semibold text-[#1c4f72]">
-                                {selectedProfileCohortResolved?.endYear || "-"}
-                              </p>
-                            </div>
-                            <div className="rounded-[4px] border border-[#d4e6f2] bg-[#f9fcff] px-3 py-2">
-                              <p className="text-xs text-[#6f8798]">Trạng thái khóa</p>
-                              <p className="font-semibold text-[#1c4f72]">
-                                {formatCohortStatus(selectedProfileCohortResolved?.status)}
-                              </p>
-                            </div>
-                          </div>
+                      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                        <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
+                          <p className="text-xs text-[#6f8798]">Khoa</p>
+                          <p className="font-semibold text-[#1c4f72]">
+                            {selectedProfileMajorResolved?.facultyName || "-"}
+                          </p>
                         </div>
-                      ) : null}
+                        <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
+                          <p className="text-xs text-[#6f8798]">Ngành</p>
+                          <p className="font-semibold text-[#1c4f72]">
+                            {selectedProfileMajorResolved?.majorName ||
+                              profile?.majorName ||
+                              "-"}
+                          </p>
+                        </div>
+                        <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
+                          <p className="text-xs text-[#6f8798]">Chuyên ngành</p>
+                          <p className="font-semibold text-[#1c4f72]">
+                            {selectedProfileSpecializationResolved?.specializationName ||
+                              profile?.specializationName ||
+                              "-"}
+                          </p>
+                        </div>
+                        <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
+                          <p className="text-xs text-[#6f8798]">Lớp hành chính</p>
+                          <p className="font-semibold text-[#1c4f72]">
+                            {selectedProfileClassResolved?.className ||
+                              profile?.className ||
+                              "-"}
+                          </p>
+                        </div>
+                        <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
+                          <p className="text-xs text-[#6f8798]">Cố vấn học tập</p>
+                          <p className="font-semibold text-[#1c4f72]">
+                            {selectedProfileClassResolved?.headLecturerName || "-"}
+                          </p>
+                        </div>
+                        <div className="rounded-[4px] border border-[#d4e6f2] bg-white px-3 py-2">
+                          <p className="text-xs text-[#6f8798]">Niên khóa</p>
+                          <p className="font-semibold text-[#1c4f72]">
+                            {selectedProfileCohortResolved?.cohortName ||
+                              selectedProfileClassResolved?.cohortName ||
+                              "-"}
+                          </p>
+                        </div>
+                      </div>
 
                       {!selectedProfileMajorResolved && normalizeTextValue(profile?.majorName) ? (
                         <p className="mt-2 text-xs text-[#5f7e93]">
-                          Chưa tìm thấy ngành phù hợp với dữ liệu hiện tại.
-                        </p>
-                      ) : null}
-
-                      {!selectedProfileSpecializationResolved &&
-                      normalizeTextValue(profile?.specializationName) ? (
-                        <p className="mt-2 text-xs text-[#5f7e93]">
-                          Chưa tìm thấy chuyên ngành phù hợp với dữ liệu hiện tại.
-                        </p>
-                      ) : null}
-
-                      {!selectedProfileClassResolved && normalizeTextValue(profile?.className) ? (
-                        <p className="mt-2 text-xs text-[#5f7e93]">
-                          Chưa tìm thấy lớp hành chính phù hợp với dữ liệu hiện tại.
+                          Dữ liệu ngành đang hiển thị theo hồ sơ hiện có.
                         </p>
                       ) : null}
                     </div>
@@ -4786,18 +4455,6 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="space-y-5 px-4 py-4">
-                  {registrationNotice ? (
-                    <div className="rounded-[8px] border border-[#efbcbc] bg-[#fff5f5] px-4 py-3 text-[#a94242]">
-                      <p className="text-sm font-semibold">{registrationNotice.title}</p>
-                      <p className="mt-1 text-sm">{registrationNotice.message}</p>
-                      {registrationNotice.detail ? (
-                        <p className="mt-1 text-xs text-[#b86a6a]">
-                          Chi tiết: {registrationNotice.detail}
-                        </p>
-                      ) : null}
-                    </div>
-                  ) : null}
-
                   <div className="grid gap-3 md:grid-cols-4">
                     <input
                       className="h-11 rounded-[8px] border border-[#d4e2ec] bg-white px-4 text-sm text-[#214b66] outline-none focus:border-[#5fa7d0]"
@@ -4880,6 +4537,13 @@ export default function DashboardPage() {
                             const selected = String(section.id) === selectedSectionId;
                             const capacity = section.maxCapacity ?? "-";
                             const courseMeta = getCourseMetadataForSection(section);
+                            const hasLoadedSchedules = Object.prototype.hasOwnProperty.call(
+                              registrationSchedulesBySectionId,
+                              section.id,
+                            );
+                            const scheduleLines = getRecurringScheduleSummaryLines(
+                              registrationSchedulesBySectionId[section.id],
+                            );
 
                             return (
                               <tr
@@ -4936,7 +4600,19 @@ export default function DashboardPage() {
                                   </span>
                                 </td>
                                 <td className="px-3 py-3 align-top text-[#58758a]">
-                                  {getScheduleLabel(section)}
+                                  {!hasLoadedSchedules ? (
+                                    <span>Đang tải lịch định kỳ...</span>
+                                  ) : scheduleLines.length > 0 ? (
+                                    <div className="space-y-1">
+                                      {scheduleLines.map((line, index) => (
+                                        <p key={`${section.id}-schedule-${index}`}>
+                                          {line}
+                                        </p>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <span>Chưa có lịch định kỳ</span>
+                                  )}
                                 </td>
                               </tr>
                             );
@@ -4953,218 +4629,6 @@ export default function DashboardPage() {
                           ) : null}
                         </tbody>
                       </table>
-                    </div>
-                  </div>
-
-                  <div className="rounded-[12px] border border-[#6da8c9]">
-                    <div className="border-b border-[#c5dced] px-4 py-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <h3 className="text-[18px] font-semibold text-[#1a4f75]">
-                          Chi tiết lớp học phần đã chọn
-                        </h3>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void handleRefreshSelectedCourseDetail();
-                          }}
-                          disabled={!selectedSectionCourseId || isLoadingSelectedCourseDetail}
-                          className="h-9 rounded-[8px] border border-[#6da8c9] bg-white px-3 text-sm font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
-                        >
-                          {isLoadingSelectedCourseDetail
-                            ? "Đang tải..."
-                            : "Làm mới chi tiết môn học"}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="space-y-4 px-4 py-4">
-                      {isSectionDetailLoading ? (
-                        <p className="text-sm text-[#5d7b91]">
-                          Đang tải thông tin chi tiết lớp học phần...
-                        </p>
-                      ) : null}
-
-                        {isLoadingSelectedCourseDetail ? (
-                          <p className="text-sm text-[#5d7b91]">
-                            Đang tải thông tin chi tiết môn học từ hệ thống...
-                          </p>
-                        ) : null}
-
-                      {selectedSectionDetails ? (
-                        <div className="grid gap-3 md:grid-cols-3">
-                          <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f8fcff] px-3 py-2">
-                            <p className="text-xs text-[#65839a]">Lớp học phần</p>
-                            <p className="text-sm font-semibold text-[#1d4e71]">
-                              {selectedSectionDetails.sectionCode ||
-                                getSectionDisplayName(selectedSectionDetails)}
-                            </p>
-                          </div>
-                          <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f8fcff] px-3 py-2">
-                            <p className="text-xs text-[#65839a]">Môn học</p>
-                            <p className="text-sm font-semibold text-[#1d4e71]">
-                              {getCourseDisplayName(selectedSectionDetails)}
-                            </p>
-                          </div>
-                          <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f8fcff] px-3 py-2">
-                            <p className="text-xs text-[#65839a]">Mã môn học</p>
-                            <p className="text-sm font-semibold text-[#1d4e71]">
-                              {selectedSectionCourseDetail?.courseCode ||
-                                selectedSectionDetails.courseCode ||
-                                "-"}
-                            </p>
-                          </div>
-                          <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f8fcff] px-3 py-2">
-                            <p className="text-xs text-[#65839a]">Số tín chỉ</p>
-                            <p className="text-sm font-semibold text-[#1d4e71]">
-                              {getCreditsLabel(
-                                selectedSectionDetails,
-                                selectedSectionCourseDetail || undefined,
-                              )}
-                            </p>
-                          </div>
-                          <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f8fcff] px-3 py-2">
-                            <p className="text-xs text-[#65839a]">Giảng viên</p>
-                            <p className="text-sm font-semibold text-[#1d4e71]">
-                              {selectedSectionDetails.lecturerName || "-"}
-                            </p>
-                          </div>
-                          <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f8fcff] px-3 py-2">
-                            <p className="text-xs text-[#65839a]">Khoa quản lý</p>
-                            <p className="text-sm font-semibold text-[#1d4e71]">
-                              {selectedSectionCourseDetail?.facultyName || "-"}
-                            </p>
-                          </div>
-                          <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f8fcff] px-3 py-2">
-                            <p className="text-xs text-[#65839a]">Môn tiên quyết</p>
-                            <p className="text-sm font-semibold text-[#1d4e71]">
-                              {selectedSectionCourseDetail?.prerequisiteCourseName || "-"}
-                            </p>
-                          </div>
-                          <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f8fcff] px-3 py-2">
-                            <p className="text-xs text-[#65839a]">Học kỳ</p>
-                            <p className="text-sm font-semibold text-[#1d4e71]">
-                              {getSemesterDisplayLabel(
-                                selectedSectionDetails.semesterNumber,
-                                selectedSectionDetails.academicYear,
-                              )}
-                            </p>
-                          </div>
-                          <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f8fcff] px-3 py-2">
-                            <p className="text-xs text-[#65839a]">Sĩ số tối đa</p>
-                            <p className="text-sm font-semibold text-[#1d4e71]">
-                              {selectedSectionDetails.maxCapacity ?? "-"}
-                            </p>
-                          </div>
-                          <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f8fcff] px-3 py-2">
-                            <p className="text-xs text-[#65839a]">Trạng thái</p>
-                            <span
-                              className={`mt-1 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getRegistrationStatusClass(
-                                selectedSectionDetails.status,
-                              )}`}
-                            >
-                              {getRegistrationStatusLabel(selectedSectionDetails.status)}
-                            </span>
-                          </div>
-                          <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f8fcff] px-3 py-2">
-                            <p className="text-xs text-[#65839a]">Trạng thái môn học</p>
-                            <span
-                              className={`mt-1 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getCourseStatusClass(
-                                selectedSectionCourseDetail?.status,
-                              )}`}
-                            >
-                              {getCourseStatusLabel(selectedSectionCourseDetail?.status)}
-                            </span>
-                          </div>
-                        </div>
-                      ) : (
-                        <p className="text-sm text-[#5d7b91]">
-                          Chọn một lớp học phần để xem chi tiết.
-                        </p>
-                      )}
-
-                      <div className="space-y-2">
-                        <h4 className="text-sm font-semibold text-[#1a4f75]">
-                          Lịch học định kỳ
-                        </h4>
-                        {sectionSchedules.length > 0 ? (
-                          <div className="grid gap-2 md:grid-cols-2">
-                            {sectionSchedules.map((schedule) => (
-                              <div
-                                key={schedule.id}
-                                className="rounded-[8px] border border-[#d4e2ec] bg-white px-3 py-2 text-sm text-[#325b75]"
-                              >
-                                <p className="font-semibold text-[#1c4f72]">
-                                  {schedule.dayOfWeekName ||
-                                    (schedule.dayOfWeek
-                                      ? `Thứ ${schedule.dayOfWeek}`
-                                      : "Chưa rõ thứ")}
-                                </p>
-                                <p className="mt-1">
-                                  {getPeriodRangeLabel(
-                                    schedule.startPeriod,
-                                    schedule.endPeriod,
-                                  )}
-                                </p>
-                                <p className="mt-1 text-[#56758b]">
-                                  Phòng: {schedule.classroomName || "-"}
-                                </p>
-                              </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-sm text-[#5d7b91]">
-                            Chưa có lịch học định kỳ cho lớp học phần này.
-                          </p>
-                        )}
-                      </div>
-
-                      <div className="space-y-2">
-                        <h4 className="text-sm font-semibold text-[#1a4f75]">
-                          Danh sách buổi học (tối đa 8 buổi gần nhất)
-                        </h4>
-                        {sectionSessions.length > 0 ? (
-                          <div className="overflow-x-auto">
-                            <table className="min-w-[720px] text-left text-sm">
-                              <thead>
-                                <tr className="border-b border-[#d4e2ec] text-[#2d5067]">
-                                  <th className="px-2 py-2">Ngày học</th>
-                                  <th className="px-2 py-2">Tiết</th>
-                                  <th className="px-2 py-2">Phòng</th>
-                                  <th className="px-2 py-2">Trạng thái</th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {sectionSessions.slice(0, 8).map((sessionItem) => (
-                                  <tr
-                                    key={sessionItem.id}
-                                    className="border-b border-[#e8f0f5] text-[#3b6078]"
-                                  >
-                                    <td className="px-2 py-2">
-                                      {formatDate(sessionItem.sessionDate)}
-                                    </td>
-                                    <td className="px-2 py-2">
-                                      {getPeriodRangeLabel(
-                                        sessionItem.startPeriod,
-                                        sessionItem.endPeriod,
-                                      )}
-                                    </td>
-                                    <td className="px-2 py-2">
-                                      {sessionItem.classroomName || "-"}
-                                    </td>
-                                    <td className="px-2 py-2">
-                                      {sessionItem.status || "-"}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
-                          </div>
-                        ) : (
-                          <p className="text-sm text-[#5d7b91]">
-                            Chưa có dữ liệu buổi học được sinh ra từ lịch định kỳ.
-                          </p>
-                        )}
-                      </div>
                     </div>
                   </div>
 
@@ -5214,6 +4678,13 @@ export default function DashboardPage() {
                         <tbody>
                           {registeredSections.map((item) => {
                             const courseMeta = getCourseMetadataForSection(item.section);
+                            const hasLoadedSchedules = Object.prototype.hasOwnProperty.call(
+                              registrationSchedulesBySectionId,
+                              item.section.id,
+                            );
+                            const scheduleLines = getRecurringScheduleSummaryLines(
+                              registrationSchedulesBySectionId[item.section.id],
+                            );
 
                             return (
                               <tr
@@ -5252,7 +4723,21 @@ export default function DashboardPage() {
                                   </span>
                                 </td>
                                 <td className="px-3 py-3 align-top text-[#58758a]">
-                                  {getScheduleLabel(item.section)}
+                                  {!hasLoadedSchedules ? (
+                                    <span>Đang tải lịch định kỳ...</span>
+                                  ) : scheduleLines.length > 0 ? (
+                                    <div className="space-y-1">
+                                      {scheduleLines.map((line, index) => (
+                                        <p
+                                          key={`${item.registrationId}-schedule-${index}`}
+                                        >
+                                          {line}
+                                        </p>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <span>Chưa có lịch định kỳ</span>
+                                  )}
                                 </td>
                               </tr>
                             );
@@ -5807,6 +5292,29 @@ export default function DashboardPage() {
                   ) : null}
                 </div>
               </section>
+            ) : null}
+
+            {activeTab.key === "course-registration" && registrationNotice ? (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0f2f47]/35 px-4">
+                <button
+                  type="button"
+                  aria-label="Đóng thông báo"
+                  className="absolute inset-0 cursor-default"
+                  onClick={() => setRegistrationNotice(null)}
+                />
+                <div className="relative w-full max-w-[520px] rounded-[16px] border border-[#efbcbc] bg-white px-6 py-8 text-center shadow-[0_20px_60px_rgba(15,47,71,0.22)]">
+                  <p className="text-lg font-semibold leading-8 text-[#a94242]">
+                    {registrationNotice.message}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setRegistrationNotice(null)}
+                    className="mt-6 inline-flex h-11 items-center justify-center rounded-[10px] bg-[#0d6ea6] px-5 text-sm font-semibold text-white transition hover:bg-[#085d90]"
+                  >
+                    Đóng
+                  </button>
+                </div>
+              </div>
             ) : null}
 
             {activeTab.key === "grades" ? (

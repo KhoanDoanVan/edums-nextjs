@@ -4,12 +4,16 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AuthGuard } from "@/components/auth/auth-guard";
 import { AccountManagementPanel } from "@/components/admin/account-management-panel";
+import { CourseSectionPanel } from "@/components/admin/course-section-panel";
 import { DynamicCrudPanel } from "@/components/admin/dynamic-crud-panel";
 import { GradeComponentPanel } from "@/components/admin/grade-component-panel";
 import { RecurringSchedulePanel } from "@/components/admin/recurring-schedule-panel";
 import { RolePermissionPanel } from "@/components/admin/role-permission-panel";
 import { useAuth } from "@/context/auth-context";
-import { useToastFeedback } from "@/hooks/use-toast-feedback";
+import {
+  shouldHideFeedbackMessage,
+  useToastFeedback,
+} from "@/hooks/use-toast-feedback";
 import {
   autoScreenAdmissionApplications,
   createAttendancesBatch,
@@ -739,7 +743,7 @@ function CohortManagementPanel({
                 </p>
               ) : null}
 
-              {successMessage ? (
+              {successMessage && !shouldHideFeedbackMessage(successMessage) ? (
                 <p className="rounded-[6px] border border-[#b3dbc1] bg-[#f2fbf5] px-3 py-2 text-sm text-[#2f7b4f]">
                   {successMessage}
                 </p>
@@ -1173,7 +1177,7 @@ export default function AdminDashboardPage() {
 
   const [activeTabKey, setActiveTabKey] = useState<AdminTabKey>("home");
   const [tabError, setTabError] = useState("");
-  const [tabMessage, setTabMessage] = useState("");
+  const [, setTabMessage] = useState("");
   useToastFeedback({
     errorMessage: tabError,
     errorTitle: "Thao tác quản trị thất bại",
@@ -1274,13 +1278,6 @@ export default function AdminDashboardPage() {
   const [attendanceBatchRows, setAttendanceBatchRows] = useState<
     Array<{ courseRegistrationId: string; status: AttendanceStatus; note: string }>
   >([{ courseRegistrationId: "1", status: "PRESENT", note: "" }]);
-  const [courseSectionFilterMode, setCourseSectionFilterMode] = useState<
-    "ALL" | "COURSE" | "SEMESTER"
-  >("ALL");
-  const [courseSectionFilterValue, setCourseSectionFilterValue] = useState("");
-  const [courseSectionListPath, setCourseSectionListPath] = useState(
-    "/api/v1/course-sections",
-  );
   const [majorFacultyFilterValue, setMajorFacultyFilterValue] = useState("");
   const [majorListPath, setMajorListPath] = useState("/api/v1/majors");
   const [specializationMajorFilterValue, setSpecializationMajorFilterValue] =
@@ -1416,38 +1413,6 @@ export default function AdminDashboardPage() {
     }
 
     return parsed.toISOString();
-  };
-
-  const handleApplyCourseSectionFilter = () => {
-    if (courseSectionFilterMode === "ALL") {
-      setCourseSectionListPath("/api/v1/course-sections");
-      setTabMessage("Đã chuyển về danh sách lớp học phần đầy đủ.");
-      return;
-    }
-
-    const filterId = parsePositiveInteger(
-      courseSectionFilterValue,
-      courseSectionFilterMode === "COURSE" ? "Mã môn học" : "Mã học kỳ",
-    );
-    if (!filterId) {
-      return;
-    }
-
-    if (courseSectionFilterMode === "COURSE") {
-      setCourseSectionListPath(`/api/v1/course-sections/course/${filterId}`);
-      setTabMessage(`Đang lọc lớp học phần theo môn học #${filterId}.`);
-      return;
-    }
-
-    setCourseSectionListPath(`/api/v1/course-sections/semester/${filterId}`);
-    setTabMessage(`Đang lọc lớp học phần theo học kỳ #${filterId}.`);
-  };
-
-  const handleResetCourseSectionFilter = () => {
-    setCourseSectionFilterMode("ALL");
-    setCourseSectionFilterValue("");
-    setCourseSectionListPath("/api/v1/course-sections");
-    setTabMessage("Đã xóa bộ lọc lớp học phần.");
   };
 
   const handleApplyMajorFacultyFilter = () => {
@@ -2627,7 +2592,9 @@ export default function AdminDashboardPage() {
   };
 
   const activeDynamicCrudConfig =
-    activeTab.key === "cohorts" || activeTab.key === "recurring-schedules"
+    activeTab.key === "cohorts" ||
+    activeTab.key === "recurring-schedules" ||
+    activeTab.key === "course-sections"
       ? undefined
       : dynamicCrudTabConfigs[activeTab.key];
 
@@ -2717,11 +2684,6 @@ export default function AdminDashboardPage() {
                     {tabError}
                   </p>
                 ) : null}
-                {tabMessage ? (
-                  <p className="rounded-[4px] border border-[#b3dbc1] bg-[#f2fbf5] px-3 py-2 text-[#2f7b4f]">
-                    {tabMessage}
-                  </p>
-                ) : null}
               </div>
             </section>
 
@@ -2794,6 +2756,10 @@ export default function AdminDashboardPage() {
 
             {activeTab.key === "recurring-schedules" ? (
               <RecurringSchedulePanel authorization={session?.authorization} />
+            ) : null}
+
+            {activeTab.key === "course-sections" ? (
+              <CourseSectionPanel authorization={session?.authorization} />
             ) : null}
 
             {activeTab.key === "majors" ? (
@@ -2892,70 +2858,18 @@ export default function AdminDashboardPage() {
               </section>
             ) : null}
 
-            {activeTab.key === "course-sections" ? (
-              <section className={contentCardClass}>
-                <div className={sectionTitleClass}>
-                  <h2>Lọc lớp học phần theo API</h2>
-                </div>
-                <div className="grid gap-2 px-4 py-4 sm:grid-cols-[180px_220px_160px_140px]">
-                  <select
-                    className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
-                    value={courseSectionFilterMode}
-                    onChange={(event) =>
-                      setCourseSectionFilterMode(
-                        event.target.value as "ALL" | "COURSE" | "SEMESTER",
-                      )
-                    }
-                  >
-                    <option value="ALL">Tất cả</option>
-                    <option value="COURSE">Theo môn học</option>
-                    <option value="SEMESTER">Theo học kỳ</option>
-                  </select>
-                  <input
-                    className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
-                    placeholder={
-                      courseSectionFilterMode === "SEMESTER"
-                        ? "Nhập semester ID"
-                        : "Nhập course ID"
-                    }
-                    value={courseSectionFilterValue}
-                    onChange={(event) => setCourseSectionFilterValue(event.target.value)}
-                    disabled={courseSectionFilterMode === "ALL"}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleApplyCourseSectionFilter}
-                    disabled={isWorking}
-                    className="h-10 rounded-[6px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
-                  >
-                    Áp dụng
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleResetCourseSectionFilter}
-                    disabled={isWorking}
-                    className="h-10 rounded-[6px] border border-[#9ec3dd] bg-white px-3 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
-                  >
-                    Bỏ lọc
-                  </button>
-                </div>
-              </section>
-            ) : null}
-
             {activeDynamicCrudConfig ? (
               <DynamicCrudPanel
                 authorization={session?.authorization}
                 title={activeDynamicCrudConfig.title}
                 basePath={activeDynamicCrudConfig.basePath}
                 listPath={
-                  activeTab.key === "course-sections"
-                    ? courseSectionListPath
-                    : activeTab.key === "majors"
-                      ? majorListPath
-                      : activeTab.key === "specializations"
-                        ? specializationListPath
-                        : activeTab.key === "courses"
-                          ? courseListPath
+                  activeTab.key === "majors"
+                    ? majorListPath
+                    : activeTab.key === "specializations"
+                      ? specializationListPath
+                      : activeTab.key === "courses"
+                        ? courseListPath
                     : undefined
                 }
                 listQuery={activeDynamicCrudConfig.listQuery}

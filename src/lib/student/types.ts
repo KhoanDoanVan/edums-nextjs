@@ -216,7 +216,13 @@ export interface CourseRegistrationRequest {
 export interface CourseRegistrationResponse {
   id: number;
   studentId?: number;
+  studentCode?: string;
   courseSectionId?: number;
+  sectionCode?: string;
+  courseId?: number;
+  courseCode?: string;
+  courseName?: string;
+  semesterId?: number;
   registrationPeriodId?: number;
   registrationTime?: string;
   status?: "PENDING" | "CONFIRMED" | "CANCELLED" | "DROPPED";

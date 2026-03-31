@@ -533,3 +533,19 @@ export const registerCourseSection = async (
 
   return unwrapApiData<CourseRegistrationResponse>(response);
 };
+
+export const getMyCourseRegistrations = async (
+  authorization: string,
+  semesterId?: number,
+): Promise<CourseRegistrationResponse[]> => {
+  const query = typeof semesterId === "number" ? `?semesterId=${semesterId}` : "";
+  const response = await apiRequest<ApiResponse<unknown> | unknown>(
+    `/api/v1/course-registrations/me${query}`,
+    {
+      method: "GET",
+      accessToken: authorization,
+    },
+  );
+
+  return toArray<CourseRegistrationResponse>(unwrapApiData<unknown>(response));
+};
