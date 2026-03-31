@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useToastFeedback } from "@/hooks/use-toast-feedback";
+import {
+  shouldHideFeedbackMessage,
+  useToastFeedback,
+} from "@/hooks/use-toast-feedback";
 import {
   getPublicAdmissionActivePeriods,
   getPublicAdmissionBlocksByPeriodMajor,
@@ -296,12 +299,6 @@ export default function PublicAdmissionsPage() {
               >
                 Đăng nhập
               </Link>
-              <Link
-                href="/register"
-                className="rounded-[6px] bg-[#0d6ea6] px-3 py-2 text-white transition hover:bg-[#085d90]"
-              >
-                Tạo tài khoản
-              </Link>
             </div>
           </div>
 
@@ -312,7 +309,7 @@ export default function PublicAdmissionsPage() {
                   {errorMessage}
                 </p>
               ) : null}
-              {successMessage ? (
+              {successMessage && !shouldHideFeedbackMessage(successMessage) ? (
                 <p className="rounded-[4px] border border-[#b3dbc1] bg-[#f2fbf5] px-3 py-2 text-[#2f7b4f]">
                   {successMessage}
                 </p>

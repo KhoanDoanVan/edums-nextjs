@@ -47,9 +47,6 @@ export const AuthPageShell = ({ mode, children }: AuthPageShellProps) => {
                 <Link href="/login" className={tabClass(mode === "login")}>
                   Đăng nhập
                 </Link>
-                <Link href="/register" className={tabClass(mode === "register")}>
-                  Đăng ký
-                </Link>
               </div>
               {children}
             </div>

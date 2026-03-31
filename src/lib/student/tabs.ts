@@ -11,7 +11,7 @@ export const studentFeatureTabs: StudentFeatureTab[] = [
   {
     key: "profile",
     label: "Thông tin cá nhân",
-    description: "Xem/cập nhật thông tin cá nhân sinh viên.",
+    description: "Xem và cập nhật thông tin cá nhân sinh viên.",
     endpoints: [
       { method: "GET", path: "/api/v1/profile/me" },
       { method: "GET", path: "/api/v1/students/{id}" },
@@ -32,7 +32,7 @@ export const studentFeatureTabs: StudentFeatureTab[] = [
     key: "course-registration",
     label: "Đăng ký môn học",
     description:
-      "Tra cứu lớp học phần, lọc theo khoa/môn học/học kỳ, xem lịch học và gửi nguyện vọng đăng ký.",
+      "Tra cứu lớp học phần, lọc theo khoa, môn học, học kỳ, xem lịch học và gửi nguyện vọng đăng ký.",
     endpoints: [
       { method: "GET", path: "/api/v1/faculties" },
       { method: "GET", path: "/api/v1/courses" },
@@ -42,6 +42,7 @@ export const studentFeatureTabs: StudentFeatureTab[] = [
       { method: "GET", path: "/api/v1/course-sections/{id}" },
       { method: "GET", path: "/api/v1/course-sections/course/{courseId}" },
       { method: "GET", path: "/api/v1/course-sections/semester/{semesterId}" },
+      { method: "GET", path: "/api/v1/course-registrations/me" },
       { method: "GET", path: "/api/v1/recurring-schedules/section/{sectionId}" },
       { method: "GET", path: "/api/v1/recurring-schedules/{id}/sessions" },
       { method: "POST", path: "/api/v1/course-registrations" },
@@ -51,10 +52,13 @@ export const studentFeatureTabs: StudentFeatureTab[] = [
     key: "schedule",
     label: "Xem thời khóa biểu",
     description:
-      "Xem danh sách lớp học phần đang mở (hệ thống hiện chưa có endpoint thời khóa biểu sinh viên riêng).",
+      "Xem thời khóa biểu cá nhân được tổng hợp từ các lớp học phần sinh viên đã đăng ký.",
     endpoints: [
-      { method: "GET", path: "/api/v1/course-sections" },
+      { method: "GET", path: "/api/v1/course-registrations/me" },
+      { method: "GET", path: "/api/v1/course-sections/{id}" },
+      { method: "GET", path: "/api/v1/recurring-schedules/section/{sectionId}" },
       { method: "GET", path: "/api/v1/recurring-schedules/{id}" },
+      { method: "GET", path: "/api/v1/recurring-schedules/{id}/sessions" },
       { method: "GET", path: "/api/v1/classrooms" },
       { method: "GET", path: "/api/v1/classrooms/{id}" },
       { method: "GET", path: "/api/v1/lecturers/{id}" },

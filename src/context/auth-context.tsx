@@ -147,6 +147,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const registerAccount = useCallback(
     async (payload: RegisterAccountPayload): Promise<AccountResponse> => {
+      if (!session?.authorization) {
+        throw new Error("Chức năng tạo tài khoản yêu cầu đăng nhập quản trị viên.");
+      }
+
       return registerAccountRequest(payload, session?.authorization);
     },
     [session?.authorization],
