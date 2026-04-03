@@ -93,6 +93,16 @@ export interface AttendanceResponse {
   note?: string;
 }
 
+export interface SemesterResponse {
+  id: number;
+  semesterNumber?: number;
+  academicYear?: string;
+  displayName?: string;
+  startDate?: string;
+  endDate?: string;
+  totalWeeks?: number;
+}
+
 export interface CourseSectionResponse {
   id: number;
   sectionCode?: string;
@@ -114,6 +124,47 @@ export interface FacultyResponse {
   id: number;
   facultyName?: string;
   facultyCode?: string;
+}
+
+export interface AvailableSectionScheduleResponse {
+  roomId?: number;
+  roomName?: string;
+  dayOfWeek?: number;
+  startPeriod?: number;
+  endPeriod?: number;
+  startWeek?: number;
+  endWeek?: number;
+  effectiveStartDate?: string;
+  effectiveEndDate?: string;
+}
+
+export interface AvailableCourseSectionResponse {
+  courseSectionId: number;
+  sectionCode?: string;
+  displayName?: string;
+  courseId?: number;
+  courseCode?: string;
+  courseName?: string;
+  credits?: number;
+  facultyId?: number;
+  facultyName?: string;
+  prerequisiteCourseId?: number;
+  prerequisiteCourseCode?: string;
+  prerequisiteCourseName?: string;
+  lecturerId?: number;
+  lecturerName?: string;
+  semesterId?: number;
+  semesterNumber?: number;
+  academicYear?: string;
+  registrationPeriodId?: number;
+  registrationPeriodName?: string;
+  registrationStartTime?: string;
+  registrationEndTime?: string;
+  maxCapacity?: number;
+  registeredCount?: number;
+  remainingCapacity?: number;
+  status?: "DRAFT" | "OPEN" | "ONGOING" | "FINISHED" | "CANCELLED";
+  schedules?: AvailableSectionScheduleResponse[];
 }
 
 export interface CourseResponse {
@@ -211,6 +262,10 @@ export interface ClassSessionResponse {
 export interface CourseRegistrationRequest {
   courseSectionId: number;
   studentId?: number;
+}
+
+export interface CourseRegistrationSwitchRequest {
+  newCourseSectionId: number;
 }
 
 export interface CourseRegistrationResponse {

@@ -2,6 +2,7 @@ import { apiRequest } from "@/lib/api/client";
 import type { ApiResponse } from "@/lib/api/types";
 import type {
   AdministrativeClassResponse,
+  AvailableCourseSectionResponse,
   AttendanceResponse,
   ClassSessionResponse,
   ChangePasswordRequest,
@@ -18,7 +19,9 @@ import type {
   MajorResponse,
   ProfileResponse,
   RecurringScheduleResponse,
+  SemesterResponse,
   SpecializationResponse,
+  CourseRegistrationSwitchRequest,
   UpdateProfileRequest,
 } from "@/lib/student/types";
 
@@ -166,6 +169,20 @@ export const getMyAttendance = async (
   return toArray<AttendanceResponse>(unwrapApiData<unknown>(response));
 };
 
+export const getSemesters = async (
+  authorization: string,
+): Promise<SemesterResponse[]> => {
+  const response = await apiRequest<ApiResponse<unknown> | unknown>(
+    "/api/v1/semesters",
+    {
+      method: "GET",
+      accessToken: authorization,
+    },
+  );
+
+  return toArray<SemesterResponse>(unwrapApiData<unknown>(response));
+};
+
 export const getCourseSections = async (
   authorization: string,
 ): Promise<CourseSectionResponse[]> => {
@@ -178,6 +195,47 @@ export const getCourseSections = async (
   );
 
   return toArray<CourseSectionResponse>(unwrapApiData<unknown>(response));
+};
+
+export const getAvailableCourseSections = async (
+  authorization: string,
+  filters: {
+    facultyId?: number;
+    courseId?: number;
+    semesterId?: number;
+    keyword?: string;
+  } = {},
+): Promise<AvailableCourseSectionResponse[]> => {
+  const query = new URLSearchParams();
+
+  if (typeof filters.facultyId === "number" && Number.isFinite(filters.facultyId)) {
+    query.set("facultyId", String(filters.facultyId));
+  }
+
+  if (typeof filters.courseId === "number" && Number.isFinite(filters.courseId)) {
+    query.set("courseId", String(filters.courseId));
+  }
+
+  if (typeof filters.semesterId === "number" && Number.isFinite(filters.semesterId)) {
+    query.set("semesterId", String(filters.semesterId));
+  }
+
+  if (filters.keyword?.trim()) {
+    query.set("keyword", filters.keyword.trim());
+  }
+
+  const queryString = query.toString();
+  const response = await apiRequest<ApiResponse<unknown> | unknown>(
+    `/api/v1/course-registrations/available-sections${
+      queryString ? `?${queryString}` : ""
+    }`,
+    {
+      method: "GET",
+      accessToken: authorization,
+    },
+  );
+
+  return toArray<AvailableCourseSectionResponse>(unwrapApiData<unknown>(response));
 };
 
 export const getFaculties = async (
@@ -524,6 +582,38 @@ export const registerCourseSection = async (
 ): Promise<CourseRegistrationResponse> => {
   const response = await apiRequest<ApiResponse<unknown> | unknown>(
     "/api/v1/course-registrations",
+    {
+      method: "POST",
+      body: payload,
+      accessToken: authorization,
+    },
+  );
+
+  return unwrapApiData<CourseRegistrationResponse>(response);
+};
+
+export const cancelCourseRegistration = async (
+  registrationId: number,
+  authorization: string,
+): Promise<CourseRegistrationResponse> => {
+  const response = await apiRequest<ApiResponse<unknown> | unknown>(
+    `/api/v1/course-registrations/${registrationId}/cancel`,
+    {
+      method: "PATCH",
+      accessToken: authorization,
+    },
+  );
+
+  return unwrapApiData<CourseRegistrationResponse>(response);
+};
+
+export const switchCourseRegistration = async (
+  registrationId: number,
+  payload: CourseRegistrationSwitchRequest,
+  authorization: string,
+): Promise<CourseRegistrationResponse> => {
+  const response = await apiRequest<ApiResponse<unknown> | unknown>(
+    `/api/v1/course-registrations/${registrationId}/switch`,
     {
       method: "POST",
       body: payload,

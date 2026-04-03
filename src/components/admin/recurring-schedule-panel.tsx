@@ -12,6 +12,8 @@ import {
   getRecurringScheduleById,
   updateDynamicByPath,
 } from "@/lib/admin/service";
+import { ConfirmDialog } from "@/components/admin/confirm-dialog";
+import { formatDateTime, toErrorMessage } from "@/components/admin/format-utils";
 import type { DynamicRow } from "@/lib/admin/types";
 
 interface RecurringSchedulePanelProps {
@@ -31,6 +33,8 @@ interface RecurringScheduleRow {
   startPeriodTime?: string;
   endPeriod: number;
   endPeriodTime?: string;
+  startWeek?: number;
+  endWeek?: number;
   createdAt?: string;
 }
 
@@ -49,6 +53,8 @@ interface ScheduleFormState {
   dayOfWeek: string;
   startPeriod: string;
   endPeriod: string;
+  startWeek: string;
+  endWeek: string;
 }
 
 const emptyForm: ScheduleFormState = {
@@ -57,6 +63,8 @@ const emptyForm: ScheduleFormState = {
   dayOfWeek: "2",
   startPeriod: "1",
   endPeriod: "2",
+  startWeek: "1",
+  endWeek: "8",
 };
 
 const weekdayOptions = [
@@ -69,28 +77,22 @@ const weekdayOptions = [
   { value: "7", label: "Thu bay" },
 ] as const;
 
-const periodOptions = ["1", "2", "3", "4"] as const;
-
-const toErrorMessage = (error: unknown): string => {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return "Thao tác thất bại. Vui lòng thử lại.";
-};
-
-const formatDateTime = (value?: string): string => {
-  if (!value) {
-    return "-";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString("vi-VN");
-};
+const periodOptions = [
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+  "10",
+  "11",
+  "12",
+  "13",
+  "14",
+] as const;
 
 const formatDate = (value?: string): string => {
   if (!value) {
@@ -137,6 +139,14 @@ const toScheduleRows = (rows: DynamicRow[]): RecurringScheduleRow[] => {
         typeof row.endPeriod === "number" ? row.endPeriod : Number(row.endPeriod || 0),
       endPeriodTime:
         typeof row.endPeriodTime === "string" ? row.endPeriodTime : undefined,
+      startWeek:
+        typeof row.startWeek === "number"
+          ? row.startWeek
+          : Number(row.startWeek || 0) || undefined,
+      endWeek:
+        typeof row.endWeek === "number"
+          ? row.endWeek
+          : Number(row.endWeek || 0) || undefined,
       createdAt: typeof row.createdAt === "string" ? row.createdAt : undefined,
     }))
     .filter((row) => row.id > 0);
@@ -179,6 +189,7 @@ export const RecurringSchedulePanel = ({
   const [sessionRows, setSessionRows] = useState<ClassSessionRow[]>([]);
   const [editingRowId, setEditingRowId] = useState<number | null>(null);
   const [form, setForm] = useState<ScheduleFormState>(emptyForm);
+  const [confirmDeleteRow, setConfirmDeleteRow] = useState<RecurringScheduleRow | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -192,10 +203,6 @@ export const RecurringSchedulePanel = ({
   const selectedSchedule = useMemo(() => {
     return rows.find((row) => row.id === selectedScheduleId) || null;
   }, [rows, selectedScheduleId]);
-
-  const uniqueClassrooms = new Set(
-    rows.map((row) => row.classroomName || String(row.classroomId)),
-  ).size;
 
   const loadSchedules = async (sectionIdOverride?: number) => {
     if (!authorization) {
@@ -360,6 +367,8 @@ export const RecurringSchedulePanel = ({
     const dayOfWeek = Number(form.dayOfWeek);
     const startPeriod = Number(form.startPeriod);
     const endPeriod = Number(form.endPeriod);
+    const startWeek = Number(form.startWeek);
+    const endWeek = Number(form.endWeek);
 
     if (!Number.isInteger(sectionId) || sectionId <= 0) {
       setErrorMessage("Mã lớp học phần không hop le.");
@@ -376,6 +385,16 @@ export const RecurringSchedulePanel = ({
       return;
     }
 
+    if (!Number.isInteger(startWeek) || startWeek <= 0) {
+      setErrorMessage("Tuần bắt đầu không hợp lệ.");
+      return;
+    }
+
+    if (!Number.isInteger(endWeek) || endWeek < startWeek) {
+      setErrorMessage("Tuần kết thúc phải lớn hơn hoặc bằng tuần bắt đầu.");
+      return;
+    }
+
     try {
       setIsLoading(true);
       setErrorMessage("");
@@ -387,6 +406,8 @@ export const RecurringSchedulePanel = ({
         dayOfWeek,
         startPeriod,
         endPeriod,
+        startWeek,
+        endWeek,
       };
 
       if (editingRowId) {
@@ -420,23 +441,29 @@ export const RecurringSchedulePanel = ({
       dayOfWeek: String(row.dayOfWeek),
       startPeriod: String(row.startPeriod),
       endPeriod: String(row.endPeriod),
+      startWeek: row.startWeek ? String(row.startWeek) : "1",
+      endWeek: row.endWeek ? String(row.endWeek) : "8",
     });
     setErrorMessage("");
     setSuccessMessage("");
   };
 
-  const handleDelete = async (row: RecurringScheduleRow) => {
+  const handleDelete = (row: RecurringScheduleRow) => {
     if (!authorization) {
       setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
     }
 
-    const accepted = window.confirm(
-      `Bạn có chắc muốn xoa lịch học lap lai #${row.id} không?`,
-    );
-    if (!accepted) {
+    setConfirmDeleteRow(row);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!authorization || !confirmDeleteRow) {
       return;
     }
+
+    const row = confirmDeleteRow;
+    setConfirmDeleteRow(null);
 
     try {
       setIsLoading(true);
@@ -508,24 +535,6 @@ export const RecurringSchedulePanel = ({
           >
             Tải theo ID
           </button>
-          <div className="grid gap-3 sm:grid-cols-3">
-            <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
-              <p className="text-sm font-medium text-[#5f7d93]">Tổng lich</p>
-              <p className="mt-2 text-[26px] font-bold text-[#1d5b82]">{rows.length}</p>
-            </article>
-            <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
-              <p className="text-sm font-medium text-[#5f7d93]">Phong hoc</p>
-              <p className="mt-2 text-[26px] font-bold text-[#2b67a1]">
-                {uniqueClassrooms}
-              </p>
-            </article>
-            <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
-              <p className="text-sm font-medium text-[#5f7d93]">Buoi da tai</p>
-              <p className="mt-2 text-[26px] font-bold text-[#1d7a47]">
-                {sessionRows.length}
-              </p>
-            </article>
-          </div>
         </div>
 
         {errorMessage ? (
@@ -556,6 +565,7 @@ export const RecurringSchedulePanel = ({
                     <th className="px-3 py-3">Phong</th>
                     <th className="px-3 py-3">Thu</th>
                     <th className="px-3 py-3">Tiet</th>
+                    <th className="px-3 py-3">Tuần áp dụng</th>
                     <th className="px-3 py-3">Tạo luc</th>
                     <th className="px-3 py-3">Thao tac</th>
                   </tr>
@@ -580,6 +590,11 @@ export const RecurringSchedulePanel = ({
                         <p className="mt-1 text-xs text-[#6b8497]">
                           {row.startPeriodTime || "-"} / {row.endPeriodTime || "-"}
                         </p>
+                      </td>
+                      <td className="px-3 py-3">
+                        {row.startWeek && row.endWeek
+                          ? `Tuần ${row.startWeek} - ${row.endWeek}`
+                          : "-"}
                       </td>
                       <td className="px-3 py-3">{formatDateTime(row.createdAt)}</td>
                       <td className="px-3 py-3">
@@ -618,7 +633,7 @@ export const RecurringSchedulePanel = ({
                   ))}
                   {rows.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="px-3 py-6 text-center text-[#577086]">
+                      <td colSpan={7} className="px-3 py-6 text-center text-[#577086]">
                         Chưa co lịch học lap lai. Nhập section ID để tải hoac tao moi.
                       </td>
                     </tr>
@@ -730,6 +745,34 @@ export const RecurringSchedulePanel = ({
                 </label>
               </div>
 
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block space-y-1">
+                  <span className="text-sm font-semibold text-[#315972]">Tuần bắt đầu</span>
+                  <input
+                    className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                    value={form.startWeek}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, startWeek: event.target.value }))
+                    }
+                    inputMode="numeric"
+                    placeholder="Ví dụ: 1"
+                  />
+                </label>
+
+                <label className="block space-y-1">
+                  <span className="text-sm font-semibold text-[#315972]">Tuần kết thúc</span>
+                  <input
+                    className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                    value={form.endWeek}
+                    onChange={(event) =>
+                      setForm((prev) => ({ ...prev, endWeek: event.target.value }))
+                    }
+                    inputMode="numeric"
+                    placeholder="Ví dụ: 8"
+                  />
+                </label>
+              </div>
+
               <div className="flex flex-wrap gap-2 pt-1">
                 <button
                   type="submit"
@@ -797,6 +840,22 @@ export const RecurringSchedulePanel = ({
             </table>
           </div>
         </section>
+
+        <ConfirmDialog
+          open={Boolean(confirmDeleteRow)}
+          title="Xác nhận xóa lịch học"
+          message={
+            confirmDeleteRow
+              ? `Bạn có chắc muốn xóa lịch học lặp lại #${confirmDeleteRow.id} không?`
+              : ""
+          }
+          confirmText="Xóa"
+          isProcessing={isLoading}
+          onCancel={() => setConfirmDeleteRow(null)}
+          onConfirm={() => {
+            void handleConfirmDelete();
+          }}
+        />
       </div>
     </section>
   );

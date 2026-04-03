@@ -10,7 +10,7 @@ export const adminFeatureTabs: AdminFeatureTab[] = [
   {
     key: "accounts",
     label: "Quản lý tài khoản",
-    description: "Danh sách tài khoản, vai trò và trạng thái.",
+    description: "Danh sách tài khoản, vai trò và trạng thái đăng nhập hệ thống.",
     endpoints: [
       { method: "GET", path: "/api/v1/accounts" },
       { method: "GET", path: "/api/v1/accounts/{id}" },
@@ -22,8 +22,8 @@ export const adminFeatureTabs: AdminFeatureTab[] = [
   },
   {
     key: "roles",
-    label: "Vai trò & quyền",
-    description: "Quản lý vai trò và tập quyền hệ thống.",
+    label: "Vai trò và quyền",
+    description: "Quản lý vai trò và tập quyền của hệ thống.",
     endpoints: [
       { method: "GET", path: "/api/v1/roles" },
       { method: "GET", path: "/api/v1/roles/{id}" },
@@ -31,6 +31,30 @@ export const adminFeatureTabs: AdminFeatureTab[] = [
       { method: "PUT", path: "/api/v1/roles/{id}" },
       { method: "DELETE", path: "/api/v1/roles/{id}" },
       { method: "GET", path: "/api/v1/roles/permissions" },
+    ],
+  },
+  {
+    key: "semesters",
+    label: "Quản lý học kỳ",
+    description: "Tạo học kỳ, thời gian học và tổng số tuần để mở đăng ký đúng kỳ.",
+    endpoints: [
+      { method: "GET", path: "/api/v1/semesters" },
+      { method: "GET", path: "/api/v1/semesters/{id}" },
+      { method: "POST", path: "/api/v1/semesters" },
+      { method: "PUT", path: "/api/v1/semesters/{id}" },
+      { method: "DELETE", path: "/api/v1/semesters/{id}" },
+    ],
+  },
+  {
+    key: "registration-periods",
+    label: "Đợt đăng ký học phần",
+    description: "Quản lý đợt đăng ký gắn với từng học kỳ và trạng thái mở đăng ký.",
+    endpoints: [
+      { method: "GET", path: "/api/v1/registration-periods" },
+      { method: "GET", path: "/api/v1/registration-periods/{id}" },
+      { method: "POST", path: "/api/v1/registration-periods" },
+      { method: "PUT", path: "/api/v1/registration-periods/{id}" },
+      { method: "DELETE", path: "/api/v1/registration-periods/{id}" },
     ],
   },
   {
@@ -42,7 +66,7 @@ export const adminFeatureTabs: AdminFeatureTab[] = [
   {
     key: "majors",
     label: "Quản lý ngành",
-    description: "Quản lý danh sách ngành đào tạo.",
+    description: "Quản lý danh sách ngành đào tạo theo khoa.",
     endpoints: [
       { method: "GET", path: "/api/v1/majors" },
       { method: "GET", path: "/api/v1/majors/faculty/{facultyId}" },
@@ -51,7 +75,7 @@ export const adminFeatureTabs: AdminFeatureTab[] = [
   {
     key: "specializations",
     label: "Quản lý chuyên ngành",
-    description: "Quản lý danh sách chuyên ngành theo từng ngành.",
+    description: "Quản lý chuyên ngành theo từng ngành đào tạo.",
     endpoints: [
       { method: "GET", path: "/api/v1/specializations" },
       { method: "GET", path: "/api/v1/specializations/major/{majorId}" },
@@ -85,7 +109,7 @@ export const adminFeatureTabs: AdminFeatureTab[] = [
   {
     key: "classrooms",
     label: "Quản lý phòng học",
-    description: "Quản lý danh sách phòng học.",
+    description: "Quản lý danh sách phòng học và sức chứa.",
     endpoints: [{ method: "GET", path: "/api/v1/classrooms" }],
   },
   {
@@ -118,29 +142,36 @@ export const adminFeatureTabs: AdminFeatureTab[] = [
   {
     key: "course-sections",
     label: "Lớp học phần",
-    description: "Quản lý lớp học phần và phân công giảng viên theo lớp.",
+    description:
+      "Tạo lớp học phần theo môn và học kỳ, sau đó mở trạng thái cho đợt đăng ký.",
     endpoints: [
       { method: "GET", path: "/api/v1/course-sections" },
       { method: "GET", path: "/api/v1/course-sections/course/{courseId}" },
       { method: "GET", path: "/api/v1/course-sections/semester/{semesterId}" },
+      { method: "POST", path: "/api/v1/course-sections" },
       { method: "PUT", path: "/api/v1/course-sections/{id}" },
       { method: "PATCH", path: "/api/v1/course-sections/{id}/status" },
+      { method: "DELETE", path: "/api/v1/course-sections/{id}" },
     ],
   },
   {
     key: "recurring-schedules",
     label: "Lịch học lặp lại",
-    description: "Quản lý lịch học lặp lại theo từng lớp học phần.",
+    description:
+      "Gắn lịch học định kỳ cho từng lớp học phần theo thứ, tiết và phạm vi tuần học.",
     endpoints: [
-      { method: "POST", path: "/api/v1/recurring-schedules" },
       { method: "GET", path: "/api/v1/recurring-schedules/section/{sectionId}" },
       { method: "GET", path: "/api/v1/recurring-schedules/{id}" },
+      { method: "GET", path: "/api/v1/recurring-schedules/{id}/sessions" },
+      { method: "POST", path: "/api/v1/recurring-schedules" },
+      { method: "PUT", path: "/api/v1/recurring-schedules/{id}" },
+      { method: "DELETE", path: "/api/v1/recurring-schedules/{id}" },
     ],
   },
   {
     key: "grade-management",
     label: "Quản lý điểm",
-    description: "Xem bảng điểm theo từng lớp học phần (nhập section ID).",
+    description: "Xem bảng điểm theo lớp học phần và cập nhật phiếu điểm.",
     endpoints: [
       { method: "GET", path: "/api/v1/course-sections/{sectionId}/grade-reports" },
       { method: "GET", path: "/api/v1/students/{studentId}/grade-reports" },
@@ -153,7 +184,7 @@ export const adminFeatureTabs: AdminFeatureTab[] = [
   {
     key: "attendance-management",
     label: "Quản lý điểm danh",
-    description: "Xem điểm danh theo sinh viên (nhập student ID).",
+    description: "Theo dõi điểm danh theo buổi học, sinh viên và phụ huynh.",
     endpoints: [
       { method: "GET", path: "/api/v1/students/{studentId}/attendances" },
       {
@@ -195,8 +226,4 @@ export const adminFeatureTabs: AdminFeatureTab[] = [
   },
 ];
 
-export const adminTopHeaderTabs = [
-  "Quản trị hệ thống",
-  "Báo cáo",
-  "Cấu hình",
-] as const;
+export const adminTopHeaderTabs = ["Quản trị hệ thống", "Báo cáo", "Cấu hình"] as const;

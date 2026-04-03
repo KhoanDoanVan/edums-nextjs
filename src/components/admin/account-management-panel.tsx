@@ -14,6 +14,7 @@ import {
   updateAccount,
   updateAccountStatus,
 } from "@/lib/admin/service";
+import { formatDateTime, toErrorMessage } from "@/components/admin/format-utils";
 import type {
   AccountListItem,
   AccountStatus,
@@ -50,27 +51,6 @@ const isAccountStatus = (value: unknown): value is AccountStatus => {
   return (
     value === "ACTIVE" || value === "INACTIVE" || value === "LOCKED"
   );
-};
-
-const formatDateTime = (value?: string): string => {
-  if (!value) {
-    return "-";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString("vi-VN");
-};
-
-const toErrorMessage = (error: unknown): string => {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return "Thao tác thất bại. Vui lòng thử lại.";
 };
 
 const emptyAccounts: PagedRows<AccountListItem> = { rows: [] };
@@ -237,16 +217,6 @@ export const AccountManagementPanel = ({
       name: role.roleName || `Vai trò ${role.id}`,
     }));
   }, [roles]);
-
-  const activeCount = useMemo(
-    () => accounts.rows.filter((item) => item.status === "ACTIVE").length,
-    [accounts.rows],
-  );
-
-  const lockedCount = useMemo(
-    () => accounts.rows.filter((item) => item.status === "LOCKED").length,
-    [accounts.rows],
-  );
 
   const openCreateModal = () => {
     setErrorMessage("");
@@ -520,27 +490,6 @@ export const AccountManagementPanel = ({
       </div>
 
       <div className="space-y-4 px-4 py-4">
-        <div className="grid gap-3 md:grid-cols-3">
-          <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
-            <p className="text-sm font-medium text-[#5f7d93]">Tổng tài khoản</p>
-            <p className="mt-2 text-[28px] font-bold text-[#1d5b82]">
-              {accounts.rows.length}
-            </p>
-          </article>
-          <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
-            <p className="text-sm font-medium text-[#5f7d93]">Đang hoạt động</p>
-            <p className="mt-2 text-[28px] font-bold text-[#1d7a47]">
-              {activeCount}
-            </p>
-          </article>
-          <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
-            <p className="text-sm font-medium text-[#5f7d93]">Đang bị khóa</p>
-            <p className="mt-2 text-[28px] font-bold text-[#b54444]">
-              {lockedCount}
-            </p>
-          </article>
-        </div>
-
         <form className="grid gap-2 md:grid-cols-4" onSubmit={handleSubmitFilters}>
           <input
             className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"

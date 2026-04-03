@@ -9,6 +9,8 @@ import {
   patchDynamicByPath,
   updateDynamicByPath,
 } from "@/lib/admin/service";
+import { ConfirmDialog } from "@/components/admin/confirm-dialog";
+import { formatDateTime, toErrorMessage } from "@/components/admin/format-utils";
 import type { DynamicRow } from "@/lib/admin/types";
 
 interface CourseSectionPanelProps {
@@ -80,27 +82,6 @@ const weekdayLabels: Record<number, string> = {
   5: "Thứ 5",
   6: "Thứ 6",
   7: "Thứ 7",
-};
-
-const toErrorMessage = (error: unknown): string => {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return "Thao tác thất bại. Vui lòng thử lại.";
-};
-
-const formatDateTime = (value?: string): string => {
-  if (!value) {
-    return "-";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString("vi-VN");
 };
 
 const formatSectionStatus = (status?: SectionStatus): string => {
@@ -280,6 +261,7 @@ export const CourseSectionPanel = ({
   const [semesterFilter, setSemesterFilter] = useState("");
   const [editingRowId, setEditingRowId] = useState<number | null>(null);
   const [form, setForm] = useState<CourseSectionFormState>(emptyForm);
+  const [confirmDeleteRow, setConfirmDeleteRow] = useState<CourseSectionRow | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isScheduleLoading, setIsScheduleLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -342,16 +324,6 @@ export const CourseSectionPanel = ({
     });
   }, [courseFilter, keyword, rows, semesterFilter, statusFilter]);
 
-  const stats = useMemo(() => {
-    return {
-      total: rows.length,
-      open: rows.filter((row) => row.status === "OPEN").length,
-      ongoing: rows.filter((row) => row.status === "ONGOING").length,
-      draft: rows.filter((row) => row.status === "DRAFT").length,
-      cancelled: rows.filter((row) => row.status === "CANCELLED").length,
-    };
-  }, [rows]);
-
   const loadReferenceData = useCallback(async () => {
     if (!authorization) {
       return;
@@ -361,7 +333,7 @@ export const CourseSectionPanel = ({
       const [courses, lecturers, periods] = await Promise.all([
         getDynamicListByPath("/api/v1/courses", authorization),
         getDynamicListByPath("/api/v1/lecturers", authorization, { page: 0, size: 100 }),
-        getDynamicListByPath("/api/v1/registration-periods", authorization),
+        getDynamicListByPath("/api/v1/semesters", authorization),
       ]);
 
       setCourseOptions(
@@ -407,7 +379,7 @@ export const CourseSectionPanel = ({
 
       const semesterMap = new Map<number, string>();
       periods.rows.forEach((row) => {
-        const semesterId = Number(row.semesterId || 0);
+        const semesterId = Number(row.id || 0);
         if (!Number.isInteger(semesterId) || semesterId <= 0 || semesterMap.has(semesterId)) {
           return;
         }
@@ -418,13 +390,12 @@ export const CourseSectionPanel = ({
             : Number(row.semesterNumber || 0) || undefined;
         const academicYear =
           typeof row.academicYear === "string" ? row.academicYear : undefined;
-        const periodName = typeof row.name === "string" ? row.name.trim() : "";
-        const semesterLabel = getSemesterLabel(semesterNumber, academicYear, semesterId);
+        const displayName =
+          typeof row.displayName === "string" ? row.displayName.trim() : "";
+        const semesterLabel =
+          displayName || getSemesterLabel(semesterNumber, academicYear, semesterId);
 
-        semesterMap.set(
-          semesterId,
-          periodName ? `${semesterLabel} | ${periodName}` : semesterLabel,
-        );
+        semesterMap.set(semesterId, semesterLabel);
       });
 
       setSemesterOptions(
@@ -686,7 +657,7 @@ export const CourseSectionPanel = ({
     }
   };
 
-  const handleDelete = async () => {
+  const handleDelete = () => {
     if (!authorization || !selectedRow) {
       setErrorMessage("Vui lòng chọn lớp học phần cần xóa.");
       return;
@@ -697,9 +668,16 @@ export const CourseSectionPanel = ({
       return;
     }
 
-    if (!window.confirm(`Xóa lớp học phần ${selectedRow.sectionCode || `#${selectedRow.id}`} ?`)) {
+    setConfirmDeleteRow(selectedRow);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!authorization || !confirmDeleteRow) {
       return;
     }
+
+    const selectedRow = confirmDeleteRow;
+    setConfirmDeleteRow(null);
 
     try {
       setIsLoading(true);
@@ -760,28 +738,6 @@ export const CourseSectionPanel = ({
           </div>
         </div>
 
-        <div className="grid gap-3 px-4 py-4 md:grid-cols-2 xl:grid-cols-5">
-          <div className="rounded-[8px] border border-[#d7e5f0] bg-[#f8fbfe] p-3">
-            <p className="text-xs text-[#6b8395]">Tổng lớp học phần</p>
-            <p className="mt-2 text-[28px] font-semibold text-[#1a4f75]">{stats.total}</p>
-          </div>
-          <div className="rounded-[8px] border border-[#d7e5f0] bg-[#f8fbfe] p-3">
-            <p className="text-xs text-[#6b8395]">Mở đăng ký</p>
-            <p className="mt-2 text-[28px] font-semibold text-[#2c7c48]">{stats.open}</p>
-          </div>
-          <div className="rounded-[8px] border border-[#d7e5f0] bg-[#f8fbfe] p-3">
-            <p className="text-xs text-[#6b8395]">Đang học</p>
-            <p className="mt-2 text-[28px] font-semibold text-[#155c8f]">{stats.ongoing}</p>
-          </div>
-          <div className="rounded-[8px] border border-[#d7e5f0] bg-[#f8fbfe] p-3">
-            <p className="text-xs text-[#6b8395]">Nháp</p>
-            <p className="mt-2 text-[28px] font-semibold text-[#8a6714]">{stats.draft}</p>
-          </div>
-          <div className="rounded-[8px] border border-[#d7e5f0] bg-[#f8fbfe] p-3">
-            <p className="text-xs text-[#6b8395]">Đã hủy</p>
-            <p className="mt-2 text-[28px] font-semibold text-[#b24646]">{stats.cancelled}</p>
-          </div>
-        </div>
       </section>
 
       <section className="rounded-[10px] border border-[#8ab3d1] bg-white shadow-[0_1px_2px_rgba(7,51,84,0.16)]">
@@ -1221,6 +1177,22 @@ export const CourseSectionPanel = ({
           </div>
         </div>
       </section>
+
+      <ConfirmDialog
+        open={Boolean(confirmDeleteRow)}
+        title="Xác nhận xóa lớp học phần"
+        message={
+          confirmDeleteRow
+            ? `Xóa lớp học phần ${confirmDeleteRow.sectionCode || `#${confirmDeleteRow.id}`}?`
+            : ""
+        }
+        confirmText="Xóa"
+        isProcessing={isLoading}
+        onCancel={() => setConfirmDeleteRow(null)}
+        onConfirm={() => {
+          void handleConfirmDelete();
+        }}
+      />
     </div>
   );
 };
