@@ -1,9 +1,17 @@
 import { apiRequest } from "@/lib/api/client";
 import type { ApiResponse } from "@/lib/api/types";
-import type { LecturerScheduleRow } from "@/lib/lecturer/types";
+import type {
+  AttendanceBatchRequest,
+  AttendanceResponse,
+  ClassSessionResponse,
+  CourseSectionResponse,
+  GradeReportResponse,
+  LecturerScheduleRow,
+  RecurringScheduleResponse,
+} from "@/lib/lecturer/types";
 
 const isObject = (value: unknown): value is Record<string, unknown> => {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+  return typeof value === "object" && value !== null;
 };
 
 const unwrapApiData = <TData>(value: unknown): TData => {
@@ -12,6 +20,14 @@ const unwrapApiData = <TData>(value: unknown): TData => {
   }
 
   return value as TData;
+};
+
+const toArray = <TItem>(value: unknown): TItem[] => {
+  if (Array.isArray(value)) {
+    return value as TItem[];
+  }
+
+  return [];
 };
 
 const toScheduleRows = (value: unknown): LecturerScheduleRow[] => {
@@ -57,4 +73,110 @@ export const getMyLecturerSchedule = async (
   );
 
   return toScheduleRows(response);
+};
+
+export const getCourseSections = async (
+  authorization: string,
+): Promise<CourseSectionResponse[]> => {
+  const response = await apiRequest<ApiResponse<unknown> | unknown>(
+    "/api/v1/course-sections",
+    {
+      method: "GET",
+      accessToken: authorization,
+    },
+  );
+
+  return toArray<CourseSectionResponse>(unwrapApiData<unknown>(response));
+};
+
+export const getGradeReportsBySection = async (
+  sectionId: number,
+  authorization: string,
+): Promise<GradeReportResponse[]> => {
+  const response = await apiRequest<ApiResponse<unknown> | unknown>(
+    `/api/v1/course-sections/${sectionId}/grade-reports`,
+    {
+      method: "GET",
+      accessToken: authorization,
+    },
+  );
+
+  return toArray<GradeReportResponse>(unwrapApiData<unknown>(response));
+};
+
+export const getGradeReportById = async (
+  gradeReportId: number,
+  authorization: string,
+): Promise<GradeReportResponse> => {
+  const response = await apiRequest<ApiResponse<unknown> | unknown>(
+    `/api/v1/grade-reports/${gradeReportId}`,
+    {
+      method: "GET",
+      accessToken: authorization,
+    },
+  );
+
+  return unwrapApiData<GradeReportResponse>(response);
+};
+
+export const getRecurringSchedulesBySection = async (
+  sectionId: number,
+  authorization: string,
+): Promise<RecurringScheduleResponse[]> => {
+  const response = await apiRequest<ApiResponse<unknown> | unknown>(
+    `/api/v1/recurring-schedules/section/${sectionId}`,
+    {
+      method: "GET",
+      accessToken: authorization,
+    },
+  );
+
+  return toArray<RecurringScheduleResponse>(unwrapApiData<unknown>(response));
+};
+
+export const getRecurringScheduleSessions = async (
+  recurringScheduleId: number,
+  authorization: string,
+): Promise<ClassSessionResponse[]> => {
+  const response = await apiRequest<ApiResponse<unknown> | unknown>(
+    `/api/v1/recurring-schedules/${recurringScheduleId}/sessions`,
+    {
+      method: "GET",
+      accessToken: authorization,
+    },
+  );
+
+  return toArray<ClassSessionResponse>(unwrapApiData<unknown>(response));
+};
+
+export const getAttendancesBySession = async (
+  sessionId: number,
+  authorization: string,
+): Promise<AttendanceResponse[]> => {
+  const response = await apiRequest<ApiResponse<unknown> | unknown>(
+    `/api/v1/class-sessions/${sessionId}/attendances`,
+    {
+      method: "GET",
+      accessToken: authorization,
+    },
+  );
+
+  return toArray<AttendanceResponse>(unwrapApiData<unknown>(response));
+};
+
+export const saveAttendancesBySession = async (
+  sessionId: number,
+  payload: AttendanceBatchRequest,
+  authorization: string,
+): Promise<AttendanceResponse[]> => {
+  const response = await apiRequest<ApiResponse<unknown> | unknown>(
+    `/api/v1/class-sessions/${sessionId}/attendances/batch`,
+    {
+      method: "POST",
+      body: payload,
+      accessToken: authorization,
+    },
+  );
+
+  return toArray<AttendanceResponse>(unwrapApiData<unknown>(response));
 };

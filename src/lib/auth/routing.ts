@@ -1,5 +1,5 @@
 import type { AuthSession } from "@/lib/auth/types";
-import { isAdminRole, isLecturerRole } from "@/lib/auth/role";
+import { isAdminRole, isGuardianRole, isLecturerRole } from "@/lib/auth/role";
 
 export const getDefaultHomePath = (
   session?: Pick<AuthSession, "role"> | null,
@@ -12,6 +12,10 @@ export const getDefaultHomePath = (
     return "/lecturer/dashboard";
   }
 
+  if (isGuardianRole(session?.role)) {
+    return "/guardian/dashboard";
+  }
+
   return "/dashboard";
 };
 
@@ -21,6 +25,7 @@ export const canAccessPathByRole = (
 ): boolean => {
   const admin = isAdminRole(session?.role);
   const lecturer = isLecturerRole(session?.role);
+  const guardian = isGuardianRole(session?.role);
 
   if (path.startsWith("/admin")) {
     return admin;
@@ -30,8 +35,12 @@ export const canAccessPathByRole = (
     return lecturer;
   }
 
+  if (path.startsWith("/guardian")) {
+    return guardian;
+  }
+
   if (path.startsWith("/dashboard")) {
-    return !admin && !lecturer;
+    return !admin && !lecturer && !guardian;
   }
 
   return true;
