@@ -9,6 +9,8 @@ export type AdminTabKey =
   | "home"
   | "accounts"
   | "roles"
+  | "semesters"
+  | "registration-periods"
   | "faculties"
   | "majors"
   | "specializations"

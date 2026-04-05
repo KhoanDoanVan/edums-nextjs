@@ -13,6 +13,8 @@ import {
   getRoles,
   updateRole,
 } from "@/lib/admin/service";
+import { ConfirmDialog } from "@/components/admin/confirm-dialog";
+import { toErrorMessage } from "@/components/admin/format-utils";
 import type { RoleListItem } from "@/lib/admin/types";
 
 interface RolePermissionPanelProps {
@@ -26,14 +28,6 @@ interface RoleFormState {
   roleName: string;
   functionCodes: string[];
 }
-
-const toErrorMessage = (error: unknown): string => {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return "Thao tác thất bại. Vui lòng thử lại.";
-};
 
 const formatFunctionCodes = (codes?: string[]): string => {
   if (!codes || codes.length === 0) {
@@ -81,6 +75,7 @@ export const RolePermissionPanel = ({
     roleName: "",
     functionCodes: [],
   });
+  const [roleToDelete, setRoleToDelete] = useState<RoleListItem | null>(null);
 
   const runAction = useCallback(async (action: () => Promise<void>) => {
     try {
@@ -143,12 +138,6 @@ export const RolePermissionPanel = ({
     );
   }, [permissionKeyword, permissions]);
 
-  const totalAssignedPermissions = useMemo(() => {
-    return roles.reduce(
-      (total, role) => total + (role.functionCodes?.length || 0),
-      0,
-    );
-  }, [roles]);
 
   const openCreateRoleModal = () => {
     setErrorMessage("");
@@ -253,7 +242,7 @@ export const RolePermissionPanel = ({
     });
   };
 
-  const handleDeleteRole = async (role: RoleListItem) => {
+  const handleDeleteRole = (role: RoleListItem) => {
     if (!authorization) {
       setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
@@ -264,12 +253,16 @@ export const RolePermissionPanel = ({
       return;
     }
 
-    const accepted = window.confirm(
-      `Bạn có chắc muốn xóa vai trò "${role.roleName || role.id}"?`,
-    );
-    if (!accepted) {
+    setRoleToDelete(role);
+  };
+
+  const handleConfirmDeleteRole = async () => {
+    if (!authorization || !roleToDelete) {
       return;
     }
+
+    const role = roleToDelete;
+    setRoleToDelete(null);
 
     await runAction(async () => {
       await deleteRole(role.id, authorization);
@@ -281,26 +274,6 @@ export const RolePermissionPanel = ({
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 md:grid-cols-3">
-        <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
-          <p className="text-sm font-medium text-[#5f7d93]">Tổng vai trò</p>
-          <p className="mt-2 text-[28px] font-bold text-[#1d5b82]">{roles.length}</p>
-        </article>
-        <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
-          <p className="text-sm font-medium text-[#5f7d93]">Quyền hệ thống</p>
-          <p className="mt-2 text-[28px] font-bold text-[#2b67a1]">
-            {permissions.length}
-          </p>
-        </article>
-        <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
-          <p className="text-sm font-medium text-[#5f7d93]">
-            Tổng quyền gán cho vai trò
-          </p>
-          <p className="mt-2 text-[28px] font-bold text-[#1d7a47]">
-            {totalAssignedPermissions}
-          </p>
-        </article>
-      </div>
 
       <section className="rounded-[10px] border border-[#8ab3d1] bg-white shadow-[0_1px_2px_rgba(7,51,84,0.16)]">
         <div className="flex items-center justify-between border-b border-[#c5dced] px-4 py-3 text-[18px] font-semibold text-[#1a4f75]">
@@ -560,6 +533,22 @@ export const RolePermissionPanel = ({
           </div>
         </div>
       ) : null}
+
+      <ConfirmDialog
+        open={Boolean(roleToDelete)}
+        title="Xác nhận xóa vai trò"
+        message={
+          roleToDelete
+            ? `Bạn có chắc muốn xóa vai trò "${roleToDelete.roleName || roleToDelete.id}"?`
+            : ""
+        }
+        confirmText="Xóa"
+        isProcessing={isLoading}
+        onCancel={() => setRoleToDelete(null)}
+        onConfirm={() => {
+          void handleConfirmDeleteRole();
+        }}
+      />
     </div>
   );
 };

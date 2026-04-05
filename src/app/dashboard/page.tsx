@@ -17,31 +17,32 @@ import {
   getCohorts,
   getClassroomById,
   getClassrooms,
+  getAvailableCourseSections,
   getCourses,
   getCoursesByFaculty,
   getCourseSectionById,
-  getFacultyById,
   getFaculties,
+  getFacultyById,
   getGradeReportById,
   getGradeComponentsByCourse,
   getLecturerById,
-  getCourseSections,
-  getCourseSectionsByCourse,
-  getCourseSectionsBySemester,
   getMajorById,
   getMajors,
   getMajorsByFaculty,
   getMyAttendance,
+  cancelCourseRegistration,
   getMyCourseRegistrations,
   getMyGradeReports,
   getMyProfile,
   getRecurringScheduleById,
   getRecurringScheduleSessions,
   getRecurringSchedulesBySection,
+  getSemesters,
   getSpecializations,
   getSpecializationsByMajor,
   getStudentById,
   registerCourseSection,
+  switchCourseRegistration,
   updateMyProfile,
 } from "@/lib/student/service";
 import {
@@ -50,6 +51,7 @@ import {
 } from "@/lib/student/tabs";
 import type {
   AdministrativeClassResponse,
+  AvailableCourseSectionResponse,
   AttendanceResponse,
   ClassroomResponse,
   CohortResponse,
@@ -64,6 +66,7 @@ import type {
   MajorResponse,
   ProfileResponse,
   RecurringScheduleResponse,
+  SemesterResponse,
   SpecializationResponse,
   StudentFeatureTab,
 } from "@/lib/student/types";
@@ -207,15 +210,27 @@ interface RegistrationNotice {
 
 interface RegisteredCourseItem {
   registrationId: number;
+  courseSectionId?: number;
+  courseId?: number;
+  courseCode?: string;
+  courseName?: string;
+  sectionCode?: string;
+  semesterId?: number;
+  registrationTime?: string;
+  status?: "PENDING" | "CONFIRMED" | "CANCELLED" | "DROPPED";
+  availableSection?: AvailableCourseSectionResponse | null;
+}
+
+interface ScheduleRegisteredSectionItem {
+  registrationId: number;
   registrationTime?: string;
   status?: "PENDING" | "CONFIRMED" | "CANCELLED" | "DROPPED";
   section: CourseSectionResponse;
 }
 
-interface CourseFilterOption {
-  courseId: number;
-  courseCode?: string;
-  courseName: string;
+interface RegistrationSwitchTarget {
+  item: RegisteredCourseItem;
+  nextSectionId: string;
 }
 
 interface FacultyFilterOption {
@@ -327,10 +342,6 @@ const scheduleDayLabels = [
   "Chủ nhật",
 ] as const;
 
-const getSectionDisplayName = (section: CourseSectionResponse): string => {
-  return section.displayName || section.sectionCode || `Lớp ${section.id}`;
-};
-
 const getCourseDisplayName = (section: CourseSectionResponse): string => {
   return section.courseName || section.courseCode || "Chưa cập nhật";
 };
@@ -340,43 +351,31 @@ const getGroupLabel = (section: CourseSectionResponse): string => {
   return matched?.[1] || "-";
 };
 
-const getCreditsLabel = (
-  section: CourseSectionResponse,
-  course?: CourseResponse,
+const getAvailableSectionDisplayName = (
+  section: AvailableCourseSectionResponse,
 ): string => {
-  if (typeof course?.credits === "number" && Number.isFinite(course.credits)) {
-    return String(course.credits);
-  }
-
-  void section;
-  return "-";
+  return section.displayName || section.sectionCode || `Lớp ${section.courseSectionId}`;
 };
 
-const getRecurringScheduleDayLabel = (
-  schedule: RecurringScheduleResponse,
+const getAvailableSectionCourseName = (
+  section: AvailableCourseSectionResponse,
 ): string => {
-  const normalizedDayIndex = normalizeDayIndex(
-    schedule.dayOfWeek,
-    schedule.dayOfWeekName,
-  );
-
-  if (normalizedDayIndex !== null) {
-    return scheduleDayLabels[normalizedDayIndex];
-  }
-
-  if (schedule.dayOfWeekName) {
-    return schedule.dayOfWeekName;
-  }
-
-  if (typeof schedule.dayOfWeek === "number") {
-    return schedule.dayOfWeek === 7 ? "Chủ nhật" : `Thứ ${schedule.dayOfWeek + 1}`;
-  }
-
-  return "Chưa rõ thứ";
+  return section.courseName || section.courseCode || "Chưa cập nhật";
 };
 
-const getRecurringScheduleSummaryLines = (
-  schedules?: RecurringScheduleResponse[] | null,
+const getAvailableSectionGroupLabel = (
+  section?: AvailableCourseSectionResponse | null,
+): string => {
+  if (!section?.sectionCode) {
+    return "-";
+  }
+
+  const matched = section.sectionCode.match(/(\d+)$/);
+  return matched?.[1] || section.sectionCode;
+};
+
+const getAvailableScheduleSummaryLines = (
+  schedules?: AvailableCourseSectionResponse["schedules"] | null,
 ): string[] => {
   if (!Array.isArray(schedules) || schedules.length === 0) {
     return [];
@@ -384,9 +383,8 @@ const getRecurringScheduleSummaryLines = (
 
   return [...schedules]
     .sort((first, second) => {
-      const firstDay = normalizeDayIndex(first.dayOfWeek, first.dayOfWeekName) ?? 99;
-      const secondDay =
-        normalizeDayIndex(second.dayOfWeek, second.dayOfWeekName) ?? 99;
+      const firstDay = normalizeDayIndex(first.dayOfWeek) ?? 99;
+      const secondDay = normalizeDayIndex(second.dayOfWeek) ?? 99;
 
       if (firstDay === secondDay) {
         return (first.startPeriod ?? 99) - (second.startPeriod ?? 99);
@@ -396,9 +394,14 @@ const getRecurringScheduleSummaryLines = (
     })
     .map((schedule) =>
       [
-        getRecurringScheduleDayLabel(schedule),
+        normalizeDayIndex(schedule.dayOfWeek) !== null
+          ? scheduleDayLabels[normalizeDayIndex(schedule.dayOfWeek) || 0]
+          : "Chưa rõ thứ",
         getPeriodRangeLabel(schedule.startPeriod, schedule.endPeriod),
-        schedule.classroomName ? `Phòng ${schedule.classroomName}` : null,
+        schedule.roomName ? `Phòng ${schedule.roomName}` : null,
+        schedule.startWeek && schedule.endWeek
+          ? `Tuần ${schedule.startWeek}-${schedule.endWeek}`
+          : null,
       ]
         .filter(Boolean)
         .join(", "),
@@ -686,7 +689,7 @@ const getStudentTabDescription = (
   item: Pick<StudentFeatureTab, "key" | "description">,
 ): string => {
   if (item.key === "course-registration") {
-    return "Tra cứu học phần đang mở, lọc theo khoa, môn học, học kỳ và gửi yêu cầu đăng ký ngay trên trang này.";
+    return "Tra cứu lớp học phần đủ điều kiện đăng ký theo học kỳ, khoa và môn học; sau đó đăng ký, hủy hoặc đổi nhóm ngay trên trang này.";
   }
 
   return item.description;
@@ -713,12 +716,19 @@ const parseRegistrationError = (error: unknown): RegistrationNotice => {
         path?: string;
         data?: string;
       };
-      const backendDetail =
-        typeof payload.path === "string" && payload.path.trim()
-          ? payload.path.trim()
-          : typeof payload.data === "string" && payload.data.trim()
-            ? payload.data.trim()
-            : "";
+      const businessMessage =
+        typeof payload.message === "string" &&
+        payload.message.trim() &&
+        !["INVALID_DATA", "NOT_FOUND", "BAD_REQUEST"].includes(
+          payload.message.trim().toUpperCase(),
+        )
+          ? payload.message.trim()
+          : "";
+      const backendDetailCandidates = [payload.data, payload.path]
+        .filter((value): value is string => typeof value === "string")
+        .map((value) => value.trim())
+        .filter((value) => value && !value.startsWith("/api/"));
+      const backendDetail = businessMessage || backendDetailCandidates[0] || "";
 
       if (
         payload.status === 400 &&
@@ -746,7 +756,7 @@ const parseRegistrationError = (error: unknown): RegistrationNotice => {
         };
       }
 
-      if (payload.status === 400 && backendDetail) {
+      if (backendDetail) {
         return {
           title: fallback.title,
           message: backendDetail,
@@ -867,12 +877,12 @@ export default function DashboardPage() {
   const [attendanceStatusFilter, setAttendanceStatusFilter] = useState("");
   const [attendanceDateFrom, setAttendanceDateFrom] = useState("");
   const [attendanceDateTo, setAttendanceDateTo] = useState("");
-  const [allCourseSections, setAllCourseSections] = useState<
-    CourseSectionResponse[]
+  const [semesterCatalog, setSemesterCatalog] = useState<SemesterResponse[]>([]);
+  const [courseSections, setCourseSections] = useState<
+    AvailableCourseSectionResponse[]
   >([]);
-  const [courseSections, setCourseSections] = useState<CourseSectionResponse[]>(
-    [],
-  );
+  const [registrationSectionsBySemester, setRegistrationSectionsBySemester] =
+    useState<Record<number, AvailableCourseSectionResponse>>({});
   const [selectedSectionId, setSelectedSectionId] = useState("");
   const [courseKeyword, setCourseKeyword] = useState("");
   const [selectedFacultyId, setSelectedFacultyId] = useState("");
@@ -885,11 +895,13 @@ export default function DashboardPage() {
   >([]);
   const [registrationNotice, setRegistrationNotice] =
     useState<RegistrationNotice | null>(null);
+  const [registrationDeleteTarget, setRegistrationDeleteTarget] =
+    useState<RegisteredCourseItem | null>(null);
+  const [registrationSwitchTarget, setRegistrationSwitchTarget] =
+    useState<RegistrationSwitchTarget | null>(null);
   const [registeredSections, setRegisteredSections] = useState<
     RegisteredCourseItem[]
   >([]);
-  const [registrationSchedulesBySectionId, setRegistrationSchedulesBySectionId] =
-    useState<Record<number, RecurringScheduleResponse[] | null>>({});
   const [myScheduleBlocks, setMyScheduleBlocks] = useState<WeeklyScheduleBlock[]>(
     [],
   );
@@ -1131,33 +1143,18 @@ export default function DashboardPage() {
     isProfileSpecializationContextLoading ||
     isProfileClassContextLoading;
 
-  const courseMetadataById = useMemo(() => {
-    const entries = [...allCoursesCatalog, ...coursesBySelectedFaculty];
-    const byId = new Map<number, CourseResponse>();
-
-    entries.forEach((course) => {
-      if (!course.id) {
-        return;
-      }
-      byId.set(course.id, course);
-    });
-
-    return byId;
-  }, [allCoursesCatalog, coursesBySelectedFaculty]);
-
-  const courseMetadataByCode = useMemo(() => {
-    const byCode = new Map<string, CourseResponse>();
-
-    courseMetadataById.forEach((course) => {
-      const code = (course.courseCode || "").trim().toLowerCase();
-      if (!code || byCode.has(code)) {
-        return;
-      }
-      byCode.set(code, course);
-    });
-
-    return byCode;
-  }, [courseMetadataById]);
+  const registrationSemesterOptions = useMemo<SemesterFilterOption[]>(() => {
+    return semesterCatalog
+      .map((semester) => ({
+        semesterId: semester.id,
+        semesterNumber: semester.semesterNumber,
+        academicYear: semester.academicYear,
+        label:
+          semester.displayName ||
+          getSemesterDisplayLabel(semester.semesterNumber, semester.academicYear),
+      }))
+      .sort((first, second) => first.label.localeCompare(second.label, "vi"));
+  }, [semesterCatalog]);
 
   const availableCourseCatalog = useMemo(() => {
     if (selectedFacultyId) {
@@ -1167,123 +1164,45 @@ export default function DashboardPage() {
     return allCoursesCatalog;
   }, [allCoursesCatalog, coursesBySelectedFaculty, selectedFacultyId]);
 
-  const getCourseMetadataForSection = (
-    section?: CourseSectionResponse | null,
-  ): CourseResponse | null => {
-    if (!section) {
-      return null;
-    }
+  const courseCatalogById = useMemo(() => {
+    const entries = new Map<number, CourseResponse>();
 
-    if (section.courseId && courseMetadataById.has(section.courseId)) {
-      return courseMetadataById.get(section.courseId) || null;
-    }
+    [...allCoursesCatalog, ...coursesBySelectedFaculty].forEach((course) => {
+      if (Number.isInteger(course.id) && course.id > 0 && !entries.has(course.id)) {
+        entries.set(course.id, course);
+      }
+    });
 
-    const sectionCode = (section.courseCode || "").trim().toLowerCase();
-    if (sectionCode && courseMetadataByCode.has(sectionCode)) {
-      return courseMetadataByCode.get(sectionCode) || null;
-    }
-
-    return null;
-  };
+    return entries;
+  }, [allCoursesCatalog, coursesBySelectedFaculty]);
 
   const courseFilterOptions = useMemo(() => {
-    if (selectedFacultyId) {
-      return availableCourseCatalog
-        .map((course) => ({
-          courseId: course.id,
-          courseCode: course.courseCode,
-          courseName: course.courseName || course.courseCode || `Môn học ${course.id}`,
-        }))
-        .sort((a, b) => a.courseName.localeCompare(b.courseName, "vi"));
-    }
-
-    if (availableCourseCatalog.length > 0) {
-      return availableCourseCatalog
-        .map((course) => ({
-          courseId: course.id,
-          courseCode: course.courseCode,
-          courseName: course.courseName || course.courseCode || `Môn học ${course.id}`,
-        }))
-        .sort((a, b) => a.courseName.localeCompare(b.courseName, "vi"));
-    }
-
-    const optionsMap = new Map<number, CourseFilterOption>();
-
-    allCourseSections.forEach((section) => {
-      if (!section.courseId || optionsMap.has(section.courseId)) {
-        return;
-      }
-
-      optionsMap.set(section.courseId, {
-        courseId: section.courseId,
-        courseCode: section.courseCode,
-        courseName: getCourseDisplayName(section),
-      });
-    });
-
-    return Array.from(optionsMap.values()).sort((a, b) =>
+    return availableCourseCatalog
+      .map((course) => ({
+        courseId: course.id,
+        courseCode: course.courseCode,
+        courseName: course.courseName || course.courseCode || `Môn học ${course.id}`,
+      }))
+      .sort((a, b) =>
       a.courseName.localeCompare(b.courseName, "vi"),
-    );
-  }, [allCourseSections, availableCourseCatalog, selectedFacultyId]);
-
-  const semesterFilterOptions = useMemo(() => {
-    const optionsMap = new Map<number, SemesterFilterOption>();
-
-    allCourseSections.forEach((section) => {
-      if (!section.semesterId || optionsMap.has(section.semesterId)) {
-        return;
-      }
-
-      optionsMap.set(section.semesterId, {
-        semesterId: section.semesterId,
-        semesterNumber: section.semesterNumber,
-        academicYear: section.academicYear,
-        label: getSemesterDisplayLabel(section.semesterNumber, section.academicYear),
-      });
-    });
-
-    return Array.from(optionsMap.values()).sort((a, b) => {
-      if ((a.semesterNumber ?? 0) === (b.semesterNumber ?? 0)) {
-        return (a.academicYear || "").localeCompare(b.academicYear || "", "vi");
-      }
-
-      return (a.semesterNumber ?? 0) - (b.semesterNumber ?? 0);
-    });
-  }, [allCourseSections]);
-
-  const selectedSemesterLabel = useMemo(() => {
-    const semesterValue = parsePositiveInteger(selectedSemesterId);
-    if (!semesterValue) {
-      return null;
-    }
-
-    const option = semesterFilterOptions.find(
-      (item) => item.semesterId === semesterValue,
-    );
-
-    return option?.label || null;
-  }, [selectedSemesterId, semesterFilterOptions]);
+      );
+  }, [availableCourseCatalog]);
 
   const filteredSections = useMemo(() => {
     const normalizedKeyword = courseKeyword.trim().toLowerCase();
 
     return courseSections.filter((section) => {
-      const normalizedCode = (section.courseCode || "").trim().toLowerCase();
-      const courseMeta =
-        (typeof section.courseId === "number" && section.courseId > 0
-          ? courseMetadataById.get(section.courseId)
-          : undefined) ||
-        (normalizedCode ? courseMetadataByCode.get(normalizedCode) : undefined);
       const matchesKeyword =
         !normalizedKeyword ||
         [
           section.courseCode,
-          getCourseDisplayName(section),
-          getSectionDisplayName(section),
+          getAvailableSectionCourseName(section),
+          getAvailableSectionDisplayName(section),
           section.sectionCode,
           section.lecturerName,
-          courseMeta?.facultyName,
-          courseMeta?.prerequisiteCourseName,
+          section.facultyName,
+          section.prerequisiteCourseName,
+          section.registrationPeriodName,
         ]
           .filter(Boolean)
           .some((value) =>
@@ -1292,20 +1211,84 @@ export default function DashboardPage() {
 
       return matchesKeyword;
     });
-  }, [courseKeyword, courseMetadataByCode, courseMetadataById, courseSections]);
+  }, [courseKeyword, courseSections]);
 
-  const registrationScheduleSectionIds = useMemo(() => {
-    return Array.from(
-      new Set(
-        [...filteredSections, ...registeredSections.map((item) => item.section)]
-          .map((section) => section.id)
-          .filter(
-            (sectionId): sectionId is number =>
-              Number.isInteger(sectionId) && sectionId > 0,
-          ),
-      ),
+  const registrationAvailableSectionsById = useMemo(() => {
+    const entries = new Map<number, AvailableCourseSectionResponse>();
+
+    [...courseSections, ...Object.values(registrationSectionsBySemester)].forEach(
+      (section) => {
+        if (!section || !Number.isInteger(section.courseSectionId)) {
+          return;
+        }
+
+        entries.set(section.courseSectionId, section);
+      },
     );
-  }, [filteredSections, registeredSections]);
+
+    return entries;
+  }, [courseSections, registrationSectionsBySemester]);
+
+  const selectedRegistrationSection = useMemo(() => {
+    const sectionId = parsePositiveInteger(selectedSectionId);
+    if (!sectionId) {
+      return null;
+    }
+
+    return (
+      filteredSections.find((section) => section.courseSectionId === sectionId) || null
+    );
+  }, [filteredSections, selectedSectionId]);
+
+  const registeredCredits = useMemo(() => {
+    return registeredSections.reduce((total, item) => {
+      const credits =
+        item.availableSection?.credits ||
+        (item.courseId ? courseCatalogById.get(item.courseId)?.credits : undefined);
+      return total + (typeof credits === "number" ? credits : 0);
+    }, 0);
+  }, [courseCatalogById, registeredSections]);
+
+  const switchableSectionOptionsByRegistrationId = useMemo(() => {
+    const entries = new Map<number, AvailableCourseSectionResponse[]>();
+
+    registeredSections.forEach((item) => {
+      if (!item.registrationId) {
+        entries.set(item.registrationId, []);
+        return;
+      }
+
+      const currentSection = item.availableSection;
+      const targetCourseId = currentSection?.courseId || item.courseId;
+      const targetSemesterId = currentSection?.semesterId || item.semesterId;
+
+      if (!targetCourseId || !targetSemesterId) {
+        entries.set(item.registrationId, []);
+        return;
+      }
+
+      const candidates = Array.from(registrationAvailableSectionsById.values())
+        .filter((section) => {
+          if (section.courseSectionId === item.courseSectionId) {
+            return false;
+          }
+
+          return (
+            section.courseId === targetCourseId &&
+            section.semesterId === targetSemesterId
+          );
+        })
+        .sort((first, second) => {
+          const firstCode = first.sectionCode || first.displayName || "";
+          const secondCode = second.sectionCode || second.displayName || "";
+          return firstCode.localeCompare(secondCode, "vi");
+        });
+
+      entries.set(item.registrationId, candidates);
+    });
+
+    return entries;
+  }, [registeredSections, registrationAvailableSectionsById]);
 
   const scheduleSemesterOptions = useMemo(() => {
     const optionsMap = new Map<number, SemesterFilterOption>();
@@ -2218,73 +2201,6 @@ export default function DashboardPage() {
   ]);
 
   useEffect(() => {
-    if (activeTabKey !== "course-registration") {
-      return;
-    }
-
-    const authorization = session?.authorization;
-    if (!authorization || registrationScheduleSectionIds.length === 0) {
-      return;
-    }
-
-    const pendingSectionIds = registrationScheduleSectionIds.filter(
-      (sectionId) =>
-        !Object.prototype.hasOwnProperty.call(
-          registrationSchedulesBySectionId,
-          sectionId,
-        ),
-    );
-
-    if (pendingSectionIds.length === 0) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const loadRegistrationSchedules = async () => {
-      const entries = await Promise.all(
-        pendingSectionIds.map(async (sectionId) => {
-          try {
-            const schedules = await getRecurringSchedulesBySection(
-              sectionId,
-              authorization,
-            );
-
-            return [sectionId, schedules] as const;
-          } catch {
-            return [sectionId, null] as const;
-          }
-        }),
-      );
-
-      if (cancelled) {
-        return;
-      }
-
-      setRegistrationSchedulesBySectionId((current) => {
-        const next = { ...current };
-
-        entries.forEach(([sectionId, schedules]) => {
-          next[sectionId] = schedules;
-        });
-
-        return next;
-      });
-    };
-
-    void loadRegistrationSchedules();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    activeTabKey,
-    registrationScheduleSectionIds,
-    registrationSchedulesBySectionId,
-    session?.authorization,
-  ]);
-
-  useEffect(() => {
     if (activeTabKey !== "grades") {
       return;
     }
@@ -2586,7 +2502,7 @@ export default function DashboardPage() {
   const resolveRegisteredSectionItems = async (
     registrations: CourseRegistrationResponse[],
     authorization: string,
-  ): Promise<RegisteredCourseItem[]> => {
+  ): Promise<ScheduleRegisteredSectionItem[]> => {
     const sortedRegistrations = registrations
       .filter(isActiveCourseRegistration)
       .sort((first, second) => {
@@ -2663,12 +2579,50 @@ export default function DashboardPage() {
     });
   };
 
+  const resolveRegistrationTabItems = (
+    registrations: CourseRegistrationResponse[],
+    availableSectionMap: Map<number, AvailableCourseSectionResponse>,
+  ): RegisteredCourseItem[] => {
+    return registrations
+      .filter(isActiveCourseRegistration)
+      .sort((first, second) => {
+        const firstTime = first.registrationTime
+          ? new Date(first.registrationTime).getTime()
+          : 0;
+        const secondTime = second.registrationTime
+          ? new Date(second.registrationTime).getTime()
+          : 0;
+
+        if (firstTime === secondTime) {
+          return second.id - first.id;
+        }
+
+        return secondTime - firstTime;
+      })
+      .map((registration) => ({
+        registrationId: registration.id,
+        courseSectionId: registration.courseSectionId,
+        courseId: registration.courseId,
+        courseCode: registration.courseCode,
+        courseName: registration.courseName,
+        sectionCode: registration.sectionCode,
+        semesterId: registration.semesterId,
+        registrationTime: registration.registrationTime,
+        status: registration.status,
+        availableSection:
+          (registration.courseSectionId
+            ? availableSectionMap.get(registration.courseSectionId)
+            : null) || null,
+      }));
+  };
+
   const loadMyRegisteredSections = async (
     authorization: string,
+    availableSectionMap: Map<number, AvailableCourseSectionResponse>,
     semesterId?: number,
   ): Promise<RegisteredCourseItem[]> => {
     const registrations = await getMyCourseRegistrations(authorization, semesterId);
-    const items = await resolveRegisteredSectionItems(registrations, authorization);
+    const items = resolveRegistrationTabItems(registrations, availableSectionMap);
     setRegisteredSections(items);
     return items;
   };
@@ -3676,48 +3630,19 @@ export default function DashboardPage() {
     }
   };
 
-  const syncSelectedSection = (nextSections: CourseSectionResponse[]) => {
+  const syncSelectedSection = (nextSections: AvailableCourseSectionResponse[]) => {
     setSelectedSectionId((currentSectionId) => {
       if (
         currentSectionId &&
-        nextSections.some((section) => String(section.id) === currentSectionId)
+        nextSections.some(
+          (section) => String(section.courseSectionId) === currentSectionId,
+        )
       ) {
         return currentSectionId;
       }
 
-      return nextSections.length > 0 ? String(nextSections[0].id) : "";
+      return nextSections.length > 0 ? String(nextSections[0].courseSectionId) : "";
     });
-  };
-
-  const resolveRegistrationSectionsByFilters = async (
-    authorization: string,
-    courseIdValue: string,
-    semesterIdValue: string,
-    fallbackSections: CourseSectionResponse[],
-  ): Promise<CourseSectionResponse[]> => {
-    const courseId = parsePositiveInteger(courseIdValue);
-    const semesterId = parsePositiveInteger(semesterIdValue);
-
-    if (courseId) {
-      const sectionsByCourse = await getCourseSectionsByCourse(
-        courseId,
-        authorization,
-      );
-
-      if (!semesterId) {
-        return sectionsByCourse;
-      }
-
-      return sectionsByCourse.filter(
-        (section) => section.semesterId === semesterId,
-      );
-    }
-
-    if (semesterId) {
-      return getCourseSectionsBySemester(semesterId, authorization);
-    }
-
-    return fallbackSections;
   };
 
   const handleLoadRegistrationSections = async (
@@ -3732,17 +3657,18 @@ export default function DashboardPage() {
 
     await runAction(async () => {
       setRegistrationNotice(null);
-      const [allSections, faculties, allCourses] = await Promise.all([
-        getCourseSections(authorization),
+      const [semesters, faculties, allCourses] = await Promise.all([
+        getSemesters(authorization).catch(() => []),
         getFaculties(authorization).catch(() => []),
         getCourses(authorization).catch(() => []),
       ]);
 
-      setAllCourseSections(allSections);
+      setSemesterCatalog(semesters);
       setFacultyCatalog(faculties);
       setAllCoursesCatalog(allCourses);
 
       const facultyId = parsePositiveInteger(facultyIdValue);
+      const semesterId = parsePositiveInteger(semesterIdValue);
       let coursesInSelectedFaculty: CourseResponse[] = [];
 
       if (facultyId) {
@@ -3772,48 +3698,38 @@ export default function DashboardPage() {
         }
       }
 
-      const filteredByBackend = await resolveRegistrationSectionsByFilters(
-        authorization,
-        resolvedCourseIdValue,
-        semesterIdValue,
-        allSections,
+      const parsedCourseId = parsePositiveInteger(resolvedCourseIdValue);
+      const [availableSections, sectionsForRegisteredList] = await Promise.all([
+        getAvailableCourseSections(authorization, {
+          facultyId: facultyId || undefined,
+          courseId: parsedCourseId || undefined,
+          semesterId: semesterId || undefined,
+          keyword: courseKeyword,
+        }),
+        getAvailableCourseSections(authorization, {
+          semesterId: semesterId || undefined,
+        }),
+      ]);
+
+      setCourseSections(availableSections);
+      setRegistrationSectionsBySemester(
+        Object.fromEntries(
+          sectionsForRegisteredList.map((section) => [
+            section.courseSectionId,
+            section,
+          ]),
+        ),
       );
-
-      let filteredSectionsByScope = filteredByBackend;
-
-      if (facultyId) {
-        const allowedCourseIds = new Set(
-          coursesInSelectedFaculty
-            .map((course) => course.id)
-            .filter((value): value is number => Number.isInteger(value) && value > 0),
-        );
-        const allowedCourseCodes = new Set(
-          coursesInSelectedFaculty
-            .map((course) => (course.courseCode || "").trim().toLowerCase())
-            .filter(Boolean),
-        );
-
-        filteredSectionsByScope = filteredByBackend.filter((section) => {
-          if (
-            typeof section.courseId === "number" &&
-            allowedCourseIds.has(section.courseId)
-          ) {
-            return true;
-          }
-
-          const normalizedCode = (section.courseCode || "").trim().toLowerCase();
-          return Boolean(normalizedCode && allowedCourseCodes.has(normalizedCode));
-        });
-      }
-
-      setCourseSections(filteredSectionsByScope);
-      syncSelectedSection(filteredSectionsByScope);
+      syncSelectedSection(availableSections);
       await loadMyRegisteredSections(
         authorization,
-        parsePositiveInteger(semesterIdValue) || undefined,
+        new Map(
+          sectionsForRegisteredList.map((section) => [section.courseSectionId, section]),
+        ),
+        semesterId || undefined,
       );
       setTabMessage(
-        `Đã tải ${filteredSectionsByScope.length} lớp học phần phù hợp bộ lọc.`,
+        `Đã tải ${availableSections.length} lớp học phần đủ điều kiện đăng ký.`,
       );
     });
   };
@@ -3824,20 +3740,20 @@ export default function DashboardPage() {
     void handleLoadRegistrationSections("", selectedSemesterId, nextFacultyId);
   };
 
-  const handleCourseFilterChange = (nextCourseId: string) => {
-    setSelectedCourseId(nextCourseId);
-    void handleLoadRegistrationSections(
-      nextCourseId,
-      selectedSemesterId,
-      selectedFacultyId,
-    );
-  };
-
   const handleSemesterFilterChange = (nextSemesterId: string) => {
     setSelectedSemesterId(nextSemesterId);
     void handleLoadRegistrationSections(
       selectedCourseId,
       nextSemesterId,
+      selectedFacultyId,
+    );
+  };
+
+  const handleCourseFilterChange = (nextCourseId: string) => {
+    setSelectedCourseId(nextCourseId);
+    void handleLoadRegistrationSections(
+      nextCourseId,
+      selectedSemesterId,
       selectedFacultyId,
     );
   };
@@ -3877,16 +3793,97 @@ export default function DashboardPage() {
         authorization,
       );
 
-      await loadMyRegisteredSections(
-        authorization,
-        parsePositiveInteger(selectedSemesterId) || undefined,
-      );
+      await handleLoadRegistrationSections();
 
       setTabMessage("Đăng ký học phần thành công.");
       toast.success("Đăng ký học phần thành công.", "Thành công");
     } catch (error) {
       const notice = parseRegistrationError(error);
       setRegistrationNotice(notice);
+    } finally {
+      setIsWorking(false);
+    }
+  };
+
+  const handleRequestDeleteRegistration = (item: RegisteredCourseItem) => {
+    setRegistrationNotice(null);
+    setRegistrationDeleteTarget(item);
+  };
+
+  const handleConfirmDeleteRegistration = async () => {
+    const authorization = requireSession();
+    if (!authorization || !registrationDeleteTarget) {
+      return;
+    }
+
+    try {
+      setIsWorking(true);
+      setTabError("");
+      setTabMessage("");
+      await cancelCourseRegistration(
+        registrationDeleteTarget.registrationId,
+        authorization,
+      );
+
+      setRegistrationDeleteTarget(null);
+      await handleLoadRegistrationSections();
+      setTabMessage("Hủy đăng ký học phần thành công.");
+      toast.success("Hủy đăng ký học phần thành công.", "Thành công");
+    } catch (error) {
+      setRegistrationDeleteTarget(null);
+      setRegistrationNotice({
+        title: "Không thể hủy đăng ký học phần",
+        message: toErrorMessage(error),
+      });
+    } finally {
+      setIsWorking(false);
+    }
+  };
+
+  const handleRequestSwitchRegistration = (item: RegisteredCourseItem) => {
+    setRegistrationNotice(null);
+    setRegistrationSwitchTarget({
+      item,
+      nextSectionId: "",
+    });
+  };
+
+  const handleConfirmSwitchRegistration = async () => {
+    const authorization = requireSession();
+    if (!authorization || !registrationSwitchTarget) {
+      return;
+    }
+
+    const nextSectionId = parsePositiveInteger(registrationSwitchTarget.nextSectionId);
+    if (!nextSectionId) {
+      setRegistrationNotice({
+        title: "Chưa chọn nhóm mới",
+        message: "Vui lòng chọn nhóm học phần muốn chuyển sang.",
+      });
+      return;
+    }
+
+    try {
+      setIsWorking(true);
+      setTabError("");
+      setTabMessage("");
+      setRegistrationNotice(null);
+      await switchCourseRegistration(
+        registrationSwitchTarget.item.registrationId,
+        { newCourseSectionId: nextSectionId },
+        authorization,
+      );
+
+      setRegistrationSwitchTarget(null);
+      await handleLoadRegistrationSections();
+      setTabMessage("Đổi nhóm học phần thành công.");
+      toast.success("Đổi nhóm học phần thành công.", "Thành công");
+    } catch (error) {
+      const notice = parseRegistrationError(error);
+      setRegistrationNotice({
+        title: "Không thể đổi nhóm học phần",
+        message: notice.message,
+      });
     } finally {
       setIsWorking(false);
     }
@@ -4414,13 +4411,11 @@ export default function DashboardPage() {
                       </span>
                       <div>
                         <h2 className="text-[24px] font-semibold tracking-[0.01em]">
-                          {selectedSemesterLabel
-                            ? `Đăng ký môn học - ${selectedSemesterLabel}`
-                            : "Đăng ký môn học"}
+                          Đăng ký môn học
                         </h2>
                         <p className="mt-1 text-sm text-[#5f7e93]">
-                          Lọc theo khoa, môn học và học kỳ từ hệ thống, sau đó chọn lớp
-                          học phần để đăng ký.
+                          Chọn đúng học kỳ, khoa và môn học để xem các lớp học phần
+                          đủ điều kiện đăng ký theo backend.
                         </p>
                       </div>
                     </div>
@@ -4434,7 +4429,7 @@ export default function DashboardPage() {
                         disabled={isWorking}
                         className="h-10 rounded-[8px] border border-[#0d6ea6] bg-[#0d6ea6] px-4 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                       >
-                        Tải danh sách lớp
+                        Tải lớp được phép đăng ký
                       </button>
                       <button
                         type="button"
@@ -4462,6 +4457,20 @@ export default function DashboardPage() {
                       value={courseKeyword}
                       onChange={(event) => setCourseKeyword(event.target.value)}
                     />
+                    <select
+                      className="h-11 rounded-[8px] border border-[#d4e2ec] bg-white px-4 text-sm text-[#214b66] outline-none focus:border-[#5fa7d0]"
+                      value={selectedSemesterId}
+                      onChange={(event) =>
+                        handleSemesterFilterChange(event.target.value)
+                      }
+                    >
+                      <option value="">Tất cả học kỳ đang mở</option>
+                      {registrationSemesterOptions.map((option) => (
+                        <option key={option.semesterId} value={option.semesterId}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
                     <select
                       className="h-11 rounded-[8px] border border-[#d4e2ec] bg-white px-4 text-sm text-[#214b66] outline-none focus:border-[#5fa7d0]"
                       value={selectedFacultyId}
@@ -4492,21 +4501,27 @@ export default function DashboardPage() {
                         </option>
                       ))}
                     </select>
-                    <select
-                      className="h-11 rounded-[8px] border border-[#d4e2ec] bg-white px-4 text-sm text-[#214b66] outline-none focus:border-[#5fa7d0]"
-                      value={selectedSemesterId}
-                      onChange={(event) =>
-                        handleSemesterFilterChange(event.target.value)
-                      }
-                    >
-                      <option value="">Tất cả học kỳ</option>
-                      {semesterFilterOptions.map((option) => (
-                        <option key={option.semesterId} value={option.semesterId}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
                   </div>
+
+                  {selectedRegistrationSection ? (
+                    <div className="rounded-[10px] border border-[#d9e7f1] bg-[#f7fbff] px-4 py-3 text-sm text-[#44657d]">
+                      <p className="font-semibold text-[#1a4f75]">
+                        Đợt đăng ký hiện tại:{" "}
+                        {selectedRegistrationSection.registrationPeriodName ||
+                          "Chưa rõ tên đợt"}
+                      </p>
+                      <p className="mt-1">
+                        Thời gian hiệu lực:{" "}
+                        {formatDateTime(
+                          selectedRegistrationSection.registrationStartTime,
+                        )}{" "}
+                        -{" "}
+                        {formatDateTime(
+                          selectedRegistrationSection.registrationEndTime,
+                        )}
+                      </p>
+                    </div>
+                  ) : null}
 
                   <div className="rounded-[12px] border border-[#6da8c9]">
                     <div className="border-b border-[#c5dced] px-4 py-3">
@@ -4527,27 +4542,24 @@ export default function DashboardPage() {
                             <th className="px-3 py-3">Lớp</th>
                             <th className="px-3 py-3">Giảng viên</th>
                             <th className="px-3 py-3">Học kỳ</th>
-                            <th className="px-3 py-3">Sĩ số tối đa</th>
+                            <th className="px-3 py-3">Sĩ số</th>
+                            <th className="px-3 py-3">Đã đăng ký</th>
+                            <th className="px-3 py-3">Còn lại</th>
                             <th className="px-3 py-3">Trạng thái</th>
                             <th className="px-3 py-3">Thời khóa biểu</th>
                           </tr>
                         </thead>
                         <tbody>
                           {filteredSections.map((section) => {
-                            const selected = String(section.id) === selectedSectionId;
-                            const capacity = section.maxCapacity ?? "-";
-                            const courseMeta = getCourseMetadataForSection(section);
-                            const hasLoadedSchedules = Object.prototype.hasOwnProperty.call(
-                              registrationSchedulesBySectionId,
-                              section.id,
-                            );
-                            const scheduleLines = getRecurringScheduleSummaryLines(
-                              registrationSchedulesBySectionId[section.id],
+                            const selected =
+                              String(section.courseSectionId) === selectedSectionId;
+                            const scheduleLines = getAvailableScheduleSummaryLines(
+                              section.schedules,
                             );
 
                             return (
                               <tr
-                                key={section.id}
+                                key={section.courseSectionId}
                                 className={`border-b border-[#d7e7f1] text-[#375d75] ${
                                   selected ? "bg-[#edf7fc]" : "bg-white"
                                 }`}
@@ -4558,7 +4570,9 @@ export default function DashboardPage() {
                                     name="selected-course-section"
                                     checked={selected}
                                     onChange={() =>
-                                      setSelectedSectionId(String(section.id))
+                                      setSelectedSectionId(
+                                        String(section.courseSectionId),
+                                      )
                                     }
                                     className="mt-1 h-4 w-4 rounded border-[#a9c6d8] accent-[#0d6ea6]"
                                   />
@@ -4568,17 +4582,20 @@ export default function DashboardPage() {
                                 </td>
                                 <td className="px-3 py-3 align-top">
                                   <p className="max-w-[260px] leading-5">
-                                    {getCourseDisplayName(section)}
+                                    {getAvailableSectionCourseName(section)}
                                   </p>
                                 </td>
                                 <td className="px-3 py-3 align-top">
-                                  {getCreditsLabel(section, courseMeta || undefined)}
+                                  {typeof section.credits === "number"
+                                    ? section.credits
+                                    : "-"}
                                 </td>
                                 <td className="px-3 py-3 align-top text-[#58758a]">
-                                  {courseMeta?.prerequisiteCourseName || "-"}
+                                  {section.prerequisiteCourseName || "-"}
                                 </td>
                                 <td className="px-3 py-3 align-top">
-                                  {section.sectionCode || getSectionDisplayName(section)}
+                                  {section.sectionCode ||
+                                    getAvailableSectionDisplayName(section)}
                                 </td>
                                 <td className="px-3 py-3 align-top">
                                   {section.lecturerName || "-"}
@@ -4589,7 +4606,24 @@ export default function DashboardPage() {
                                     section.academicYear,
                                   )}
                                 </td>
-                                <td className="px-3 py-3 align-top">{capacity}</td>
+                                <td className="px-3 py-3 align-top">
+                                  {section.maxCapacity ?? "-"}
+                                </td>
+                                <td className="px-3 py-3 align-top">
+                                  {section.registeredCount ?? "-"}
+                                </td>
+                                <td className="px-3 py-3 align-top">
+                                  <span
+                                    className={
+                                      typeof section.remainingCapacity === "number" &&
+                                      section.remainingCapacity <= 5
+                                        ? "font-semibold text-[#c25757]"
+                                        : ""
+                                    }
+                                  >
+                                    {section.remainingCapacity ?? "-"}
+                                  </span>
+                                </td>
                                 <td className="px-3 py-3 align-top">
                                   <span
                                     className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getRegistrationStatusClass(
@@ -4600,18 +4634,18 @@ export default function DashboardPage() {
                                   </span>
                                 </td>
                                 <td className="px-3 py-3 align-top text-[#58758a]">
-                                  {!hasLoadedSchedules ? (
-                                    <span>Đang tải lịch định kỳ...</span>
-                                  ) : scheduleLines.length > 0 ? (
+                                  {scheduleLines.length > 0 ? (
                                     <div className="space-y-1">
                                       {scheduleLines.map((line, index) => (
-                                        <p key={`${section.id}-schedule-${index}`}>
+                                        <p
+                                          key={`${section.courseSectionId}-schedule-${index}`}
+                                        >
                                           {line}
                                         </p>
                                       ))}
                                     </div>
                                   ) : (
-                                    <span>Chưa có lịch định kỳ</span>
+                                    <span>Chưa có lịch học định kỳ</span>
                                   )}
                                 </td>
                               </tr>
@@ -4620,7 +4654,7 @@ export default function DashboardPage() {
                           {filteredSections.length === 0 ? (
                             <tr>
                               <td
-                                colSpan={11}
+                                colSpan={13}
                                 className="px-3 py-8 text-center text-[#5d7b91]"
                               >
                                 Chưa có học phần phù hợp với bộ lọc hiện tại.
@@ -4636,7 +4670,8 @@ export default function DashboardPage() {
                     <div className="border-b border-[#c5dced] px-4 py-3">
                       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                         <h3 className="text-[18px] font-semibold text-[#1a4f75]">
-                          Danh sách môn học đã đăng ký: {registeredSections.length} môn
+                          Danh sách môn học đã đăng ký: {registeredSections.length} môn,{" "}
+                          {registeredCredits} tín chỉ
                         </h3>
                         <div className="flex flex-wrap gap-2">
                           <button
@@ -4664,6 +4699,7 @@ export default function DashboardPage() {
                         <thead>
                           <tr className="border-b border-[#2a7da9] text-[#2d5067]">
                             <th className="px-3 py-3">Xóa</th>
+                            <th className="px-3 py-3">Đổi nhóm</th>
                             <th className="px-3 py-3">Mã MH</th>
                             <th className="px-3 py-3">Tên môn học</th>
                             <th className="px-3 py-3">Nhóm tổ</th>
@@ -4677,38 +4713,78 @@ export default function DashboardPage() {
                         </thead>
                         <tbody>
                           {registeredSections.map((item) => {
-                            const courseMeta = getCourseMetadataForSection(item.section);
-                            const hasLoadedSchedules = Object.prototype.hasOwnProperty.call(
-                              registrationSchedulesBySectionId,
-                              item.section.id,
+                            const scheduleLines = getAvailableScheduleSummaryLines(
+                              item.availableSection?.schedules,
                             );
-                            const scheduleLines = getRecurringScheduleSummaryLines(
-                              registrationSchedulesBySectionId[item.section.id],
-                            );
+                            const switchOptions =
+                              switchableSectionOptionsByRegistrationId.get(
+                                item.registrationId,
+                              ) || [];
 
                             return (
                               <tr
                                 key={item.registrationId}
                                 className="border-b border-[#d7e7f1] text-[#375d75]"
                               >
-                                <td className="px-3 py-3 align-top text-[#d16d6d]">x</td>
+                                <td className="px-3 py-3 align-top">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      handleRequestDeleteRegistration(item);
+                                    }}
+                                    disabled={isWorking}
+                                    className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-[#efb3b3] bg-[#fff4f4] text-sm font-semibold text-[#c25757] transition hover:bg-[#ffeaea] disabled:opacity-60"
+                                    aria-label={`Xóa đăng ký ${item.courseName || item.courseCode || item.registrationId}`}
+                                  >
+                                    x
+                                  </button>
+                                </td>
+                                <td className="px-3 py-3 align-top">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      handleRequestSwitchRegistration(item);
+                                    }}
+                                    disabled={isWorking || switchOptions.length === 0}
+                                    className="inline-flex h-8 items-center justify-center rounded-full border border-[#a9c6d8] bg-white px-3 text-xs font-semibold text-[#1b547a] transition hover:bg-[#edf7fc] disabled:opacity-50"
+                                  >
+                                    Đổi
+                                  </button>
+                                </td>
                                 <td className="px-3 py-3 align-top font-semibold text-[#1b547a]">
-                                  {item.section.courseCode || "-"}
+                                  {item.courseCode || item.availableSection?.courseCode || "-"}
                                 </td>
                                 <td className="px-3 py-3 align-top">
-                                  {getCourseDisplayName(item.section)}
+                                  {item.courseName ||
+                                    item.availableSection?.courseName ||
+                                    "-"}
                                 </td>
                                 <td className="px-3 py-3 align-top">
-                                  {getGroupLabel(item.section)}
+                                  {item.availableSection
+                                    ? getAvailableSectionGroupLabel(item.availableSection)
+                                    : item.sectionCode || "-"}
                                 </td>
                                 <td className="px-3 py-3 align-top">
-                                  {getCreditsLabel(item.section, courseMeta || undefined)}
+                                  {typeof item.availableSection?.credits === "number"
+                                    ? item.availableSection.credits
+                                    : typeof item.courseId === "number" &&
+                                        typeof courseCatalogById.get(item.courseId)?.credits ===
+                                          "number"
+                                      ? courseCatalogById.get(item.courseId)?.credits
+                                    : "-"}
                                 </td>
                                 <td className="px-3 py-3 align-top text-[#58758a]">
-                                  {courseMeta?.prerequisiteCourseName || "-"}
+                                  {item.availableSection?.prerequisiteCourseName ||
+                                    (typeof item.courseId === "number"
+                                      ? courseCatalogById.get(item.courseId)
+                                          ?.prerequisiteCourseName
+                                      : undefined) ||
+                                    "-"}
                                 </td>
                                 <td className="px-3 py-3 align-top">
-                                  {item.section.sectionCode || getSectionDisplayName(item.section)}
+                                  {item.sectionCode ||
+                                    item.availableSection?.sectionCode ||
+                                    "-"}
                                 </td>
                                 <td className="px-3 py-3 align-top">
                                   {formatDateTime(item.registrationTime)}
@@ -4723,9 +4799,7 @@ export default function DashboardPage() {
                                   </span>
                                 </td>
                                 <td className="px-3 py-3 align-top text-[#58758a]">
-                                  {!hasLoadedSchedules ? (
-                                    <span>Đang tải lịch định kỳ...</span>
-                                  ) : scheduleLines.length > 0 ? (
+                                  {scheduleLines.length > 0 ? (
                                     <div className="space-y-1">
                                       {scheduleLines.map((line, index) => (
                                         <p
@@ -4736,7 +4810,7 @@ export default function DashboardPage() {
                                       ))}
                                     </div>
                                   ) : (
-                                    <span>Chưa có lịch định kỳ</span>
+                                    <span>Chưa có lịch học định kỳ</span>
                                   )}
                                 </td>
                               </tr>
@@ -4745,7 +4819,7 @@ export default function DashboardPage() {
                           {registeredSections.length === 0 ? (
                             <tr>
                               <td
-                                colSpan={10}
+                                colSpan={11}
                                 className="px-3 py-8 text-center text-[#5d7b91]"
                               >
                                 Chưa có học phần nào được đăng ký trong phiên hiện tại.
@@ -5313,6 +5387,122 @@ export default function DashboardPage() {
                   >
                     Đóng
                   </button>
+                </div>
+              </div>
+            ) : null}
+
+            {activeTab.key === "course-registration" && registrationSwitchTarget ? (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0f2f47]/35 px-4">
+                <button
+                  type="button"
+                  aria-label="Đóng xác nhận đổi nhóm"
+                  className="absolute inset-0 cursor-default"
+                  onClick={() => setRegistrationSwitchTarget(null)}
+                />
+                <div className="relative w-full max-w-[560px] rounded-[16px] border border-[#d5e4ef] bg-white px-6 py-8 shadow-[0_20px_60px_rgba(15,47,71,0.22)]">
+                  <p className="text-center text-lg font-semibold leading-8 text-[#1f567b]">
+                    Đổi sang nhóm học phần khác
+                  </p>
+                  <p className="mt-3 text-center text-sm text-[#5d7b91]">
+                    {registrationSwitchTarget.item.courseName ||
+                      registrationSwitchTarget.item.availableSection?.courseName ||
+                      "Môn học"}
+                  </p>
+                  <div className="mt-5 space-y-2">
+                    <label className="text-sm font-semibold text-[#355970]">
+                      Chọn nhóm mới cùng môn và cùng học kỳ
+                    </label>
+                    <select
+                      className="h-11 w-full rounded-[10px] border border-[#c8d3dd] px-3 text-sm text-[#214b66] outline-none focus:border-[#5fa7d0]"
+                      value={registrationSwitchTarget.nextSectionId}
+                      onChange={(event) =>
+                        setRegistrationSwitchTarget((current) =>
+                          current
+                            ? { ...current, nextSectionId: event.target.value }
+                            : current,
+                        )
+                      }
+                    >
+                      <option value="">Chọn nhóm muốn chuyển</option>
+                      {(
+                        switchableSectionOptionsByRegistrationId.get(
+                          registrationSwitchTarget.item.registrationId,
+                        ) || []
+                      ).map((section) => (
+                        <option
+                          key={section.courseSectionId}
+                          value={section.courseSectionId}
+                        >
+                          {`${section.sectionCode || getAvailableSectionDisplayName(section)} - ${
+                            section.lecturerName || "Chưa có giảng viên"
+                          }`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="mt-6 flex items-center justify-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setRegistrationSwitchTarget(null)}
+                      className="inline-flex h-11 items-center justify-center rounded-[10px] border border-[#9ec3dd] bg-white px-5 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd]"
+                    >
+                      Không
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleConfirmSwitchRegistration();
+                      }}
+                      disabled={isWorking}
+                      className="inline-flex h-11 items-center justify-center rounded-[10px] bg-[#0d6ea6] px-5 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
+                    >
+                      {isWorking ? "Đang đổi..." : "Xác nhận đổi nhóm"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+            {activeTab.key === "course-registration" && registrationDeleteTarget ? (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0f2f47]/35 px-4">
+                <button
+                  type="button"
+                  aria-label="Đóng xác nhận hủy đăng ký"
+                  className="absolute inset-0 cursor-default"
+                  onClick={() => setRegistrationDeleteTarget(null)}
+                />
+                <div className="relative w-full max-w-[520px] rounded-[16px] border border-[#d5e4ef] bg-white px-6 py-8 text-center shadow-[0_20px_60px_rgba(15,47,71,0.22)]">
+                  <p className="text-lg font-semibold leading-8 text-[#1f567b]">
+                    Bạn có chắc muốn hủy đăng ký học phần này không?
+                  </p>
+                  <p className="mt-3 text-sm text-[#5d7b91]">
+                    {registrationDeleteTarget.courseName ||
+                      registrationDeleteTarget.availableSection?.courseName ||
+                      registrationDeleteTarget.courseCode ||
+                      "Học phần"}
+                    {registrationDeleteTarget.sectionCode
+                      ? ` - ${registrationDeleteTarget.sectionCode}`
+                      : ""}
+                  </p>
+                  <div className="mt-6 flex items-center justify-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setRegistrationDeleteTarget(null)}
+                      className="inline-flex h-11 items-center justify-center rounded-[10px] border border-[#9ec3dd] bg-white px-5 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd]"
+                    >
+                      Không
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void handleConfirmDeleteRegistration();
+                      }}
+                      disabled={isWorking}
+                      className="inline-flex h-11 items-center justify-center rounded-[10px] bg-[#c25757] px-5 text-sm font-semibold text-white transition hover:bg-[#af4747] disabled:opacity-60"
+                    >
+                      {isWorking ? "Đang xóa..." : "Xác nhận xóa"}
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : null}

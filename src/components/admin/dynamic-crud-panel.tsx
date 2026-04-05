@@ -1,10 +1,7 @@
 ﻿"use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import {
-  shouldHideFeedbackMessage,
-  useToastFeedback,
-} from "@/hooks/use-toast-feedback";
+import { useToastFeedback } from "@/hooks/use-toast-feedback";
 import {
   createDynamicByPath,
   deleteDynamicByPath,
@@ -13,6 +10,9 @@ import {
   patchDynamicByPath,
   updateDynamicByPath,
 } from "@/lib/admin/service";
+import { ConfirmDialog } from "@/components/admin/confirm-dialog";
+import { toErrorMessage } from "@/components/admin/format-utils";
+import { buildColumns, toColumnLabel, toDisplayValue } from "@/components/admin/table-utils";
 import type { DynamicRow, PagedRows } from "@/lib/admin/types";
 
 interface StatusPatchConfig {
@@ -24,11 +24,32 @@ interface StatusPatchConfig {
 interface FieldLookupConfig {
   path: string;
   query?: Record<string, string | number | undefined>;
+  filterBy?: Record<string, string | number | boolean>;
   valueKey?: string;
   labelKeys?: string[];
   dependsOn?: string;
   pathTemplate?: string;
   disableUntilDependsOn?: boolean;
+}
+
+interface FieldOptionConfig {
+  value: string;
+  label?: string;
+}
+
+interface FieldRuleContext {
+  formMode: FormMode;
+  formPayload: Record<string, unknown>;
+  currentRow: DynamicRow | null;
+}
+
+interface DynamicFieldConfig {
+  hidden?: boolean | ((context: FieldRuleContext) => boolean);
+  disabled?: boolean | ((context: FieldRuleContext) => boolean);
+  helperText?: string | ((context: FieldRuleContext) => string);
+  options?:
+    | FieldOptionConfig[]
+    | ((context: FieldRuleContext) => FieldOptionConfig[]);
 }
 
 interface DynamicCrudPanelProps {
@@ -38,11 +59,19 @@ interface DynamicCrudPanelProps {
   listPath?: string;
   listQuery?: Record<string, string | number | undefined>;
   priorityColumns?: string[];
+  hiddenColumns?: string[];
   createTemplate: Record<string, unknown>;
   updateTemplate: Record<string, unknown>;
   idFieldCandidates?: string[];
   statusPatch?: StatusPatchConfig;
   fieldLookups?: Record<string, FieldLookupConfig>;
+  fieldConfigs?: Record<string, DynamicFieldConfig>;
+  beforeDelete?: (row: DynamicRow) => string | null;
+  transformCreatePayload?: (payload: Record<string, unknown>) => Record<string, unknown>;
+  transformUpdatePayload?: (
+    payload: Record<string, unknown>,
+    currentRow: DynamicRow | null,
+  ) => Record<string, unknown>;
 }
 
 type FormMode = "create" | "edit";
@@ -50,72 +79,8 @@ type FormMode = "create" | "edit";
 const emptyRows: PagedRows<DynamicRow> = { rows: [] };
 const defaultIdFieldCandidates = ["id"];
 
-const toErrorMessage = (error: unknown): string => {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return "Thao tác thất bại. Vui lòng thử lại.";
-};
-
 const isObject = (value: unknown): value is Record<string, unknown> => {
   return value !== null && typeof value === "object" && !Array.isArray(value);
-};
-
-const toColumnLabel = (field: string): string => {
-  const spaced = field
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/_/g, " ")
-    .trim();
-
-  return spaced ? `${spaced[0].toUpperCase()}${spaced.slice(1)}` : field;
-};
-
-const toDisplayValue = (value: unknown): string => {
-  if (value === null || value === undefined || value === "") {
-    return "-";
-  }
-
-  if (typeof value === "boolean") {
-    return value ? "Yes" : "No";
-  }
-
-  if (Array.isArray(value)) {
-    return `${value.length} mục`;
-  }
-
-  if (typeof value === "object") {
-    return "Có dữ liệu";
-  }
-
-  return String(value);
-};
-
-const buildColumns = (
-  rows: DynamicRow[],
-  priorityColumns: string[],
-): string[] => {
-  const scalarKeys = new Set<string>();
-  const complexKeys = new Set<string>();
-
-  for (const row of rows.slice(0, 80)) {
-    for (const [key, value] of Object.entries(row)) {
-      if (Array.isArray(value) || (value !== null && typeof value === "object")) {
-        complexKeys.add(key);
-        continue;
-      }
-
-      scalarKeys.add(key);
-    }
-  }
-
-  const visibleKeys = [...scalarKeys].filter((key) => !complexKeys.has(key));
-  const priority = priorityColumns.filter((key) => visibleKeys.includes(key));
-  const others = visibleKeys
-    .filter((key) => !priorityColumns.includes(key))
-    .sort();
-
-  return [...priority, ...others];
 };
 
 const resolveRowId = (row: DynamicRow, idFieldCandidates: string[]): string | null => {
@@ -238,6 +203,39 @@ const hasLookupDependencyValue = (value: unknown): boolean => {
   return true;
 };
 
+const matchesLookupFilter = (
+  row: DynamicRow,
+  filterBy?: Record<string, string | number | boolean>,
+): boolean => {
+  if (!filterBy) {
+    return true;
+  }
+
+  return Object.entries(filterBy).every(([key, expectedValue]) => {
+    const actualValue = row[key];
+    if (typeof expectedValue === "string") {
+      return String(actualValue || "").trim().toUpperCase() === expectedValue.trim().toUpperCase();
+    }
+
+    if (typeof expectedValue === "number") {
+      return Number(actualValue) === expectedValue;
+    }
+
+    return Boolean(actualValue) === expectedValue;
+  });
+};
+
+const resolveFieldRule = <T,>(
+  rule: T | ((context: FieldRuleContext) => T),
+  context: FieldRuleContext,
+): T => {
+  if (typeof rule === "function") {
+    return (rule as (context: FieldRuleContext) => T)(context);
+  }
+
+  return rule;
+};
+
 const coercePayloadByTemplate = (
   template: Record<string, unknown>,
   source: Record<string, unknown>,
@@ -306,11 +304,16 @@ export const DynamicCrudPanel = ({
   listPath,
   listQuery,
   priorityColumns = ["id", "code", "name", "status"],
+  hiddenColumns = [],
   createTemplate,
   updateTemplate,
   idFieldCandidates = defaultIdFieldCandidates,
   statusPatch,
   fieldLookups,
+  fieldConfigs,
+  beforeDelete,
+  transformCreatePayload,
+  transformUpdatePayload,
 }: DynamicCrudPanelProps) => {
   const [dataRows, setDataRows] = useState<PagedRows<DynamicRow>>(emptyRows);
   const [isLoading, setIsLoading] = useState(false);
@@ -328,9 +331,14 @@ export const DynamicCrudPanel = ({
   const [keyword, setKeyword] = useState("");
 
   const [isEditorOpen, setIsEditorOpen] = useState(false);
+  const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<{
+    row: DynamicRow;
+    rowId: string;
+  } | null>(null);
   const [formMode, setFormMode] = useState<FormMode>("create");
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const [formPayload, setFormPayload] = useState<Record<string, unknown>>({});
+  const [currentEditRow, setCurrentEditRow] = useState<DynamicRow | null>(null);
   const [lookupOptionsByField, setLookupOptionsByField] = useState<
     Record<string, Array<{ value: string; label: string }>>
   >({});
@@ -468,6 +476,7 @@ export const DynamicCrudPanel = ({
             ];
 
             const options = rows.rows
+              .filter((row) => matchesLookupFilter(row, config.filterBy))
               .map((row) => {
                 const rawValue = row[valueKey];
                 if (
@@ -519,8 +528,14 @@ export const DynamicCrudPanel = ({
   }, [authorization, fieldLookups, isEditorOpen, lookupDependencyKey]);
 
   const tableColumns = useMemo(() => {
-    return buildColumns(dataRows.rows, priorityColumns);
-  }, [dataRows.rows, priorityColumns]);
+    const columns = buildColumns(dataRows.rows, priorityColumns, 80);
+    if (hiddenColumns.length === 0) {
+      return columns;
+    }
+
+    const hidden = new Set(hiddenColumns);
+    return columns.filter((column) => !hidden.has(column));
+  }, [dataRows.rows, hiddenColumns, priorityColumns]);
 
   const filteredRows = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase();
@@ -535,10 +550,20 @@ export const DynamicCrudPanel = ({
     );
   }, [dataRows.rows, keyword, tableColumns]);
 
+  const fieldRuleContext = useMemo<FieldRuleContext>(
+    () => ({
+      formMode,
+      formPayload,
+      currentRow: currentEditRow,
+    }),
+    [currentEditRow, formMode, formPayload],
+  );
+
   const openCreateEditor = () => {
     setFormMode("create");
     setEditingRowId(null);
     setFormPayload(cloneRecord(createTemplate));
+    setCurrentEditRow(null);
     setIsEditorOpen(true);
   };
 
@@ -554,6 +579,7 @@ export const DynamicCrudPanel = ({
       setFormMode("edit");
       setEditingRowId(rowId);
       setFormPayload(hydrated);
+      setCurrentEditRow(detail);
       setIsEditorOpen(true);
     });
   };
@@ -563,6 +589,7 @@ export const DynamicCrudPanel = ({
       return;
     }
     setIsEditorOpen(false);
+    setCurrentEditRow(null);
   };
 
   const handleSubmitEditor = async (event: FormEvent<HTMLFormElement>) => {
@@ -574,10 +601,18 @@ export const DynamicCrudPanel = ({
       return;
     }
 
-    const payload = coercePayloadByTemplate(
+    let payload = coercePayloadByTemplate(
       formMode === "create" ? createTemplate : updateTemplate,
       formPayload,
     );
+
+    if (formMode === "create" && transformCreatePayload) {
+      payload = transformCreatePayload(payload);
+    }
+
+    if (formMode === "edit" && transformUpdatePayload) {
+      payload = transformUpdatePayload(payload, currentEditRow);
+    }
 
     await runAction(async () => {
       if (formMode === "create") {
@@ -592,21 +627,34 @@ export const DynamicCrudPanel = ({
       }
 
       setIsEditorOpen(false);
+      setCurrentEditRow(null);
       const rows = await getDynamicListByPath(effectiveListPath, authorization, listQuery);
       setDataRows(rows);
     });
   };
 
-  const handleDeleteRow = async (rowId: string) => {
+  const handleDeleteRow = async (row: DynamicRow, rowId: string) => {
     if (!authorization) {
       setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
     }
 
-    const accepted = window.confirm(`Bạn có chắc muốn xoa bản ghi #${rowId}?`);
-    if (!accepted) {
+    const deleteGuardMessage = beforeDelete?.(row);
+    if (deleteGuardMessage) {
+      setErrorMessage(deleteGuardMessage);
       return;
     }
+
+    setConfirmDeleteTarget({ row, rowId });
+  };
+
+  const confirmDeleteRow = async () => {
+    if (!authorization || !confirmDeleteTarget) {
+      return;
+    }
+
+    const { rowId } = confirmDeleteTarget;
+    setConfirmDeleteTarget(null);
 
     await runAction(async () => {
       await deleteDynamicByPath(`${basePath}/${rowId}`, authorization);
@@ -650,9 +698,22 @@ export const DynamicCrudPanel = ({
     return Object.entries(template).map(([key, templateValue]) => {
       const path = parentPath ? `${parentPath}.${key}` : key;
       const currentValue = getValueByPath(formPayload, path);
+      const fieldConfig = fieldConfigs?.[path];
       const lookupConfig = fieldLookups?.[path];
       const lookupOptions: Array<{ value: string; label: string }> =
         lookupOptionsByField[path] || [];
+      const selectOptions = fieldConfig?.options
+        ? resolveFieldRule(fieldConfig.options, fieldRuleContext)
+        : [];
+      const isFieldHidden = fieldConfig?.hidden
+        ? resolveFieldRule(fieldConfig.hidden, fieldRuleContext)
+        : false;
+      const isFieldDisabled = fieldConfig?.disabled
+        ? resolveFieldRule(fieldConfig.disabled, fieldRuleContext)
+        : false;
+      const fieldHelperText = fieldConfig?.helperText
+        ? resolveFieldRule(fieldConfig.helperText, fieldRuleContext)
+        : "";
       const hasLookup = Boolean(lookupConfig);
       const dependencyValue = lookupConfig?.dependsOn
         ? getValueByPath(formPayload, lookupConfig.dependsOn)
@@ -661,6 +722,10 @@ export const DynamicCrudPanel = ({
         Boolean(lookupConfig?.dependsOn) &&
         lookupConfig?.disableUntilDependsOn !== false &&
         !hasLookupDependencyValue(dependencyValue);
+
+      if (isFieldHidden) {
+        return null;
+      }
 
       if (isObject(templateValue)) {
         return (
@@ -679,7 +744,7 @@ export const DynamicCrudPanel = ({
         return (
           <label key={path} className="space-y-1">
             <span className="text-sm font-semibold text-[#2c5877]">
-              {toColumnLabel(key)} (JSON array)
+              {toColumnLabel(key)} (Mảng JSON)
             </span>
             <textarea
               value={toInputText(currentValue ?? templateValue)}
@@ -704,11 +769,15 @@ export const DynamicCrudPanel = ({
               onChange={(event) =>
                 setFormPayload((prev) => setValueByPath(prev, path, event.target.value))
               }
+              disabled={isFieldDisabled}
               className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
             >
-              <option value="true">True</option>
-              <option value="false">False</option>
+              <option value="true">Có</option>
+              <option value="false">Không</option>
             </select>
+            {fieldHelperText ? (
+              <span className="text-xs text-[#6b8497]">{fieldHelperText}</span>
+            ) : null}
           </label>
         );
       }
@@ -725,7 +794,7 @@ export const DynamicCrudPanel = ({
                 onChange={(event) =>
                   setFormPayload((prev) => setValueByPath(prev, path, event.target.value))
                 }
-                disabled={isLookupDisabled}
+                disabled={isLookupDisabled || isFieldDisabled}
                 className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
               >
                 <option value="">Chọn {toColumnLabel(key)}</option>
@@ -739,6 +808,8 @@ export const DynamicCrudPanel = ({
                 <span className="text-xs text-[#6b8497]">
                   Chọn {toColumnLabel(lookupConfig?.dependsOn || "")} trước để tải danh sách.
                 </span>
+              ) : fieldHelperText ? (
+                <span className="text-xs text-[#6b8497]">{fieldHelperText}</span>
               ) : null}
             </label>
           );
@@ -756,8 +827,40 @@ export const DynamicCrudPanel = ({
               onChange={(event) =>
                 setFormPayload((prev) => setValueByPath(prev, path, event.target.value))
               }
+              disabled={isFieldDisabled}
               className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
             />
+            {fieldHelperText ? (
+              <span className="text-xs text-[#6b8497]">{fieldHelperText}</span>
+            ) : null}
+          </label>
+        );
+      }
+
+      if (selectOptions.length > 0) {
+        return (
+          <label key={path} className="space-y-1">
+            <span className="text-sm font-semibold text-[#2c5877]">
+              {toColumnLabel(key)}
+            </span>
+            <select
+              value={toInputText(currentValue ?? templateValue)}
+              onChange={(event) =>
+                setFormPayload((prev) => setValueByPath(prev, path, event.target.value))
+              }
+              disabled={isFieldDisabled}
+              className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
+            >
+              <option value="">Chọn {toColumnLabel(key)}</option>
+              {selectOptions.map((option) => (
+                <option key={`${path}-${option.value}`} value={option.value}>
+                  {toDisplayValue(option.label || option.value)}
+                </option>
+              ))}
+            </select>
+            {fieldHelperText ? (
+              <span className="text-xs text-[#6b8497]">{fieldHelperText}</span>
+            ) : null}
           </label>
         );
       }
@@ -773,7 +876,7 @@ export const DynamicCrudPanel = ({
               onChange={(event) =>
                 setFormPayload((prev) => setValueByPath(prev, path, event.target.value))
               }
-              disabled={isLookupDisabled}
+              disabled={isLookupDisabled || isFieldDisabled}
               className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
             >
               <option value="">Chọn {toColumnLabel(key)}</option>
@@ -787,6 +890,8 @@ export const DynamicCrudPanel = ({
               <span className="text-xs text-[#6b8497]">
                 Chọn {toColumnLabel(lookupConfig?.dependsOn || "")} trước để tải danh sách.
               </span>
+            ) : fieldHelperText ? (
+              <span className="text-xs text-[#6b8497]">{fieldHelperText}</span>
             ) : null}
           </label>
         );
@@ -803,8 +908,12 @@ export const DynamicCrudPanel = ({
             onChange={(event) =>
               setFormPayload((prev) => setValueByPath(prev, path, event.target.value))
             }
+            disabled={isFieldDisabled}
             className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
           />
+          {fieldHelperText ? (
+            <span className="text-xs text-[#6b8497]">{fieldHelperText}</span>
+          ) : null}
         </label>
       );
     });
@@ -842,27 +951,6 @@ export const DynamicCrudPanel = ({
       </div>
 
       <div className="space-y-4 px-4 py-4">
-        <div className="grid gap-3 md:grid-cols-3">
-          <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
-            <p className="text-sm font-medium text-[#5f7d93]">Tổng bản ghi</p>
-            <p className="mt-2 text-[28px] font-bold text-[#1d5b82]">
-              {dataRows.rows.length}
-            </p>
-          </article>
-          <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
-            <p className="text-sm font-medium text-[#5f7d93]">Sau bo loc</p>
-            <p className="mt-2 text-[28px] font-bold text-[#2b67a1]">
-              {filteredRows.length}
-            </p>
-          </article>
-          <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
-            <p className="text-sm font-medium text-[#5f7d93]">Cot uu tien</p>
-            <p className="mt-2 text-[28px] font-bold text-[#1d7a47]">
-              {priorityColumns.length}
-            </p>
-          </article>
-        </div>
-
         <div className="max-w-[420px]">
           <input
             className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
@@ -871,18 +959,6 @@ export const DynamicCrudPanel = ({
             onChange={(event) => setKeyword(event.target.value)}
           />
         </div>
-
-        {errorMessage ? (
-          <p className="rounded-[4px] border border-[#e8b2b2] bg-[#fff4f4] px-3 py-2 text-sm text-[#b03d3d]">
-            {errorMessage}
-          </p>
-        ) : null}
-
-        {successMessage && !shouldHideFeedbackMessage(successMessage) ? (
-          <p className="rounded-[4px] border border-[#b3dbc1] bg-[#f2fbf5] px-3 py-2 text-sm text-[#2f7b4f]">
-            {successMessage}
-          </p>
-        ) : null}
 
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
@@ -923,11 +999,11 @@ export const DynamicCrudPanel = ({
                               }
                             >
                               <option value="" disabled>
-                                Chon
+                                Chọn
                               </option>
                               {statusPatch.options.map((status) => (
                                 <option key={status} value={status}>
-                                  {status}
+                                  {toDisplayValue(status)}
                                 </option>
                               ))}
                             </select>
@@ -939,7 +1015,7 @@ export const DynamicCrudPanel = ({
                               disabled={isLoading}
                               className="h-9 rounded-[6px] border border-[#9ec3dd] bg-white px-2.5 text-xs font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
                             >
-                              Luu
+                              Lưu
                             </button>
                           </div>
                         ) : (
@@ -964,7 +1040,7 @@ export const DynamicCrudPanel = ({
                           <button
                             type="button"
                             onClick={() => {
-                              void handleDeleteRow(rowId);
+                              void handleDeleteRow(row, rowId);
                             }}
                             disabled={isLoading}
                             className="h-9 rounded-[6px] bg-[#cc3a3a] px-3 text-xs font-semibold text-white transition hover:bg-[#aa2e2e] disabled:opacity-60"
@@ -1006,8 +1082,8 @@ export const DynamicCrudPanel = ({
             <div className="flex items-center justify-between border-b border-[#d2e4f1] px-5 py-3">
               <h3 className="text-[20px] font-semibold text-[#154f75]">
                 {formMode === "create"
-                  ? `Tạo moi - ${title}`
-                  : `Cập nhật #${editingRowId} - ${title}`}
+                  ? `Tạo mới`
+                  : `Cập nhật `}
               </h3>
               <button
                 type="button"
@@ -1021,9 +1097,6 @@ export const DynamicCrudPanel = ({
             </div>
 
             <form className="space-y-3 px-5 py-4" onSubmit={handleSubmitEditor}>
-              <p className="text-sm text-[#355970]">
-                Điền form trực quan theo schema cấu hình của danh mục.
-              </p>
               <div className="max-h-[60vh] overflow-y-auto rounded-[8px] border border-[#d3e3ef] bg-[#fbfdff] p-3">
                 <div className="grid gap-3 md:grid-cols-2">
                   {renderFormFields(formMode === "create" ? createTemplate : updateTemplate)}
@@ -1037,7 +1110,7 @@ export const DynamicCrudPanel = ({
                   className="h-10 rounded-[6px] border border-[#9ec3dd] bg-white px-4 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
                   disabled={isLoading}
                 >
-                  Huy
+                  Hủy
                 </button>
                 <button
                   type="submit"
@@ -1047,14 +1120,30 @@ export const DynamicCrudPanel = ({
                   {isLoading
                     ? "Đang xử lý..."
                     : formMode === "create"
-                      ? "Tạo moi"
-                      : "Luu cap nhat"}
+                      ? "Tạo mới"
+                      : "Lưu cập nhật"}
                 </button>
               </div>
             </form>
           </div>
         </div>
       ) : null}
+
+      <ConfirmDialog
+        open={Boolean(confirmDeleteTarget)}
+        title="Xác nhận xóa"
+        message={
+          confirmDeleteTarget
+            ? `Bạn có chắc muốn xóa bản ghi #${confirmDeleteTarget.rowId}?`
+            : ""
+        }
+        confirmText="Xóa"
+        isProcessing={isLoading}
+        onCancel={() => setConfirmDeleteTarget(null)}
+        onConfirm={() => {
+          void confirmDeleteRow();
+        }}
+      />
     </section>
   );
 };

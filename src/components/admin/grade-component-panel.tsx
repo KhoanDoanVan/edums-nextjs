@@ -13,6 +13,8 @@ import {
   getGradeComponentsByCourse,
   updateDynamicByPath,
 } from "@/lib/admin/service";
+import { ConfirmDialog } from "@/components/admin/confirm-dialog";
+import { toErrorMessage } from "@/components/admin/format-utils";
 import type { DynamicRow } from "@/lib/admin/types";
 
 interface GradeComponentPanelProps {
@@ -36,14 +38,6 @@ const emptyForm: GradeComponentFormState = {
   componentName: "",
   weightPercentage: "",
   courseId: "",
-};
-
-const toErrorMessage = (error: unknown): string => {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return "Thao tác thất bại. Vui lòng thử lại.";
 };
 
 const toGradeComponentRows = (rows: DynamicRow[]): GradeComponentRow[] => {
@@ -77,6 +71,7 @@ export const GradeComponentPanel = ({
   const [courseFilter, setCourseFilter] = useState("");
   const [editingRowId, setEditingRowId] = useState<number | null>(null);
   const [form, setForm] = useState<GradeComponentFormState>(emptyForm);
+  const [confirmDeleteRow, setConfirmDeleteRow] = useState<GradeComponentRow | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
@@ -178,11 +173,6 @@ export const GradeComponentPanel = ({
     });
   }, [courseFilter, keyword, rows]);
 
-  const totalWeight = filteredRows.reduce(
-    (total, row) => total + (row.weightPercentage || 0),
-    0,
-  );
-
   const resetForm = () => {
     setEditingRowId(null);
     setForm(emptyForm);
@@ -262,19 +252,22 @@ export const GradeComponentPanel = ({
     setSuccessMessage("");
   };
 
-  const handleDelete = async (row: GradeComponentRow) => {
+  const handleDelete = (row: GradeComponentRow) => {
     if (!authorization) {
       setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
     }
 
-    const accepted = window.confirm(
-      `Bạn có chắc muốn xoa thành phần điểm "${row.componentName}" không?`,
-    );
+    setConfirmDeleteRow(row);
+  };
 
-    if (!accepted) {
+  const handleConfirmDelete = async () => {
+    if (!authorization || !confirmDeleteRow) {
       return;
     }
+
+    const row = confirmDeleteRow;
+    setConfirmDeleteRow(null);
 
     try {
       setIsLoading(true);
@@ -318,25 +311,6 @@ export const GradeComponentPanel = ({
       </div>
 
       <div className="space-y-4 px-4 py-4">
-        <div className="grid gap-3 md:grid-cols-3">
-          <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
-            <p className="text-sm font-medium text-[#5f7d93]">Tổng thanh phan</p>
-            <p className="mt-2 text-[28px] font-bold text-[#1d5b82]">{rows.length}</p>
-          </article>
-          <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
-            <p className="text-sm font-medium text-[#5f7d93]">Sau bo loc</p>
-            <p className="mt-2 text-[28px] font-bold text-[#2b67a1]">
-              {filteredRows.length}
-            </p>
-          </article>
-          <article className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff] px-4 py-3">
-            <p className="text-sm font-medium text-[#5f7d93]">Tổng trọng số hiển thị</p>
-            <p className="mt-2 text-[28px] font-bold text-[#1d7a47]">
-              {totalWeight.toFixed(1)}%
-            </p>
-          </article>
-        </div>
-
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_360px]">
           <section className="rounded-[10px] border border-[#c7dceb] bg-white">
             <div className="flex flex-col gap-3 border-b border-[#d9e7f1] px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
@@ -538,6 +512,22 @@ export const GradeComponentPanel = ({
           </section>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={Boolean(confirmDeleteRow)}
+        title="Xác nhận xóa thành phần điểm"
+        message={
+          confirmDeleteRow
+            ? `Bạn có chắc muốn xóa thành phần điểm "${confirmDeleteRow.componentName}" không?`
+            : ""
+        }
+        confirmText="Xóa"
+        isProcessing={isLoading}
+        onCancel={() => setConfirmDeleteRow(null)}
+        onConfirm={() => {
+          void handleConfirmDelete();
+        }}
+      />
     </section>
   );
 };

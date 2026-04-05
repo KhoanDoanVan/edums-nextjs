@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useToast } from "@/context/toast-context";
 
 interface UseToastFeedbackOptions {
@@ -30,15 +30,11 @@ export const useToastFeedback = ({
   errorTitle = "Có lỗi xảy ra",
 }: UseToastFeedbackOptions) => {
   const toast = useToast();
-  const lastSuccessRef = useRef("");
-  const lastErrorRef = useRef("");
 
   useEffect(() => {
-    if (!successMessage || successMessage === lastSuccessRef.current) {
+    if (!successMessage) {
       return;
     }
-
-    lastSuccessRef.current = successMessage;
 
     if (shouldHideFeedbackMessage(successMessage)) {
       return;
@@ -48,11 +44,9 @@ export const useToastFeedback = ({
   }, [successMessage, successTitle, toast]);
 
   useEffect(() => {
-    if (!errorMessage || errorMessage === lastErrorRef.current) {
+    if (!errorMessage) {
       return;
     }
-
-    lastErrorRef.current = errorMessage;
     toast.error(errorMessage, errorTitle);
   }, [errorMessage, errorTitle, toast]);
 };
