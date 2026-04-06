@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { AuthGuard } from "@/components/auth/auth-guard";
 import { AccountManagementPanel } from "@/components/admin/account-management-panel";
+import { AdmissionsOnboardingPanel } from "@/components/admin/admissions-onboarding-panel";
 import { AdmissionsPanel } from "@/components/admin/admissions-panel";
 import { AttendanceManagementPanel } from "@/components/admin/attendance-management-panel";
 import { CohortManagementPanel } from "@/components/admin/cohort-management-panel";
@@ -910,7 +911,11 @@ export default function AdminDashboardPage() {
           break;
         }
         case "admissions": {
-          setTabMessage("Sử dụng module Admissions để thao tác tuyển sinh.");
+          setTabMessage("Sử dụng module Tuyển sinh để lọc và xét duyệt hồ sơ.");
+          break;
+        }
+        case "admissions-onboarding": {
+          setTabMessage("Sử dụng module Chốt nhập học để xử lý hồ sơ đã duyệt.");
           break;
         }
         case "grade-management":
@@ -1277,6 +1282,17 @@ export default function AdminDashboardPage() {
 
             {activeTab.key === "admissions" ? (
               <AdmissionsPanel authorization={session?.authorization} />
+            ) : null}
+
+            {activeTab.key === "admissions-onboarding" ? (
+              <AdmissionsOnboardingPanel
+                authorization={session?.authorization}
+                onNavigateToAdmissions={() => {
+                  setActiveTabKey("admissions");
+                  setTabError("");
+                  setTabMessage("");
+                }}
+              />
             ) : null}
           </main>
         </div>

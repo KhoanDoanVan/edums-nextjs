@@ -26,7 +26,8 @@ export type AdminTabKey =
   | "recurring-schedules"
   | "grade-management"
   | "attendance-management"
-  | "admissions";
+  | "admissions"
+  | "admissions-onboarding";
 
 export interface AdminFeatureTab {
   key: AdminTabKey;

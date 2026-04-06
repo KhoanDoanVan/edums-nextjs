@@ -200,7 +200,7 @@ export const adminFeatureTabs: AdminFeatureTab[] = [
   {
     key: "admissions",
     label: "Tuyển sinh",
-    description: "Điều hành kỳ tuyển sinh, điểm chuẩn và hồ sơ dự tuyển.",
+    description: "Lọc và xét duyệt hồ sơ tuyển sinh.",
     endpoints: [
       { method: "GET", path: "/api/v1/admin/admissions/config/periods" },
       { method: "GET", path: "/api/v1/admin/admissions/config/periods/{id}" },
@@ -221,7 +221,22 @@ export const adminFeatureTabs: AdminFeatureTab[] = [
       { method: "PATCH", path: "/api/v1/admin/admissions/applications/{id}/review" },
       { method: "POST", path: "/api/v1/admin/admissions/applications/bulk-review" },
       { method: "POST", path: "/api/v1/admin/admissions/applications/auto-screen/{periodId}" },
+    ],
+  },
+  {
+    key: "admissions-onboarding",
+    label: "Chốt nhập học",
+    description: "Chuyển hồ sơ đã duyệt sang nhập học và sinh tài khoản/hồ sơ liên quan.",
+    endpoints: [
+      { method: "GET", path: "/api/v1/admin/admissions/config/form-options" },
+      { method: "GET", path: "/api/v1/admin/admissions/applications" },
       { method: "POST", path: "/api/v1/admin/admissions/applications/onboard" },
+      { method: "GET", path: "/api/v1/roles" },
+      { method: "GET", path: "/api/v1/cohorts" },
+      { method: "GET", path: "/api/v1/administrative-classes" },
+      { method: "GET", path: "/api/v1/accounts" },
+      { method: "GET", path: "/api/v1/students" },
+      { method: "GET", path: "/api/v1/guardians" },
     ],
   },
 ];
