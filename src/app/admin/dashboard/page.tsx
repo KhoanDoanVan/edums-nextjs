@@ -46,7 +46,10 @@ type DynamicCrudTabConfig = {
     {
       path: string;
       query?: Record<string, string | number | undefined>;
-      filterBy?: Record<string, string | number | boolean>;
+      filterBy?: Record<
+        string,
+        string | number | boolean | Array<string | number | boolean>
+      >;
       valueKey?: string;
       labelKeys?: string[];
       dependsOn?: string;
@@ -222,12 +225,12 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
       semesterId: {
         path: "/api/v1/semesters",
         query: {
-          status: "REGISTRATION_OPEN",
+          status: ["PLANNING", "REGISTRATION_OPEN"].join(","),
           page: 0,
           size: 100,
         },
         filterBy: {
-          status: "REGISTRATION_OPEN",
+          status: ["PLANNING", "REGISTRATION_OPEN"],
         },
         labelKeys: ["displayName", "semesterNumber", "academicYear", "id"],
       },

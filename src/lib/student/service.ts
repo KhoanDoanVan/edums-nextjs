@@ -19,6 +19,7 @@ import type {
   MajorResponse,
   ProfileResponse,
   RecurringScheduleResponse,
+  ScheduleSemesterOptionResponse,
   SemesterResponse,
   SpecializationResponse,
   CourseRegistrationSwitchRequest,
@@ -181,6 +182,20 @@ export const getSemesters = async (
   );
 
   return toArray<SemesterResponse>(unwrapApiData<unknown>(response));
+};
+
+export const getMyScheduleSemesterOptions = async (
+  authorization: string,
+): Promise<ScheduleSemesterOptionResponse[]> => {
+  const response = await apiRequest<ApiResponse<unknown> | unknown>(
+    "/api/v1/schedules/students/me/semester-options",
+    {
+      method: "GET",
+      accessToken: authorization,
+    },
+  );
+
+  return toArray<ScheduleSemesterOptionResponse>(unwrapApiData<unknown>(response));
 };
 
 export const getCourseSections = async (

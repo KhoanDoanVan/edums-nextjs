@@ -33,11 +33,11 @@ import {
   cancelCourseRegistration,
   getMyCourseRegistrations,
   getMyGradeReports,
+  getMyScheduleSemesterOptions,
   getMyProfile,
   getRecurringScheduleById,
   getRecurringScheduleSessions,
   getRecurringSchedulesBySection,
-  getSemesters,
   getSpecializations,
   getSpecializationsByMajor,
   getStudentById,
@@ -67,7 +67,7 @@ import type {
   MajorResponse,
   ProfileResponse,
   RecurringScheduleResponse,
-  SemesterResponse,
+  ScheduleSemesterOptionResponse,
   SpecializationResponse,
   StudentFeatureTab,
 } from "@/lib/student/types";
@@ -291,6 +291,9 @@ interface SemesterFilterOption {
   semesterNumber?: number;
   academicYear?: string;
   label: string;
+  startDate?: string;
+  endDate?: string;
+  semesterStatus?: "PLANNING" | "REGISTRATION_OPEN" | "ONGOING" | "FINISHED";
 }
 
 interface WeeklyScheduleBlock {
@@ -406,6 +409,28 @@ const getAvailableSectionGroupLabel = (
   return matched?.[1] || section.sectionCode;
 };
 
+const getScheduleDateRangeLabel = (
+  startDate?: string,
+  endDate?: string,
+): string | null => {
+  const startLabel = formatDate(startDate);
+  const endLabel = formatDate(endDate);
+
+  if (startLabel !== "-" && endLabel !== "-") {
+    return `Từ ${startLabel} đến ${endLabel}`;
+  }
+
+  if (startLabel !== "-") {
+    return `Từ ${startLabel}`;
+  }
+
+  if (endLabel !== "-") {
+    return `Đến ${endLabel}`;
+  }
+
+  return null;
+};
+
 const getAvailableScheduleSummaryLines = (
   schedules?: AvailableCourseSectionResponse["schedules"] | null,
 ): string[] => {
@@ -424,20 +449,28 @@ const getAvailableScheduleSummaryLines = (
 
       return firstDay - secondDay;
     })
-    .map((schedule) =>
-      [
+    .map((schedule) => {
+      const effectiveStartDate = schedule.startDate || schedule.effectiveStartDate;
+      const effectiveEndDate = schedule.endDate || schedule.effectiveEndDate;
+      const dateRangeLabel = getScheduleDateRangeLabel(
+        effectiveStartDate,
+        effectiveEndDate,
+      );
+
+      return [
         normalizeDayIndex(schedule.dayOfWeek) !== null
           ? scheduleDayLabels[normalizeDayIndex(schedule.dayOfWeek) || 0]
           : "Chưa rõ thứ",
         getPeriodRangeLabel(schedule.startPeriod, schedule.endPeriod),
+        dateRangeLabel,
         schedule.roomName ? `Phòng ${schedule.roomName}` : null,
         schedule.startWeek && schedule.endWeek
           ? `Tuần ${schedule.startWeek}-${schedule.endWeek}`
           : null,
       ]
         .filter(Boolean)
-        .join(", "),
-    );
+        .join(", ");
+    });
 };
 
 const getSemesterDisplayLabel = (
@@ -492,6 +525,22 @@ const getPeriodRangeLabel = (startPeriod?: number, endPeriod?: number): string =
     endPeriod
   ) {
     return `Tiết ${startPeriod} - ${endPeriod}`;
+  }
+
+  return "-";
+};
+
+const getPeriodStartLabel = (startPeriod?: number): string => {
+  if (Number.isInteger(startPeriod) && startPeriod) {
+    return periodStartTimeMap[startPeriod] || `Tiết ${startPeriod}`;
+  }
+
+  return "-";
+};
+
+const getPeriodEndLabel = (endPeriod?: number): string => {
+  if (Number.isInteger(endPeriod) && endPeriod) {
+    return periodEndTimeMap[endPeriod] || `Tiết ${endPeriod}`;
   }
 
   return "-";
@@ -923,7 +972,6 @@ export default function DashboardPage() {
   const [attendanceStatusFilter, setAttendanceStatusFilter] = useState("");
   const [attendanceDateFrom, setAttendanceDateFrom] = useState("");
   const [attendanceDateTo, setAttendanceDateTo] = useState("");
-  const [semesterCatalog, setSemesterCatalog] = useState<SemesterResponse[]>([]);
   const [courseSections, setCourseSections] = useState<
     AvailableCourseSectionResponse[]
   >([]);
@@ -933,7 +981,6 @@ export default function DashboardPage() {
   const [courseKeyword, setCourseKeyword] = useState("");
   const [selectedFacultyId, setSelectedFacultyId] = useState("");
   const [selectedCourseId, setSelectedCourseId] = useState("");
-  const [selectedSemesterId, setSelectedSemesterId] = useState("");
   const [facultyCatalog, setFacultyCatalog] = useState<FacultyResponse[]>([]);
   const [allCoursesCatalog, setAllCoursesCatalog] = useState<CourseResponse[]>([]);
   const [coursesBySelectedFaculty, setCoursesBySelectedFaculty] = useState<
@@ -972,6 +1019,9 @@ export default function DashboardPage() {
   >(null);
   const [selectedScheduleSemesterId, setSelectedScheduleSemesterId] =
     useState("");
+  const [scheduleSemesterCatalog, setScheduleSemesterCatalog] = useState<
+    ScheduleSemesterOptionResponse[]
+  >([]);
   const [selectedScheduleWeekKey, setSelectedScheduleWeekKey] = useState("");
   const [scheduleViewType, setScheduleViewType] = useState("personal");
   const [isScheduleLoading, setIsScheduleLoading] = useState(false);
@@ -1189,19 +1239,6 @@ export default function DashboardPage() {
     isProfileSpecializationContextLoading ||
     isProfileClassContextLoading;
 
-  const registrationSemesterOptions = useMemo<SemesterFilterOption[]>(() => {
-    return semesterCatalog
-      .map((semester) => ({
-        semesterId: semester.id,
-        semesterNumber: semester.semesterNumber,
-        academicYear: semester.academicYear,
-        label:
-          semester.displayName ||
-          getSemesterDisplayLabel(semester.semesterNumber, semester.academicYear),
-      }))
-      .sort((first, second) => first.label.localeCompare(second.label, "vi"));
-  }, [semesterCatalog]);
-
   const availableCourseCatalog = useMemo(() => {
     if (selectedFacultyId) {
       return coursesBySelectedFaculty;
@@ -1337,40 +1374,89 @@ export default function DashboardPage() {
   }, [registeredSections, registrationAvailableSectionsById]);
 
   const scheduleSemesterOptions = useMemo(() => {
-    const optionsMap = new Map<number, SemesterFilterOption>();
-
-    myScheduleBlocks.forEach((block) => {
-      if (!block.semesterId || optionsMap.has(block.semesterId)) {
-        return;
-      }
-
-      optionsMap.set(block.semesterId, {
-        semesterId: block.semesterId,
-        semesterNumber: block.semesterNumber,
-        academicYear: block.academicYear,
-        label: getSemesterDisplayLabel(block.semesterNumber, block.academicYear),
-      });
-    });
-
-    return Array.from(optionsMap.values()).sort((a, b) => {
+    return scheduleSemesterCatalog
+      .filter(
+        (semester) =>
+          semester.selectableForSchedule !== false &&
+          semester.semesterStatus === "REGISTRATION_OPEN",
+      )
+      .map((semester) => ({
+        semesterId: semester.semesterId,
+        semesterNumber: semester.semesterNumber,
+        academicYear: semester.academicYear,
+        label:
+          semester.displayName ||
+          getSemesterDisplayLabel(semester.semesterNumber, semester.academicYear),
+        startDate: semester.startDate,
+        endDate: semester.endDate,
+        semesterStatus: semester.semesterStatus,
+      }))
+      .sort((a, b) => {
       if ((a.semesterNumber ?? 0) === (b.semesterNumber ?? 0)) {
         return (a.academicYear || "").localeCompare(b.academicYear || "", "vi");
       }
 
       return (a.semesterNumber ?? 0) - (b.semesterNumber ?? 0);
     });
-  }, [myScheduleBlocks]);
+  }, [scheduleSemesterCatalog]);
 
   const scheduleBlocksBySemester = useMemo(() => {
-    const semesterId = parsePositiveInteger(selectedScheduleSemesterId);
+    const allowedSemesterIds = new Set(
+      scheduleSemesterOptions.map((item) => item.semesterId),
+    );
+
+    const fallbackSemesterId =
+      scheduleSemesterOptions[scheduleSemesterOptions.length - 1]?.semesterId;
+    const semesterId =
+      parsePositiveInteger(selectedScheduleSemesterId) || fallbackSemesterId || null;
+
     if (!semesterId) {
-      return myScheduleBlocks;
+      return [];
     }
 
-    return myScheduleBlocks.filter((block) => block.semesterId === semesterId);
-  }, [myScheduleBlocks, selectedScheduleSemesterId]);
+    return myScheduleBlocks.filter(
+      (block) =>
+        block.semesterId === semesterId && allowedSemesterIds.has(semesterId),
+    );
+  }, [myScheduleBlocks, scheduleSemesterOptions, selectedScheduleSemesterId]);
+
+  const selectedScheduleSemesterDetail = useMemo(() => {
+    const semesterId = parsePositiveInteger(selectedScheduleSemesterId);
+    if (!semesterId) {
+      return null;
+    }
+
+    return (
+      scheduleSemesterOptions.find((item) => item.semesterId === semesterId) || null
+    );
+  }, [scheduleSemesterOptions, selectedScheduleSemesterId]);
 
   const scheduleWeekOptions = useMemo<ScheduleWeekOption[]>(() => {
+    const semesterStartDate = selectedScheduleSemesterDetail?.startDate;
+    const semesterEndDate = selectedScheduleSemesterDetail?.endDate;
+
+    if (semesterStartDate && semesterEndDate) {
+      const startDate = parseIsoDateLocal(semesterStartDate);
+      const endDate = parseIsoDateLocal(semesterEndDate);
+
+      if (!Number.isNaN(startDate.getTime()) && !Number.isNaN(endDate.getTime())) {
+        const startMonday = getMondayOfWeek(startDate);
+        const weekKeys: string[] = [];
+
+        for (
+          let cursor = startMonday;
+          cursor.getTime() <= endDate.getTime();
+          cursor = addDays(cursor, 7)
+        ) {
+          weekKeys.push(toLocalIsoDate(cursor));
+        }
+
+        if (weekKeys.length > 0) {
+          return weekKeys.map((startDateKey) => buildScheduleWeekOption(startDateKey));
+        }
+      }
+    }
+
     const weekStarts = new Set<string>();
 
     scheduleBlocksBySemester.forEach((block) => {
@@ -1389,10 +1475,13 @@ export default function DashboardPage() {
     return Array.from(weekStarts.values())
       .sort((a, b) => parseIsoDateLocal(a).getTime() - parseIsoDateLocal(b).getTime())
       .map((startDate) => buildScheduleWeekOption(startDate));
-  }, [scheduleBlocksBySemester]);
+  }, [scheduleBlocksBySemester, selectedScheduleSemesterDetail?.endDate, selectedScheduleSemesterDetail?.startDate]);
 
   const selectedScheduleWeekStartKey = useMemo(() => {
-    if (selectedScheduleWeekKey) {
+    if (
+      selectedScheduleWeekKey &&
+      scheduleWeekOptions.some((item) => item.key === selectedScheduleWeekKey)
+    ) {
       return selectedScheduleWeekKey;
     }
 
@@ -1411,6 +1500,14 @@ export default function DashboardPage() {
   }, [scheduleWeekOptions, selectedScheduleWeekStartKey]);
 
   const scheduleWeekSelectOptions = useMemo(() => {
+    if (
+      selectedScheduleSemesterDetail?.startDate &&
+      selectedScheduleSemesterDetail?.endDate &&
+      scheduleWeekOptions.length > 0
+    ) {
+      return scheduleWeekOptions;
+    }
+
     const optionMap = new Map<string, ScheduleWeekOption>();
 
     scheduleWeekOptions.forEach((item) => {
@@ -1430,7 +1527,7 @@ export default function DashboardPage() {
         parseIsoDateLocal(first.startDate).getTime() -
         parseIsoDateLocal(second.startDate).getTime(),
     );
-  }, [scheduleWeekOptions, selectedScheduleWeekStartKey]);
+  }, [scheduleWeekOptions, selectedScheduleSemesterDetail?.endDate, selectedScheduleSemesterDetail?.startDate, selectedScheduleWeekStartKey]);
 
   const scheduleWeekDates = useMemo(() => {
     const startDate = parseIsoDateLocal(selectedScheduleWeek.startDate);
@@ -1444,7 +1541,7 @@ export default function DashboardPage() {
       (item) => String(item.semesterId) === selectedScheduleSemesterId,
     );
 
-    return selectedSemester?.label || "Tất cả học kỳ";
+    return selectedSemester?.label || "Chưa có học kỳ mở";
   }, [scheduleSemesterOptions, selectedScheduleSemesterId]);
 
   const scheduleVisibleBlocks = useMemo(() => {
@@ -3454,11 +3551,13 @@ export default function DashboardPage() {
     setTabMessage("");
 
     try {
-      const [registrations, classrooms] = await Promise.all([
+      const [registrations, classrooms, scheduleSemesters] = await Promise.all([
         getMyCourseRegistrations(authorization),
         getClassrooms(authorization).catch(() => []),
+        getMyScheduleSemesterOptions(authorization).catch(() => []),
       ]);
       setClassroomCatalog(classrooms);
+      setScheduleSemesterCatalog(scheduleSemesters);
       const registeredItems = await resolveRegisteredSectionItems(
         registrations,
         authorization,
@@ -3498,12 +3597,12 @@ export default function DashboardPage() {
                   ).catch(() => [])
                 : [];
 
-              if (sessions.length > 0) {
-                sessions.forEach((session) => {
-                  if (!session.sessionDate || session.status === "CANCELLED") {
-                    return;
-                  }
+              const validSessions = sessions.filter(
+                (session) => session.sessionDate && session.status !== "CANCELLED",
+              );
 
+              if (validSessions.length > 0) {
+                validSessions.forEach((session) => {
                   const dayIndex =
                     getDayIndexFromSessionDate(session.sessionDate) ??
                     normalizeDayIndex(schedule.dayOfWeek, schedule.dayOfWeekName);
@@ -3536,6 +3635,33 @@ export default function DashboardPage() {
 
                 return;
               }
+
+              const recurringDayIndex = normalizeDayIndex(
+                schedule.dayOfWeek,
+                schedule.dayOfWeekName,
+              );
+              if (recurringDayIndex === null) {
+                return;
+              }
+
+              nextBlocks.push({
+                key: `recurring-${schedule.id || `${section.id}-${recurringDayIndex}-${parsedStart}-${parsedEnd}`}`,
+                sectionId: section.id,
+                recurringScheduleId: schedule.id,
+                classroomId: schedule.classroomId,
+                lecturerId: section.lecturerId,
+                courseName: getCourseDisplayName(section),
+                courseCode: section.courseCode,
+                sectionCode: section.sectionCode,
+                lecturerName: section.lecturerName,
+                classroomName: schedule.classroomName,
+                startPeriod: parsedStart,
+                endPeriod: parsedEnd,
+                dayIndex: recurringDayIndex,
+                semesterId: section.semesterId,
+                semesterNumber: section.semesterNumber,
+                academicYear: section.academicYear,
+              });
             }),
           );
         }),
@@ -3573,6 +3699,19 @@ export default function DashboardPage() {
   };
 
   const handleShiftScheduleWeek = (direction: -1 | 1) => {
+    const currentIndex = scheduleWeekSelectOptions.findIndex(
+      (item) => item.key === selectedScheduleWeek.startDate,
+    );
+
+    if (currentIndex >= 0) {
+      const nextIndex = Math.min(
+        Math.max(currentIndex + direction, 0),
+        scheduleWeekSelectOptions.length - 1,
+      );
+      setSelectedScheduleWeekKey(scheduleWeekSelectOptions[nextIndex].key);
+      return;
+    }
+
     const baseWeekStart = selectedScheduleWeek.startDate;
     const nextWeekStart = addDays(
       parseIsoDateLocal(baseWeekStart),
@@ -3693,7 +3832,6 @@ export default function DashboardPage() {
 
   const handleLoadRegistrationSections = async (
     courseIdValue = selectedCourseId,
-    semesterIdValue = selectedSemesterId,
     facultyIdValue = selectedFacultyId,
   ) => {
     const authorization = requireSession();
@@ -3703,18 +3841,15 @@ export default function DashboardPage() {
 
     await runAction(async () => {
       setRegistrationNotice(null);
-      const [semesters, faculties, allCourses] = await Promise.all([
-        getSemesters(authorization).catch(() => []),
+      const [faculties, allCourses] = await Promise.all([
         getFaculties(authorization).catch(() => []),
         getCourses(authorization).catch(() => []),
       ]);
 
-      setSemesterCatalog(semesters);
       setFacultyCatalog(faculties);
       setAllCoursesCatalog(allCourses);
 
       const facultyId = parsePositiveInteger(facultyIdValue);
-      const semesterId = parsePositiveInteger(semesterIdValue);
       let coursesInSelectedFaculty: CourseResponse[] = [];
 
       if (facultyId) {
@@ -3749,12 +3884,9 @@ export default function DashboardPage() {
         getAvailableCourseSections(authorization, {
           facultyId: facultyId || undefined,
           courseId: parsedCourseId || undefined,
-          semesterId: semesterId || undefined,
           keyword: courseKeyword,
         }),
-        getAvailableCourseSections(authorization, {
-          semesterId: semesterId || undefined,
-        }),
+        getAvailableCourseSections(authorization),
       ]);
 
       setCourseSections(availableSections);
@@ -3772,7 +3904,6 @@ export default function DashboardPage() {
         new Map(
           sectionsForRegisteredList.map((section) => [section.courseSectionId, section]),
         ),
-        semesterId || undefined,
       );
       setTabMessage(
         `Đã tải ${availableSections.length} lớp học phần đủ điều kiện đăng ký.`,
@@ -3783,25 +3914,12 @@ export default function DashboardPage() {
   const handleFacultyFilterChange = (nextFacultyId: string) => {
     setSelectedFacultyId(nextFacultyId);
     setSelectedCourseId("");
-    void handleLoadRegistrationSections("", selectedSemesterId, nextFacultyId);
-  };
-
-  const handleSemesterFilterChange = (nextSemesterId: string) => {
-    setSelectedSemesterId(nextSemesterId);
-    void handleLoadRegistrationSections(
-      selectedCourseId,
-      nextSemesterId,
-      selectedFacultyId,
-    );
+    void handleLoadRegistrationSections("", nextFacultyId);
   };
 
   const handleCourseFilterChange = (nextCourseId: string) => {
     setSelectedCourseId(nextCourseId);
-    void handleLoadRegistrationSections(
-      nextCourseId,
-      selectedSemesterId,
-      selectedFacultyId,
-    );
+    void handleLoadRegistrationSections(nextCourseId, selectedFacultyId);
   };
 
   const handleRegisterSection = async () => {
@@ -4482,9 +4600,8 @@ export default function DashboardPage() {
                         onClick={() => {
                           setSelectedFacultyId("");
                           setSelectedCourseId("");
-                          setSelectedSemesterId("");
                           setCourseKeyword("");
-                          void handleLoadRegistrationSections("", "", "");
+                          void handleLoadRegistrationSections("", "");
                         }}
                         disabled={isWorking}
                         className="h-10 rounded-[8px] border border-[#6da8c9] bg-white px-4 text-sm font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
@@ -4496,27 +4613,13 @@ export default function DashboardPage() {
                 </div>
 
                 <div className="space-y-5 px-4 py-4">
-                  <div className="grid gap-3 md:grid-cols-4">
+                  <div className="grid gap-3 md:grid-cols-3">
                     <input
                       className="h-11 rounded-[8px] border border-[#d4e2ec] bg-white px-4 text-sm text-[#214b66] outline-none focus:border-[#5fa7d0]"
                       placeholder="Tìm theo mã môn, tên môn, mã lớp, giảng viên..."
                       value={courseKeyword}
                       onChange={(event) => setCourseKeyword(event.target.value)}
                     />
-                    <select
-                      className="h-11 rounded-[8px] border border-[#d4e2ec] bg-white px-4 text-sm text-[#214b66] outline-none focus:border-[#5fa7d0]"
-                      value={selectedSemesterId}
-                      onChange={(event) =>
-                        handleSemesterFilterChange(event.target.value)
-                      }
-                    >
-                      <option value="">Tất cả học kỳ đang mở</option>
-                      {registrationSemesterOptions.map((option) => (
-                        <option key={option.semesterId} value={option.semesterId}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
                     <select
                       className="h-11 rounded-[8px] border border-[#d4e2ec] bg-white px-4 text-sm text-[#214b66] outline-none focus:border-[#5fa7d0]"
                       value={selectedFacultyId}
@@ -4745,7 +4848,6 @@ export default function DashboardPage() {
                         <thead>
                           <tr className="border-b border-[#2a7da9] text-[#2d5067]">
                             <th className="px-3 py-3">Xóa</th>
-                            <th className="px-3 py-3">Đổi nhóm</th>
                             <th className="px-3 py-3">Mã MH</th>
                             <th className="px-3 py-3">Tên môn học</th>
                             <th className="px-3 py-3">Nhóm tổ</th>
@@ -4762,10 +4864,6 @@ export default function DashboardPage() {
                             const scheduleLines = getAvailableScheduleSummaryLines(
                               item.availableSection?.schedules,
                             );
-                            const switchOptions =
-                              switchableSectionOptionsByRegistrationId.get(
-                                item.registrationId,
-                              ) || [];
 
                             return (
                               <tr
@@ -4783,18 +4881,6 @@ export default function DashboardPage() {
                                     aria-label={`Xóa đăng ký ${item.courseName || item.courseCode || item.registrationId}`}
                                   >
                                     x
-                                  </button>
-                                </td>
-                                <td className="px-3 py-3 align-top">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      handleRequestSwitchRegistration(item);
-                                    }}
-                                    disabled={isWorking || switchOptions.length === 0}
-                                    className="inline-flex h-8 items-center justify-center rounded-full border border-[#a9c6d8] bg-white px-3 text-xs font-semibold text-[#1b547a] transition hover:bg-[#edf7fc] disabled:opacity-50"
-                                  >
-                                    Đổi
                                   </button>
                                 </td>
                                 <td className="px-3 py-3 align-top font-semibold text-[#1b547a]">
@@ -4865,7 +4951,7 @@ export default function DashboardPage() {
                           {registeredSections.length === 0 ? (
                             <tr>
                               <td
-                                colSpan={11}
+                                colSpan={10}
                                 className="px-3 py-8 text-center text-[#5d7b91]"
                               >
                                 Chưa có học phần nào được đăng ký trong phiên hiện tại.
@@ -4921,7 +5007,7 @@ export default function DashboardPage() {
                       }
                     >
                       {scheduleSemesterOptions.length === 0 ? (
-                        <option value="">Chưa có dữ liệu học kỳ</option>
+                        <option value="">Chưa có học kỳ mở</option>
                       ) : null}
                       {scheduleSemesterOptions.map((option) => (
                         <option key={option.semesterId} value={option.semesterId}>
@@ -5119,284 +5205,6 @@ export default function DashboardPage() {
                         </tr>
                       </tfoot>
                     </table>
-                  </div>
-
-                  <div className="rounded-[8px] border border-[#d4e2ec] bg-[#f9fcff] p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <h4 className="text-sm font-semibold text-[#1a4f75]">
-                        Chi tiết block lịch học
-                      </h4>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void handleRefreshSelectedRecurringScheduleDetail();
-                          }}
-                          disabled={
-                            !selectedScheduleBlock?.recurringScheduleId ||
-                            isLoadingSelectedRecurringScheduleDetail
-                          }
-                          className="rounded-[6px] border border-[#6da8c9] bg-white px-2.5 py-1 text-xs font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
-                        >
-                          {isLoadingSelectedRecurringScheduleDetail
-                            ? "Đang tải lịch..."
-                            : "Làm mới lịch"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void handleRefreshSelectedClassroomDetail();
-                          }}
-                          disabled={
-                            !selectedScheduleClassroomId ||
-                            isLoadingSelectedClassroomDetail
-                          }
-                          className="rounded-[6px] border border-[#6da8c9] bg-white px-2.5 py-1 text-xs font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
-                        >
-                          {isLoadingSelectedClassroomDetail
-                            ? "Đang tải phòng..."
-                            : "Làm mới phòng"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void handleRefreshSelectedLecturerDetail();
-                          }}
-                          disabled={
-                            !selectedScheduleLecturerId ||
-                            isLoadingSelectedLecturerDetail
-                          }
-                          className="rounded-[6px] border border-[#6da8c9] bg-white px-2.5 py-1 text-xs font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
-                        >
-                          {isLoadingSelectedLecturerDetail
-                            ? "Đang tải giảng viên..."
-                            : "Làm mới giảng viên"}
-                        </button>
-                      </div>
-                    </div>
-
-                    {!selectedScheduleBlock ? (
-                      <p className="mt-2 text-sm text-[#5d7b91]">
-                        Chọn một block trên lưới thời khóa biểu để xem chi tiết lịch định
-                        kỳ.
-                      </p>
-                    ) : (
-                      <div className="mt-2 space-y-3">
-                        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
-                            <p className="text-[11px] text-[#69849a]">Môn học</p>
-                            <p className="text-sm font-semibold text-[#1f567b]">
-                              {selectedScheduleBlock.courseName}
-                            </p>
-                          </div>
-                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
-                            <p className="text-[11px] text-[#69849a]">Lớp học phần</p>
-                            <p className="text-sm font-semibold text-[#1f567b]">
-                              {selectedScheduleBlock.sectionCode || "-"}
-                            </p>
-                          </div>
-                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
-                            <p className="text-[11px] text-[#69849a]">Ca học</p>
-                            <p className="text-sm font-semibold text-[#1f567b]">
-                              {getPeriodClockRange(
-                                selectedScheduleBlock.startPeriod,
-                                selectedScheduleBlock.endPeriod,
-                              )}
-                            </p>
-                          </div>
-                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
-                            <p className="text-[11px] text-[#69849a]">Ngày học</p>
-                            <p className="text-sm font-semibold text-[#1f567b]">
-                              {selectedScheduleBlock.sessionDate
-                                ? formatDate(selectedScheduleBlock.sessionDate)
-                                : "Theo lịch định kỳ"}
-                            </p>
-                          </div>
-                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
-                            <p className="text-[11px] text-[#69849a]">Phòng</p>
-                            <p className="text-sm font-semibold text-[#1f567b]">
-                              {selectedScheduleClassroomDetail?.roomName ||
-                                selectedScheduleBlock.classroomName ||
-                                "-"}
-                            </p>
-                          </div>
-                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
-                            <p className="text-[11px] text-[#69849a]">Giảng viên</p>
-                            <p className="text-sm font-semibold text-[#1f567b]">
-                              {selectedScheduleLecturerDetail?.fullName ||
-                                selectedScheduleBlock.lecturerName ||
-                                "-"}
-                            </p>
-                          </div>
-                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
-                            <p className="text-[11px] text-[#69849a]">Trạng thái</p>
-                            <p className="text-sm font-semibold text-[#1f567b]">
-                              {selectedScheduleBlock.status || "-"}
-                            </p>
-                          </div>
-                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
-                            <p className="text-[11px] text-[#69849a]">Recurring Schedule ID</p>
-                            <p className="text-sm font-semibold text-[#1f567b]">
-                              {selectedScheduleBlock.recurringScheduleId || "-"}
-                            </p>
-                          </div>
-                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
-                            <p className="text-[11px] text-[#69849a]">Classroom ID</p>
-                            <p className="text-sm font-semibold text-[#1f567b]">
-                              {selectedScheduleClassroomId || "-"}
-                            </p>
-                          </div>
-                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-2.5 py-2">
-                            <p className="text-[11px] text-[#69849a]">Lecturer ID</p>
-                            <p className="text-sm font-semibold text-[#1f567b]">
-                              {selectedScheduleLecturerId || "-"}
-                            </p>
-                          </div>
-                        </div>
-
-                        {selectedScheduleBlock.recurringScheduleId ? (
-                          selectedRecurringScheduleDetail ? (
-                            <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2">
-                              <p className="text-sm font-semibold text-[#1f567b]">
-                                Chi tiết lịch định kỳ từ hệ thống
-                              </p>
-                              <div className="mt-2 grid gap-2 text-sm text-[#355970] sm:grid-cols-2 xl:grid-cols-3">
-                                <p>
-                                  <span className="text-[#69849a]">Thứ học:</span>{" "}
-                                  {selectedRecurringScheduleDetail.dayOfWeekName ||
-                                    selectedRecurringScheduleDetail.dayOfWeek ||
-                                    "-"}
-                                </p>
-                                <p>
-                                  <span className="text-[#69849a]">Tiết:</span>{" "}
-                                  {getPeriodRangeLabel(
-                                    selectedRecurringScheduleDetail.startPeriod,
-                                    selectedRecurringScheduleDetail.endPeriod,
-                                  )}
-                                </p>
-                                <p>
-                                  <span className="text-[#69849a]">Giờ học:</span>{" "}
-                                  {typeof selectedRecurringScheduleDetail.startPeriod ===
-                                    "number" &&
-                                  typeof selectedRecurringScheduleDetail.endPeriod === "number"
-                                    ? getPeriodClockRange(
-                                        selectedRecurringScheduleDetail.startPeriod,
-                                        selectedRecurringScheduleDetail.endPeriod,
-                                      )
-                                    : "-"}
-                                </p>
-                                <p>
-                                  <span className="text-[#69849a]">Phòng học:</span>{" "}
-                                  {selectedRecurringScheduleDetail.classroomName || "-"}
-                                </p>
-                                <p>
-                                  <span className="text-[#69849a]">Mã lớp học phần:</span>{" "}
-                                  {selectedRecurringScheduleDetail.sectionCode || "-"}
-                                </p>
-                                <p>
-                                  <span className="text-[#69849a]">Ngày tạo:</span>{" "}
-                                  {formatDateTime(selectedRecurringScheduleDetail.createdAt)}
-                                </p>
-                              </div>
-                            </div>
-                          ) : (
-                            <p className="text-sm text-[#5d7b91]">
-                              Không thể lấy thêm chi tiết cho lịch định kỳ này từ hệ thống.
-                            </p>
-                          )
-                        ) : (
-                          <p className="text-sm text-[#5d7b91]">
-                            Block này không có `recurringScheduleId` để tra cứu chi tiết.
-                          </p>
-                        )}
-
-                        {isLoadingSelectedClassroomDetail ? (
-                          <p className="text-sm text-[#5d7b91]">
-                            Đang tải chi tiết phòng học...
-                          </p>
-                        ) : null}
-
-                        {selectedScheduleClassroomId ? (
-                          selectedScheduleClassroomDetail ? (
-                            <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2">
-                              <p className="text-sm font-semibold text-[#1f567b]">
-                                Chi tiết phòng học từ hệ thống
-                              </p>
-                              <div className="mt-2 grid gap-2 text-sm text-[#355970] sm:grid-cols-2 xl:grid-cols-3">
-                                <p>
-                                  <span className="text-[#69849a]">Tên phòng:</span>{" "}
-                                  {selectedScheduleClassroomDetail.roomName || "-"}
-                                </p>
-                                <p>
-                                  <span className="text-[#69849a]">Sức chứa:</span>{" "}
-                                  {selectedScheduleClassroomDetail.capacity ?? "-"}
-                                </p>
-                                <p>
-                                  <span className="text-[#69849a]">Loại phòng:</span>{" "}
-                                  {selectedScheduleClassroomDetail.roomType || "-"}
-                                </p>
-                              </div>
-                            </div>
-                          ) : (
-                            <p className="text-sm text-[#5d7b91]">
-                              Không thể lấy thêm chi tiết cho phòng học này từ hệ thống.
-                            </p>
-                          )
-                        ) : (
-                          <p className="text-sm text-[#5d7b91]">
-                            Block này không có `classroomId` để tra cứu chi tiết phòng.
-                          </p>
-                        )}
-
-                        {isLoadingSelectedLecturerDetail ? (
-                          <p className="text-sm text-[#5d7b91]">
-                            Đang tải chi tiết giảng viên...
-                          </p>
-                        ) : null}
-
-                        {selectedScheduleLecturerId ? (
-                          selectedScheduleLecturerDetail ? (
-                            <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2">
-                              <p className="text-sm font-semibold text-[#1f567b]">
-                                Chi tiết giảng viên từ hệ thống
-                              </p>
-                              <div className="mt-2 grid gap-2 text-sm text-[#355970] sm:grid-cols-2 xl:grid-cols-3">
-                                <p>
-                                  <span className="text-[#69849a]">Họ tên:</span>{" "}
-                                  {selectedScheduleLecturerDetail.fullName ||
-                                    selectedScheduleBlock.lecturerName ||
-                                    "-"}
-                                </p>
-                                <p>
-                                  <span className="text-[#69849a]">Email:</span>{" "}
-                                  {selectedScheduleLecturerDetail.email || "-"}
-                                </p>
-                                <p>
-                                  <span className="text-[#69849a]">Điện thoại:</span>{" "}
-                                  {selectedScheduleLecturerDetail.phone || "-"}
-                                </p>
-                                <p>
-                                  <span className="text-[#69849a]">Học vị:</span>{" "}
-                                  {selectedScheduleLecturerDetail.academicDegree || "-"}
-                                </p>
-                                <p>
-                                  <span className="text-[#69849a]">Lecturer ID:</span>{" "}
-                                  {selectedScheduleLecturerId}
-                                </p>
-                              </div>
-                            </div>
-                          ) : (
-                            <p className="text-sm text-[#5d7b91]">
-                              Không thể lấy thêm chi tiết cho giảng viên này từ hệ thống.
-                            </p>
-                          )
-                        ) : (
-                          <p className="text-sm text-[#5d7b91]">
-                            Block này không có `lecturerId` để tra cứu chi tiết giảng viên.
-                          </p>
-                        )}
-                      </div>
-                    )}
                   </div>
 
                   {isScheduleLoading ? (
