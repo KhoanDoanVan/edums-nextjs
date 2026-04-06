@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   autoScreenAdmissionApplications,
   createAdmissionBlock,
@@ -15,6 +15,7 @@ import {
   getAdmissionFormOptions,
   getAdmissionPeriodById,
   getAdmissionPeriods,
+  getDynamicByPath,
   getDynamicListByPath,
   processAdmissionOnboarding,
   reviewAdmissionApplication,
@@ -25,7 +26,7 @@ import {
   updateAdmissionPeriod,
 } from "@/lib/admin/service";
 import { formatDateTime, toErrorMessage } from "@/components/admin/format-utils";
-import { submitPublicAdmissionApplication } from "@/lib/public-admission/service";
+import { loginRequest } from "@/lib/auth/service";
 import type {
   AdmissionApplicationStatus,
   AdmissionPeriodStatus,
@@ -38,13 +39,16 @@ import type {
   PagedRows,
   PeriodListItem,
 } from "@/lib/admin/types";
-import type { PublicAdmissionApplyPayload } from "@/lib/public-admission/types";
 
 const contentCardClass =
   "rounded-[8px] border border-[#8ab3d1] bg-white shadow-[0_1px_2px_rgba(7,51,84,0.16)]";
 
 const sectionTitleClass =
   "flex items-center justify-between border-b border-[#c5dced] px-4 py-2 text-[18px] font-semibold text-[#1a4f75]";
+
+const SHOW_ADVANCED_ADMISSION_INSIGHTS = false;
+const SHOW_ADMISSION_CONFIGURATION_PANELS = false;
+const SHOW_ADMISSION_POST_REVIEW_ACTIONS = false;
 
 const admissionApplicationStatusOptions: AdmissionApplicationStatus[] = [
   "PENDING",
@@ -57,6 +61,18 @@ const admissionReviewStatusOptions: AdmissionApplicationStatus[] = [
   "APPROVED",
   "REJECTED",
 ];
+
+const admissionSortDirectionOptions = ["DESC", "ASC"] as const;
+type AdmissionSortDirection = (typeof admissionSortDirectionOptions)[number];
+
+const admissionApplicationSortByOptions = [
+  { value: "", label: "Mặc định hệ thống" },
+  { value: "createdAt", label: "Ngày tạo hồ sơ" },
+  { value: "approvalDate", label: "Ngày duyệt" },
+  { value: "totalScore", label: "Tổng điểm" },
+  { value: "status", label: "Trạng thái" },
+  { value: "fullName", label: "Họ tên" },
+] as const;
 
 const admissionPeriodStatusOptions: AdmissionPeriodStatus[] = [
   "UPCOMING",
@@ -135,103 +151,6 @@ const toAdmissionPeriodStatusLabel = (value?: string): string => {
   return admissionPeriodStatusLabels[value as AdmissionPeriodStatus] || value;
 };
 
-const normalizeImportHeader = (value: string): string => {
-  return value
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]/g, "");
-};
-
-const mapImportHeaderToKey = (
-  header: string,
-): keyof PublicAdmissionApplyPayload | null => {
-  const normalized = normalizeImportHeader(header);
-  const mapping: Record<string, keyof PublicAdmissionApplyPayload> = {
-    fullname: "fullName",
-    hoten: "fullName",
-    hovaten: "fullName",
-    dateofbirth: "dateOfBirth",
-    ngaysinh: "dateOfBirth",
-    dob: "dateOfBirth",
-    email: "email",
-    phone: "phone",
-    sodienthoai: "phone",
-    dienthoai: "phone",
-    nationalid: "nationalId",
-    cccd: "nationalId",
-    socccd: "nationalId",
-    address: "address",
-    diachi: "address",
-    periodid: "periodId",
-    kyid: "periodId",
-    dottuyensinhid: "periodId",
-    majorid: "majorId",
-    nganhid: "majorId",
-    blockid: "blockId",
-    khoiid: "blockId",
-    totalscore: "totalScore",
-    tongdiem: "totalScore",
-  };
-
-  return mapping[normalized] || null;
-};
-
-const parseCsvLine = (line: string): string[] => {
-  const cells: string[] = [];
-  let currentValue = "";
-  let isInQuotes = false;
-
-  for (let index = 0; index < line.length; index += 1) {
-    const character = line[index];
-
-    if (character === '"') {
-      const nextCharacter = line[index + 1];
-      if (isInQuotes && nextCharacter === '"') {
-        currentValue += '"';
-        index += 1;
-      } else {
-        isInQuotes = !isInQuotes;
-      }
-      continue;
-    }
-
-    if (character === "," && !isInQuotes) {
-      cells.push(currentValue);
-      currentValue = "";
-      continue;
-    }
-
-    currentValue += character;
-  }
-
-  cells.push(currentValue);
-  return cells;
-};
-
-type CsvImportFailure = {
-  lineNumber: number;
-  reason: string;
-  fullName?: string;
-};
-
-type CsvImportRow = PublicAdmissionApplyPayload & {
-  lineNumber: number;
-};
-
-type CsvImportParseResult = {
-  totalRows: number;
-  validRows: CsvImportRow[];
-  failures: CsvImportFailure[];
-};
-
-type CsvImportSummary = {
-  totalRows: number;
-  importedRows: number;
-  failedRows: number;
-};
-
 type AdmissionOnboardingReadiness = {
   approvedCount: number;
   requiredMajorCount: number;
@@ -239,187 +158,48 @@ type AdmissionOnboardingReadiness = {
   missingMajorNames: string[];
 };
 
-const admissionCsvRequiredColumns: Array<{
-  key: keyof PublicAdmissionApplyPayload;
-  label: string;
-}> = [
-  { key: "fullName", label: "fullName" },
-  { key: "dateOfBirth", label: "dateOfBirth" },
-  { key: "email", label: "email" },
-  { key: "phone", label: "phone" },
-  { key: "nationalId", label: "nationalId" },
-  { key: "address", label: "address" },
-  { key: "periodId", label: "periodId" },
-  { key: "majorId", label: "majorId" },
-  { key: "blockId", label: "blockId" },
-  { key: "totalScore", label: "totalScore" },
-];
+type AdmissionFlowChecklist = {
+  hasStudentRole: boolean;
+  hasGuardianRole: boolean;
+  periodCount: number;
+  activeOpenPeriodCount: number;
+  blockCount: number;
+  majorCount: number;
+  benchmarkCount: number;
+  cohortCount: number;
+  administrativeClassCount: number;
+  lecturerCount: number;
+  readyForPublicApply: boolean;
+  readyForOnboarding: boolean;
+};
 
-const parseAdmissionImportCsv = (content: string): CsvImportParseResult => {
-  const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/);
-  const firstLine = lines[0] || "";
-  const headerCells = parseCsvLine(firstLine);
-  const headerIndexes = new Map<keyof PublicAdmissionApplyPayload, number>();
+type AdmissionPostOnboardingVerification = {
+  enrolledApplicationCount: number;
+  studentAccountCount: number;
+  guardianAccountCount: number;
+  studentProfileCount: number;
+  guardianProfileCount: number;
+  hasGeneratedAccounts: boolean;
+};
 
-  headerCells.forEach((headerCell, index) => {
-    const mappedKey = mapImportHeaderToKey(headerCell);
-    if (!mappedKey || headerIndexes.has(mappedKey)) {
-      return;
-    }
-    headerIndexes.set(mappedKey, index);
-  });
+type AdmissionGeneratedProfileCheck = {
+  username: string;
+  role: string;
+  accountId: number;
+  displayName: string;
+  checkedAt: string;
+};
 
-  const missingColumns = admissionCsvRequiredColumns.filter(
-    (column) => !headerIndexes.has(column.key),
-  );
-  if (missingColumns.length > 0) {
-    return {
-      totalRows: 0,
-      validRows: [],
-      failures: [
-        {
-          lineNumber: 1,
-          reason: `Thiếu cột bắt buộc: ${missingColumns
-            .map((column) => column.label)
-            .join(", ")}`,
-        },
-      ],
-    };
-  }
-
-  let totalRows = 0;
-  const validRows: CsvImportRow[] = [];
-  const failures: CsvImportFailure[] = [];
-
-  for (let rowIndex = 1; rowIndex < lines.length; rowIndex += 1) {
-    const rawLine = lines[rowIndex];
-    if (!rawLine || !rawLine.trim()) {
-      continue;
-    }
-
-    totalRows += 1;
-    const lineNumber = rowIndex + 1;
-    const rowCells = parseCsvLine(rawLine);
-    const getCellValue = (key: keyof PublicAdmissionApplyPayload): string => {
-      const cellIndex = headerIndexes.get(key);
-      if (cellIndex === undefined) {
-        return "";
-      }
-      return (rowCells[cellIndex] || "").trim();
-    };
-
-    const fullName = getCellValue("fullName");
-    const dateOfBirth = getCellValue("dateOfBirth");
-    const email = getCellValue("email");
-    const phone = getCellValue("phone");
-    const nationalId = getCellValue("nationalId");
-    const address = getCellValue("address");
-    const periodId = Number(getCellValue("periodId"));
-    const majorId = Number(getCellValue("majorId"));
-    const blockId = Number(getCellValue("blockId"));
-    const totalScore = Number(getCellValue("totalScore"));
-
-    if (!fullName || !dateOfBirth || !email || !phone || !nationalId || !address) {
-      failures.push({
-        lineNumber,
-        fullName: fullName || undefined,
-        reason: "Thiếu trường bắt buộc.",
-      });
-      continue;
-    }
-
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateOfBirth)) {
-      failures.push({
-        lineNumber,
-        fullName,
-        reason: "Ngày sinh phải có định dạng YYYY-MM-DD.",
-      });
-      continue;
-    }
-
-    if (!/^\d{12}$/.test(nationalId)) {
-      failures.push({
-        lineNumber,
-        fullName,
-        reason: "CCCD phải gồm đúng 12 chữ số.",
-      });
-      continue;
-    }
-
-    if (!/^(0[35789])[0-9]{8}$/.test(phone)) {
-      failures.push({
-        lineNumber,
-        fullName,
-        reason: "Số điện thoại không hợp lệ.",
-      });
-      continue;
-    }
-
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      failures.push({
-        lineNumber,
-        fullName,
-        reason: "Email không hợp lệ.",
-      });
-      continue;
-    }
-
-    if (!Number.isInteger(periodId) || periodId <= 0) {
-      failures.push({
-        lineNumber,
-        fullName,
-        reason: "periodId không hợp lệ.",
-      });
-      continue;
-    }
-
-    if (!Number.isInteger(majorId) || majorId <= 0) {
-      failures.push({
-        lineNumber,
-        fullName,
-        reason: "majorId không hợp lệ.",
-      });
-      continue;
-    }
-
-    if (!Number.isInteger(blockId) || blockId <= 0) {
-      failures.push({
-        lineNumber,
-        fullName,
-        reason: "blockId không hợp lệ.",
-      });
-      continue;
-    }
-
-    if (!Number.isFinite(totalScore) || totalScore < 0 || totalScore > 30) {
-      failures.push({
-        lineNumber,
-        fullName,
-        reason: "Tổng điểm phải trong khoảng 0-30.",
-      });
-      continue;
-    }
-
-    validRows.push({
-      lineNumber,
-      fullName,
-      dateOfBirth,
-      email,
-      phone,
-      nationalId,
-      address,
-      periodId,
-      majorId,
-      blockId,
-      totalScore,
-    });
-  }
-
-  return {
-    totalRows,
-    validRows,
-    failures,
-  };
+type AdmissionOperationalSnapshot = {
+  totalApplications: number;
+  pendingCount: number;
+  approvedCount: number;
+  rejectedCount: number;
+  enrolledCount: number;
+  openPeriodCount: number;
+  activeOpenPeriodCount: number;
+  completionRate: number;
+  lastUpdatedAt: string;
 };
 
 type SelectionOptionItem = {
@@ -476,6 +256,31 @@ const toCohortSelectionOptions = (rows: DynamicRow[]): SelectionOptionItem[] => 
     .filter((item): item is SelectionOptionItem => item !== null);
 };
 
+const toNormalizedUpperText = (value: unknown): string => {
+  return typeof value === "string" ? value.trim().toUpperCase() : "";
+};
+
+const toSafeDate = (value: unknown): Date | null => {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed;
+};
+
+const resolvePagedCount = <TItem,>(value: PagedRows<TItem>): number => {
+  if (typeof value.totalElements === "number" && Number.isFinite(value.totalElements)) {
+    return value.totalElements;
+  }
+
+  return value.rows.length;
+};
+
 export function AdmissionsPanel({ authorization }: { authorization?: string }) {
   const [isWorking, setIsWorking] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -517,21 +322,27 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
   const [admissionFilterStatusInput, setAdmissionFilterStatusInput] = useState<
     AdmissionApplicationStatus | ""
   >("");
-  const [admissionImportFileName, setAdmissionImportFileName] = useState("");
-  const [admissionImportRows, setAdmissionImportRows] = useState<CsvImportRow[]>([]);
-  const [admissionImportRowsPreview, setAdmissionImportRowsPreview] = useState<CsvImportRow[]>([]);
-  const [admissionImportParseFailures, setAdmissionImportParseFailures] = useState<
-    CsvImportFailure[]
-  >([]);
-  const [admissionImportFailures, setAdmissionImportFailures] = useState<CsvImportFailure[]>([]);
-  const [admissionImportSummary, setAdmissionImportSummary] = useState<CsvImportSummary | null>(
-    null,
-  );
+  const [admissionFilterPageInput, setAdmissionFilterPageInput] = useState("0");
+  const [admissionFilterSizeInput, setAdmissionFilterSizeInput] = useState("100");
+  const [admissionFilterSortByInput, setAdmissionFilterSortByInput] =
+    useState<string>("");
+  const [admissionFilterSortDirectionInput, setAdmissionFilterSortDirectionInput] =
+    useState<AdmissionSortDirection>("DESC");
   const [admissionAutoScreenPeriodId, setAdmissionAutoScreenPeriodId] = useState("");
   const [admissionOnboardPeriodId, setAdmissionOnboardPeriodId] = useState("");
   const [admissionOnboardCohortId, setAdmissionOnboardCohortId] = useState("");
   const [admissionOnboardingReadiness, setAdmissionOnboardingReadiness] =
     useState<AdmissionOnboardingReadiness | null>(null);
+  const [admissionFlowChecklist, setAdmissionFlowChecklist] =
+    useState<AdmissionFlowChecklist | null>(null);
+  const [admissionOperationalSnapshot, setAdmissionOperationalSnapshot] =
+    useState<AdmissionOperationalSnapshot | null>(null);
+  const [admissionPostOnboardingVerification, setAdmissionPostOnboardingVerification] =
+    useState<AdmissionPostOnboardingVerification | null>(null);
+  const [generatedProfileCheckUsername, setGeneratedProfileCheckUsername] = useState("");
+  const [generatedProfileCheckPassword, setGeneratedProfileCheckPassword] = useState("");
+  const [generatedProfileCheckResult, setGeneratedProfileCheckResult] =
+    useState<AdmissionGeneratedProfileCheck | null>(null);
   const [periodDetailIdInput, setPeriodDetailIdInput] = useState("");
   const [periodDetail, setPeriodDetail] = useState<PeriodListItem | null>(null);
   const [periodActionIdInput, setPeriodActionIdInput] = useState("");
@@ -633,6 +444,73 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
     }
     return visibleAdmissionIds.every((id) => admissionSelectedIds.includes(id));
   }, [admissionSelectedIds, visibleAdmissionIds]);
+  const selectedAdmissionRows = useMemo(() => {
+    if (admissionSelectedIds.length === 0) {
+      return [];
+    }
+
+    const selectedSet = new Set(admissionSelectedIds);
+    return admissionApplications.rows.filter((row) => selectedSet.has(Number(row.id || 0)));
+  }, [admissionApplications.rows, admissionSelectedIds]);
+  const singleSelectedAdmission = useMemo(() => {
+    return selectedAdmissionRows.length === 1 ? selectedAdmissionRows[0] : null;
+  }, [selectedAdmissionRows]);
+  const admissionStatusSummary = useMemo(() => {
+    const summary: Record<AdmissionApplicationStatus, number> = {
+      PENDING: 0,
+      APPROVED: 0,
+      REJECTED: 0,
+      ENROLLED: 0,
+    };
+
+    admissionApplications.rows.forEach((row) => {
+      const status = toNormalizedUpperText(row.status) as AdmissionApplicationStatus;
+      if (status in summary) {
+        summary[status] += 1;
+      }
+    });
+
+    return summary;
+  }, [admissionApplications.rows]);
+  const admissionOperationalRecommendations = useMemo(() => {
+    if (!admissionOperationalSnapshot) {
+      return [];
+    }
+
+    const recommendations: string[] = [];
+    if (admissionOperationalSnapshot.activeOpenPeriodCount === 0) {
+      recommendations.push(
+        "Chưa có kỳ tuyển sinh đang mở trong khung giờ hiện tại. Người học chưa thể nộp hồ sơ mới.",
+      );
+    }
+    if (admissionOperationalSnapshot.pendingCount > 0) {
+      recommendations.push(
+        `Có ${admissionOperationalSnapshot.pendingCount} hồ sơ chờ duyệt, nên duyệt tay hoặc duyệt tự động theo ngưỡng điểm.`,
+      );
+    }
+    if (admissionOperationalSnapshot.approvedCount > 0) {
+      recommendations.push(
+        `Có ${admissionOperationalSnapshot.approvedCount} hồ sơ đã duyệt, nên kiểm tra điều kiện lớp rồi chốt nhập học.`,
+      );
+    }
+    if (
+      admissionOperationalSnapshot.totalApplications > 0 &&
+      admissionOperationalSnapshot.enrolledCount === 0 &&
+      admissionOperationalSnapshot.approvedCount === 0 &&
+      admissionOperationalSnapshot.pendingCount === 0
+    ) {
+      recommendations.push(
+        "Không còn hồ sơ chờ duyệt hoặc đã duyệt, nhưng chưa có hồ sơ nhập học. Cần rà lại trạng thái từ chối hoặc ngưỡng điểm.",
+      );
+    }
+    if (admissionOperationalSnapshot.enrolledCount > 0) {
+      recommendations.push(
+        "Đã có hồ sơ nhập học. Nên chạy hậu kiểm để đối soát tài khoản và hồ sơ đã tạo.",
+      );
+    }
+
+    return recommendations;
+  }, [admissionOperationalSnapshot]);
 
   const runAction = async (action: () => Promise<void>) => {
     try {
@@ -679,6 +557,19 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
 
     const parsed = Number(rawValue);
     if (!Number.isInteger(parsed) || parsed <= 0) {
+      return undefined;
+    }
+
+    return parsed;
+  };
+
+  const parseOptionalNonNegativeInteger = (rawValue: string): number | undefined => {
+    if (!rawValue.trim()) {
+      return undefined;
+    }
+
+    const parsed = Number(rawValue);
+    if (!Number.isInteger(parsed) || parsed < 0) {
       return undefined;
     }
 
@@ -774,6 +665,240 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
       coveredMajorCount: requiredMajors.size - missingMajorNames.length,
       missingMajorNames,
     };
+  };
+
+  const getAdmissionFlowChecklist = async (
+    token: string,
+  ): Promise<AdmissionFlowChecklist> => {
+    const now = new Date();
+    const [roleRows, periodRows, benchmarkRows, formOptions, cohortRows, classRows, lecturerRows] =
+      await Promise.all([
+        getDynamicListByPath("/api/v1/roles", token),
+        getDynamicListByPath("/api/v1/admin/admissions/config/periods", token, {
+          page: 0,
+          size: 200,
+        }),
+        getDynamicListByPath("/api/v1/admin/admissions/config/benchmarks", token, {
+          page: 0,
+          size: 500,
+        }),
+        getAdmissionFormOptions(token),
+        getDynamicListByPath("/api/v1/cohorts", token, {
+          page: 0,
+          size: 200,
+        }),
+        getDynamicListByPath("/api/v1/administrative-classes", token, {
+          page: 0,
+          size: 500,
+        }),
+        getDynamicListByPath("/api/v1/lecturers", token, {
+          page: 0,
+          size: 200,
+        }),
+      ]);
+
+    const roleNames = new Set(
+      roleRows.rows
+        .map((row) => toNormalizedUpperText(row.roleName ?? row.role ?? row.name))
+        .filter((name) => name.length > 0),
+    );
+
+    const activeOpenPeriodCount = periodRows.rows.filter((row) => {
+      const statusCandidate = row.status;
+      const status =
+        typeof statusCandidate === "number"
+          ? statusCandidate === 2
+            ? "OPEN"
+            : ""
+          : toNormalizedUpperText(statusCandidate);
+      const startTime = toSafeDate(row.startTime ?? row.startDate);
+      const endTime = toSafeDate(row.endTime ?? row.endDate);
+
+      if (status !== "OPEN" || !startTime || !endTime) {
+        return false;
+      }
+
+      return now >= startTime && now <= endTime;
+    }).length;
+
+    const hasStudentRole = roleNames.has("STUDENT");
+    const hasGuardianRole = roleNames.has("GUARDIAN");
+    const periodCount = resolvePagedCount(periodRows);
+    const blockCount = formOptions.blocks.length;
+    const majorCount = formOptions.majors.length;
+    const benchmarkCount = resolvePagedCount(benchmarkRows);
+    const cohortCount = resolvePagedCount(cohortRows);
+    const administrativeClassCount = resolvePagedCount(classRows);
+    const lecturerCount = resolvePagedCount(lecturerRows);
+
+    return {
+      hasStudentRole,
+      hasGuardianRole,
+      periodCount,
+      activeOpenPeriodCount,
+      blockCount,
+      majorCount,
+      benchmarkCount,
+      cohortCount,
+      administrativeClassCount,
+      lecturerCount,
+      readyForPublicApply:
+        activeOpenPeriodCount > 0 &&
+        majorCount > 0 &&
+        blockCount > 0 &&
+        benchmarkCount > 0,
+      readyForOnboarding:
+        hasStudentRole &&
+        hasGuardianRole &&
+        cohortCount > 0 &&
+        lecturerCount > 0 &&
+        administrativeClassCount > 0,
+    };
+  };
+
+  const getAdmissionOperationalSnapshot = async (
+    token: string,
+  ): Promise<AdmissionOperationalSnapshot> => {
+    const now = new Date();
+    const [
+      totalRows,
+      pendingRows,
+      approvedRows,
+      rejectedRows,
+      enrolledRows,
+      periodRows,
+    ] = await Promise.all([
+      getAdmissionApplications(token, { page: 0, size: 1 }),
+      getAdmissionApplications(token, { status: "PENDING", page: 0, size: 1 }),
+      getAdmissionApplications(token, { status: "APPROVED", page: 0, size: 1 }),
+      getAdmissionApplications(token, { status: "REJECTED", page: 0, size: 1 }),
+      getAdmissionApplications(token, { status: "ENROLLED", page: 0, size: 1 }),
+      getDynamicListByPath("/api/v1/admin/admissions/config/periods", token, {
+        page: 0,
+        size: 200,
+      }),
+    ]);
+
+    const openPeriods = periodRows.rows.filter((row) => {
+      const statusCandidate = row.status;
+      const status =
+        typeof statusCandidate === "number"
+          ? statusCandidate === 2
+            ? "OPEN"
+            : ""
+          : toNormalizedUpperText(statusCandidate);
+      return status === "OPEN";
+    });
+
+    const activeOpenPeriodCount = openPeriods.filter((row) => {
+      const startTime = toSafeDate(row.startTime ?? row.startDate);
+      const endTime = toSafeDate(row.endTime ?? row.endDate);
+
+      if (!startTime || !endTime) {
+        return false;
+      }
+
+      return now >= startTime && now <= endTime;
+    }).length;
+
+    const totalApplications = resolvePagedCount(totalRows);
+    const enrolledCount = resolvePagedCount(enrolledRows);
+    const completionRate =
+      totalApplications > 0 ? Math.round((enrolledCount / totalApplications) * 100) : 0;
+
+    return {
+      totalApplications,
+      pendingCount: resolvePagedCount(pendingRows),
+      approvedCount: resolvePagedCount(approvedRows),
+      rejectedCount: resolvePagedCount(rejectedRows),
+      enrolledCount,
+      openPeriodCount: openPeriods.length,
+      activeOpenPeriodCount,
+      completionRate,
+      lastUpdatedAt: new Date().toISOString(),
+    };
+  };
+
+  const getAdmissionPostOnboardingVerification = async (
+    token: string,
+    periodId?: number,
+  ): Promise<AdmissionPostOnboardingVerification> => {
+    const [studentAccounts, guardianAccounts, studentProfiles, guardianProfiles, enrolledRows] =
+      await Promise.all([
+        getDynamicListByPath("/api/v1/accounts", token, {
+          prefix: "sv_",
+          page: 0,
+          size: 200,
+        }),
+        getDynamicListByPath("/api/v1/accounts", token, {
+          prefix: "ph_",
+          page: 0,
+          size: 200,
+        }),
+        getDynamicListByPath("/api/v1/students", token, {
+          page: 0,
+          size: 200,
+        }),
+        getDynamicListByPath("/api/v1/guardians", token, {
+          page: 0,
+          size: 200,
+        }),
+        getAdmissionApplications(token, {
+          periodId,
+          status: "ENROLLED",
+          page: 0,
+          size: 500,
+        }),
+      ]);
+
+    const studentAccountCount = resolvePagedCount(studentAccounts);
+    const guardianAccountCount = resolvePagedCount(guardianAccounts);
+
+    return {
+      enrolledApplicationCount: resolvePagedCount(enrolledRows),
+      studentAccountCount,
+      guardianAccountCount,
+      studentProfileCount: resolvePagedCount(studentProfiles),
+      guardianProfileCount: resolvePagedCount(guardianProfiles),
+      hasGeneratedAccounts: studentAccountCount > 0 && guardianAccountCount > 0,
+    };
+  };
+
+  const getAdmissionChecklistMissingItems = (
+    checklist: AdmissionFlowChecklist,
+  ): string[] => {
+    const missingItems: string[] = [];
+    if (!checklist.hasStudentRole) {
+      missingItems.push("Thiếu role STUDENT");
+    }
+    if (!checklist.hasGuardianRole) {
+      missingItems.push("Thiếu role GUARDIAN");
+    }
+    if (checklist.periodCount === 0) {
+      missingItems.push("Chưa có đợt tuyển sinh");
+    }
+    if (checklist.activeOpenPeriodCount === 0) {
+      missingItems.push("Chưa có period OPEN trong khung thời gian hiện tại");
+    }
+    if (checklist.blockCount === 0) {
+      missingItems.push("Chưa có khối xét tuyển");
+    }
+    if (checklist.majorCount === 0) {
+      missingItems.push("Chưa có ngành đào tạo");
+    }
+    if (checklist.benchmarkCount === 0) {
+      missingItems.push("Chưa có benchmark");
+    }
+    if (checklist.cohortCount === 0) {
+      missingItems.push("Chưa có niên khóa");
+    }
+    if (checklist.lecturerCount === 0) {
+      missingItems.push("Chưa có giảng viên");
+    }
+    if (checklist.administrativeClassCount === 0) {
+      missingItems.push("Chưa có lớp hành chính");
+    }
+    return missingItems;
   };
 
   const handleSelectPeriodForEdit = (periodIdValue: string) => {
@@ -947,121 +1072,6 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
     setAdmissionSelectedIds([]);
   };
 
-  const clearAdmissionImportData = () => {
-    setAdmissionImportFileName("");
-    setAdmissionImportRows([]);
-    setAdmissionImportRowsPreview([]);
-    setAdmissionImportParseFailures([]);
-    setAdmissionImportFailures([]);
-    setAdmissionImportSummary(null);
-  };
-
-  const handleAdmissionImportFileChange = (
-    event: ChangeEvent<HTMLInputElement>,
-  ) => {
-    const selectedFile = event.target.files?.[0];
-    if (!selectedFile) {
-      clearAdmissionImportData();
-      return;
-    }
-
-    setAdmissionImportFileName(selectedFile.name);
-    event.target.value = "";
-
-    void runAction(async () => {
-      const content = await selectedFile.text();
-      const parsed = parseAdmissionImportCsv(content);
-
-      setAdmissionImportRows(parsed.validRows);
-      setAdmissionImportRowsPreview(parsed.validRows.slice(0, 5));
-      setAdmissionImportParseFailures(parsed.failures);
-      setAdmissionImportFailures(parsed.failures);
-      setAdmissionImportSummary({
-        totalRows: parsed.totalRows,
-        importedRows: 0,
-        failedRows: parsed.failures.length,
-      });
-
-      if (parsed.totalRows === 0) {
-        setErrorMessage("File CSV không có dữ liệu.");
-        return;
-      }
-
-      if (parsed.validRows.length === 0) {
-        setErrorMessage("Không có dòng hợp lệ để import. Vui lòng kiểm tra lại file CSV.");
-        return;
-      }
-
-      if (parsed.failures.length > 0) {
-        setErrorMessage(
-          `${parsed.failures.length} dòng không hợp lệ, vui lòng xem chi tiết bên dưới.`,
-        );
-      }
-
-      setSuccessMessage(
-        `Đã đọc ${parsed.totalRows} dòng từ CSV. Sẵn sàng import ${parsed.validRows.length} hồ sơ.`,
-      );
-    });
-  };
-
-  const handleImportAdmissionCsvRows = async () => {
-    if (admissionImportRows.length === 0) {
-      setErrorMessage("Vui lòng chọn file CSV hợp lệ trước khi import.");
-      return;
-    }
-
-    await runAction(async () => {
-      const submitFailures: CsvImportFailure[] = [];
-      let importedRows = 0;
-
-      for (const row of admissionImportRows) {
-        const payload: PublicAdmissionApplyPayload = {
-          fullName: row.fullName,
-          dateOfBirth: row.dateOfBirth,
-          email: row.email,
-          phone: row.phone,
-          nationalId: row.nationalId,
-          address: row.address,
-          periodId: row.periodId,
-          majorId: row.majorId,
-          blockId: row.blockId,
-          totalScore: row.totalScore,
-        };
-
-        try {
-          await submitPublicAdmissionApplication(payload);
-          importedRows += 1;
-        } catch (error) {
-          submitFailures.push({
-            lineNumber: row.lineNumber,
-            fullName: row.fullName,
-            reason: toErrorMessage(error),
-          });
-        }
-      }
-
-      const combinedFailures = [...admissionImportParseFailures, ...submitFailures];
-      const totalRows = admissionImportRows.length + admissionImportParseFailures.length;
-
-      setAdmissionImportFailures(combinedFailures);
-      setAdmissionImportSummary({
-        totalRows,
-        importedRows,
-        failedRows: combinedFailures.length,
-      });
-
-      if (authorization) {
-        await loadAdmissionsData(authorization);
-      }
-
-      if (combinedFailures.length > 0) {
-        setErrorMessage(`${combinedFailures.length} dòng import thất bại. Xem chi tiết bên dưới.`);
-      }
-
-      setSuccessMessage(`Đã import thành công ${importedRows}/${totalRows} hồ sơ từ CSV.`);
-    });
-  };
-
   const loadAdmissionsData = async (
     token: string,
     filterOverrides?: {
@@ -1069,12 +1079,21 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
       periodId: string;
       majorId: string;
       status: AdmissionApplicationStatus | "";
+      page: string;
+      size: string;
+      sortBy: string;
+      sortDirection: AdmissionSortDirection;
     },
   ) => {
     const keywordInput = (filterOverrides?.keyword ?? admissionFilterKeywordInput).trim();
     const periodIdInput = filterOverrides?.periodId ?? admissionFilterPeriodIdInput;
     const majorIdInput = filterOverrides?.majorId ?? admissionFilterMajorIdInput;
     const statusInput = filterOverrides?.status ?? admissionFilterStatusInput;
+    const pageInput = filterOverrides?.page ?? admissionFilterPageInput;
+    const sizeInput = filterOverrides?.size ?? admissionFilterSizeInput;
+    const sortByInput = filterOverrides?.sortBy ?? admissionFilterSortByInput;
+    const sortDirectionInput =
+      filterOverrides?.sortDirection ?? admissionFilterSortDirectionInput;
     const [periodRows, blockRows, benchmarkRows, applicationRows] = await Promise.all([
       getAdmissionPeriods(token),
       getAdmissionBlocks(token),
@@ -1084,8 +1103,10 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
         periodId: parseOptionalPositiveInteger(periodIdInput),
         majorId: parseOptionalPositiveInteger(majorIdInput),
         status: statusInput || undefined,
-        page: 0,
-        size: 100,
+        page: parseOptionalNonNegativeInteger(pageInput) ?? 0,
+        size: parseOptionalPositiveInteger(sizeInput) ?? 100,
+        sortBy: sortByInput || undefined,
+        sortDirection: sortByInput ? sortDirectionInput : undefined,
       }),
     ]);
 
@@ -1107,6 +1128,9 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
       prev && nextIds.includes(Number(prev)) ? prev : firstApplicationId,
     );
     setAdmissionOnboardingReadiness(null);
+    setAdmissionFlowChecklist(null);
+    setAdmissionPostOnboardingVerification(null);
+    setGeneratedProfileCheckResult(null);
   };
 
   const handleLoadAdmissionFormOptions = async () => {
@@ -1127,6 +1151,8 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
       setAdmissionFormOptions(options);
       setAdmissionCohortOptions(cohortOptions);
       setAdmissionOnboardingReadiness(null);
+      setAdmissionFlowChecklist(null);
+      setGeneratedProfileCheckResult(null);
       setPeriodDetail(null);
 
       const firstMajorId = majorOptions[0] ? String(majorOptions[0].id) : "";
@@ -1179,9 +1205,137 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
     });
   };
 
+  const handleCheckAdmissionFlowChecklist = async () => {
+    if (!authorization) {
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
+      return;
+    }
+
+    await runAction(async () => {
+      const checklist = await getAdmissionFlowChecklist(authorization);
+      setAdmissionFlowChecklist(checklist);
+
+      const missingItems = getAdmissionChecklistMissingItems(checklist);
+      if (missingItems.length > 0) {
+        setErrorMessage(`Checklist dữ liệu nền chưa đạt: ${missingItems.join("; ")}.`);
+        return;
+      }
+
+      setSuccessMessage(
+        "Checklist dữ liệu nền đạt yêu cầu: có thể mở public apply và sẵn sàng onboarding.",
+      );
+    });
+  };
+
+  const handleVerifyPostOnboarding = async () => {
+    if (!authorization) {
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
+      return;
+    }
+
+    const periodId = parseOptionalPositiveInteger(admissionOnboardPeriodId);
+
+    await runAction(async () => {
+      const verification = await getAdmissionPostOnboardingVerification(
+        authorization,
+        periodId,
+      );
+      setAdmissionPostOnboardingVerification(verification);
+
+      const warnings: string[] = [];
+      if (!verification.hasGeneratedAccounts) {
+        warnings.push("chưa thấy account sv_/ph_ được sinh");
+      }
+      if (
+        verification.enrolledApplicationCount > 0 &&
+        verification.studentProfileCount < verification.enrolledApplicationCount
+      ) {
+        warnings.push(
+          `hồ sơ students (${verification.studentProfileCount}) thấp hơn hồ sơ ENROLLED (${verification.enrolledApplicationCount})`,
+        );
+      }
+      if (
+        verification.enrolledApplicationCount > 0 &&
+        verification.guardianProfileCount < verification.enrolledApplicationCount
+      ) {
+        warnings.push(
+          `hồ sơ guardians (${verification.guardianProfileCount}) thấp hơn hồ sơ ENROLLED (${verification.enrolledApplicationCount})`,
+        );
+      }
+
+      if (warnings.length > 0) {
+        setErrorMessage(`Hậu kiểm sau onboarding phát hiện cảnh báo: ${warnings.join("; ")}.`);
+        return;
+      }
+
+      setSuccessMessage(
+        "Hậu kiểm sau onboarding hoàn tất: số lượng account/hồ sơ đang khớp kỳ vọng.",
+      );
+    });
+  };
+
+  const handleVerifyGeneratedAccountProfile = async () => {
+    const username = generatedProfileCheckUsername.trim();
+    const password = generatedProfileCheckPassword.trim();
+
+    if (!username || !password) {
+      setErrorMessage("Vui lòng nhập username và password để kiểm tra profile account mới.");
+      return;
+    }
+
+    await runAction(async () => {
+      const login = await loginRequest({
+        username,
+        password,
+      });
+      const profile = await getDynamicByPath("/api/v1/profile/me", login.token);
+      const displayName =
+        (typeof profile.fullName === "string" && profile.fullName.trim()) ||
+        (typeof profile.studentName === "string" && profile.studentName.trim()) ||
+        (typeof profile.guardianName === "string" && profile.guardianName.trim()) ||
+        login.username;
+
+      setGeneratedProfileCheckResult({
+        username: login.username,
+        role: login.role,
+        accountId: login.accountId,
+        displayName,
+        checkedAt: new Date().toISOString(),
+      });
+      setSuccessMessage(
+        `Đăng nhập và kiểm tra hồ sơ tài khoản thành công: ${login.username} (${login.role}).`,
+      );
+    });
+  };
+
   const handleApplyAdmissionFilters = async () => {
     if (!authorization) {
       setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
+      return;
+    }
+
+    const trimmedPage = admissionFilterPageInput.trim();
+    if (trimmedPage && parseOptionalNonNegativeInteger(trimmedPage) === undefined) {
+      setErrorMessage("Bộ lọc trang phải là số nguyên >= 0.");
+      return;
+    }
+
+    const trimmedSize = admissionFilterSizeInput.trim();
+    if (trimmedSize && parseOptionalPositiveInteger(trimmedSize) === undefined) {
+      setErrorMessage("Bộ lọc số lượng phải là số nguyên > 0.");
+      return;
+    }
+
+    if (!admissionApplicationSortByOptions.some((option) => option.value === admissionFilterSortByInput)) {
+      setErrorMessage("Tiêu chí sắp xếp không hợp lệ cho bộ lọc hồ sơ.");
+      return;
+    }
+
+    if (
+      admissionFilterSortByInput &&
+      !admissionSortDirectionOptions.includes(admissionFilterSortDirectionInput)
+    ) {
+      setErrorMessage("Thứ tự sắp xếp không hợp lệ cho bộ lọc hồ sơ.");
       return;
     }
 
@@ -1202,11 +1356,19 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
       periodId: "",
       majorId: "",
       status: "" as AdmissionApplicationStatus | "",
+      page: "0",
+      size: "100",
+      sortBy: "",
+      sortDirection: "DESC" as AdmissionSortDirection,
     };
     setAdmissionFilterKeywordInput("");
     setAdmissionFilterPeriodIdInput("");
     setAdmissionFilterMajorIdInput("");
     setAdmissionFilterStatusInput("");
+    setAdmissionFilterPageInput("0");
+    setAdmissionFilterSizeInput("100");
+    setAdmissionFilterSortByInput("");
+    setAdmissionFilterSortDirectionInput("DESC");
 
     await runAction(async () => {
       await loadAdmissionsData(authorization, resetFilters);
@@ -1214,10 +1376,43 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
     });
   };
 
+  const handleQuickAdmissionStatusFilter = async (
+    status: AdmissionApplicationStatus | "",
+  ) => {
+    if (!authorization) {
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
+      return;
+    }
+
+    setAdmissionFilterStatusInput(status);
+    setAdmissionFilterPageInput("0");
+
+    await runAction(async () => {
+      await loadAdmissionsData(authorization, {
+        keyword: admissionFilterKeywordInput,
+        periodId: admissionFilterPeriodIdInput,
+        majorId: admissionFilterMajorIdInput,
+        status,
+        page: "0",
+        size: admissionFilterSizeInput,
+        sortBy: admissionFilterSortByInput,
+        sortDirection: admissionFilterSortDirectionInput,
+      });
+      setSuccessMessage(
+        status
+          ? `Đã lọc nhanh trạng thái ${toAdmissionApplicationStatusLabel(status)}.`
+          : "Đã bỏ lọc trạng thái.",
+      );
+    });
+  };
+
   const setActiveApplicationForActions = (applicationId: number) => {
+    const selectedFromTable =
+      admissionApplications.rows.find((item) => Number(item.id || 0) === applicationId) || null;
     setAdmissionDetailIdInput(String(applicationId));
     setAdmissionReviewIdInput(String(applicationId));
     setAdmissionSelectedIds([applicationId]);
+    setAdmissionDetail(selectedFromTable);
   };
 
   useEffect(() => {
@@ -1228,20 +1423,35 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
 
     void (async () => {
       await runAction(async () => {
-        const [periodRows, blockRows, benchmarkRows, applicationRows, options, cohorts] =
+        const [
+          periodRows,
+          blockRows,
+          benchmarkRows,
+          applicationRows,
+          options,
+          cohorts,
+          operationalSnapshot,
+        ] =
           await Promise.all([
             getAdmissionPeriods(authorization),
             getAdmissionBlocks(authorization),
             getAdmissionBenchmarks(authorization),
-            getAdmissionApplications(authorization, { page: 0, size: 100 }),
+            getAdmissionApplications(authorization, {
+              page: 0,
+              size: 100,
+            }),
             getAdmissionFormOptions(authorization),
             getDynamicListByPath("/api/v1/cohorts", authorization),
+            SHOW_ADVANCED_ADMISSION_INSIGHTS
+              ? getAdmissionOperationalSnapshot(authorization)
+              : Promise.resolve(null),
           ]);
 
         setAdmissionPeriods(periodRows);
         setAdmissionBlocks(blockRows);
         setAdmissionBenchmarks(benchmarkRows);
         setAdmissionApplications(applicationRows);
+        setAdmissionOperationalSnapshot(operationalSnapshot);
 
         const nextIds = applicationRows.rows
           .map((item) => Number(item.id || 0))
@@ -1297,6 +1507,9 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
         setAdmissionFormOptions(options);
         setAdmissionCohortOptions(cohortOptions);
         setAdmissionOnboardingReadiness(null);
+        setAdmissionFlowChecklist(null);
+        setAdmissionPostOnboardingVerification(null);
+        setGeneratedProfileCheckResult(null);
         setPeriodDetailIdInput((prev) => prev || firstPeriodId);
         setPeriodDetail(null);
       });
@@ -1309,7 +1522,9 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
       return;
     }
 
-    const applicationId = resolveSingleAdmissionId(admissionDetailIdInput);
+    const preferredSelectedId =
+      admissionSelectedIds.length === 1 ? admissionSelectedIds[0] : null;
+    const applicationId = preferredSelectedId ?? resolveSingleAdmissionId(admissionDetailIdInput);
     if (!applicationId) {
       return;
     }
@@ -1327,7 +1542,9 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
       return;
     }
 
-    const applicationId = resolveSingleAdmissionId(admissionReviewIdInput);
+    const preferredSelectedId =
+      admissionSelectedIds.length === 1 ? admissionSelectedIds[0] : null;
+    const applicationId = preferredSelectedId ?? resolveSingleAdmissionId(admissionReviewIdInput);
     if (!applicationId) {
       return;
     }
@@ -1343,7 +1560,35 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
       );
       await loadAdmissionsData(authorization);
       setAdmissionSelectedIds((prev) => prev.filter((id) => id !== applicationId));
-      setSuccessMessage(`Đã duyet hồ sơ #${applicationId} thành ${admissionReviewStatus}.`);
+      setSuccessMessage(
+        `Đã cập nhật hồ sơ #${applicationId} sang trạng thái ${toAdmissionApplicationStatusLabel(admissionReviewStatus)}.`,
+      );
+    });
+  };
+
+  const handleQuickReviewAdmission = async (
+    applicationId: number,
+    status: Extract<AdmissionApplicationStatus, "APPROVED" | "REJECTED">,
+  ) => {
+    if (!authorization) {
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
+      return;
+    }
+
+    await runAction(async () => {
+      await reviewAdmissionApplication(
+        applicationId,
+        {
+          status,
+          note: undefined,
+        },
+        authorization,
+      );
+      await loadAdmissionsData(authorization);
+      setAdmissionSelectedIds((prev) => prev.filter((id) => id !== applicationId));
+      setSuccessMessage(
+        `Đã cập nhật hồ sơ #${applicationId} sang trạng thái ${toAdmissionApplicationStatusLabel(status)}.`,
+      );
     });
   };
 
@@ -1371,7 +1616,7 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
       await loadAdmissionsData(authorization);
       setAdmissionSelectedIds([]);
       setSuccessMessage(
-        `Đã duyet hàng loat ${applicationIds.length} hồ sơ thành ${admissionBulkStatus}.`,
+        `Đã cập nhật ${applicationIds.length} hồ sơ sang trạng thái ${toAdmissionApplicationStatusLabel(admissionBulkStatus)}.`,
       );
     });
   };
@@ -1390,7 +1635,9 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
     await runAction(async () => {
       await autoScreenAdmissionApplications(periodId, authorization);
       await loadAdmissionsData(authorization);
-      setSuccessMessage(`Đã duyệt tự động hồ sơ của kỳ #${periodId}.`);
+      setSuccessMessage(
+        `Đã chạy duyệt tự động cho kỳ #${periodId}. Các hồ sơ đủ điều kiện đã được cập nhật trạng thái.`,
+      );
     });
   };
 
@@ -1415,7 +1662,7 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
       setAdmissionOnboardingReadiness(readiness);
 
       if (readiness.approvedCount === 0) {
-        setErrorMessage("Kỳ tuyển sinh hiện chưa có hồ sơ APPROVED để chốt nhập học.");
+        setErrorMessage("Kỳ tuyển sinh hiện chưa có hồ sơ đã duyệt để chốt nhập học.");
         return;
       }
 
@@ -1429,7 +1676,7 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
       }
 
       setSuccessMessage(
-        `Đủ điều kiện chốt nhập học: ${readiness.approvedCount} hồ sơ APPROVED, ${readiness.coveredMajorCount}/${readiness.requiredMajorCount} ngành đã có lớp.`,
+        `Đủ điều kiện chốt nhập học: ${readiness.approvedCount} hồ sơ đã duyệt, ${readiness.coveredMajorCount}/${readiness.requiredMajorCount} ngành đã có lớp.`,
       );
     });
   };
@@ -1455,7 +1702,7 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
       setAdmissionOnboardingReadiness(readiness);
 
       if (readiness.approvedCount === 0) {
-        setErrorMessage("Kỳ tuyển sinh hiện chưa có hồ sơ APPROVED để chốt nhập học.");
+        setErrorMessage("Kỳ tuyển sinh hiện chưa có hồ sơ đã duyệt để chốt nhập học.");
         return;
       }
 
@@ -1473,15 +1720,17 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
         authorization,
       ).catch((error: unknown) => {
         const message = toErrorMessage(error);
-        if (message.includes("[API 500]")) {
+        if (message.includes("500")) {
           throw new Error(
-            `${message} Gợi ý: backend đang lỗi nội bộ khi tạo sinh viên (thường do chưa gán class_id).`,
+            "Hệ thống gặp lỗi khi chốt nhập học. Vui lòng kiểm tra dữ liệu lớp và thử lại.",
           );
         }
         throw error;
       });
       await loadAdmissionsData(authorization);
-      setSuccessMessage(`Đã chốt nhập học cho kỳ #${periodId}, niên khóa #${cohortId}.`);
+      setSuccessMessage(
+        `Đã chốt nhập học kỳ #${periodId}, niên khóa #${cohortId}. Các hồ sơ đủ điều kiện đã được chuyển sang trạng thái đã nhập học.`,
+      );
     });
   };
 
@@ -1731,7 +1980,7 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
     <div className="space-y-4">
       <section className={contentCardClass}>
         <div className={sectionTitleClass}>
-          <h2>Quản lý tuyển sinh</h2>
+          <h2>Xử lý hồ sơ tuyển sinh</h2>
           <div className="flex flex-wrap gap-2">
             <button
               type="button"
@@ -1757,7 +2006,7 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
         </div>
         <div className="space-y-2 px-4 pt-3 text-sm">
           <p className="rounded-[6px] border border-[#d7e7f3] bg-[#f8fcff] px-3 py-2 text-[#355970]">
-            Thiết lập dữ liệu tuyển sinh, duyệt hồ sơ và chốt nhập học trong cùng một màn hình.
+            Màn hình tác nghiệp dành cho admin: lọc hồ sơ, xem chi tiết và duyệt hồ sơ.
           </p>
           {errorMessage ? (
             <p className="rounded-[6px] border border-[#e8b2b2] bg-[#fff4f4] px-3 py-2 text-[#b03d3d]">
@@ -1770,418 +2019,637 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
             </p>
           ) : null}
         </div>
-        <div className="grid gap-4 px-4 py-4 xl:grid-cols-3">
-          <section className="space-y-2 rounded-[8px] border border-[#c7dceb] bg-[#f8fcff] p-3">
-            <h3 className="text-base font-semibold text-[#1a4f75]">Xét duyệt hồ sơ tuyển sinh</h3>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              <input
-                className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                placeholder="Tìm theo tên, email, SĐT"
-                value={admissionFilterKeywordInput}
-                onChange={(event) => setAdmissionFilterKeywordInput(event.target.value)}
-              />
-              <select
-                className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                value={admissionFilterPeriodIdInput}
-                onChange={(event) => setAdmissionFilterPeriodIdInput(event.target.value)}
-              >
-                <option value="">Lọc theo kỳ tuyển sinh</option>
-                {admissionPeriodOptions.map((option) => (
-                  <option key={`filter-period-${option.id}`} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                value={admissionFilterMajorIdInput}
-                onChange={(event) => setAdmissionFilterMajorIdInput(event.target.value)}
-              >
-                <option value="">Lọc theo ngành</option>
-                {admissionMajorOptions.map((option) => (
-                  <option key={`filter-major-${option.id}`} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                value={admissionFilterStatusInput}
-                onChange={(event) =>
-                  setAdmissionFilterStatusInput(event.target.value as AdmissionApplicationStatus | "")
-                }
-              >
-                <option value="">Lọc theo trạng thái</option>
-                {admissionApplicationStatusOptions.map((status) => (
-                  <option key={`filter-status-${status}`} value={status}>
-                    {toAdmissionApplicationStatusLabel(status)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  void handleApplyAdmissionFilters();
-                }}
-                disabled={isWorking}
-                className="h-9 rounded-[4px] border border-[#9ec3dd] bg-white px-3 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
-              >
-                Áp dụng bộ lọc
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  void handleResetAdmissionFilters();
-                }}
-                disabled={isWorking}
-                className="h-9 rounded-[4px] border border-[#9ec3dd] bg-white px-3 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
-              >
-                Xóa bộ lọc
-              </button>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              <select
-                className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                value={admissionDetailIdInput}
-                onChange={(event) => setAdmissionDetailIdInput(event.target.value)}
-              >
-                <option value="">Chọn hồ sơ để xem chi tiết</option>
-                {admissionApplicationOptions.map((option) => (
-                  <option key={`detail-application-${option.id}`} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={() => {
-                  void handleLoadAdmissionDetail();
-                }}
-                disabled={isWorking}
-                className="h-10 rounded-[4px] border border-[#9ec3dd] bg-white px-3 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
-              >
-                Xem chi tiết
-              </button>
-            </div>
-            {admissionDetail ? (
-              <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-sm text-[#355970]">
-                <p>ID: {admissionDetail.id}</p>
-                <p>Họ tên: {admissionDetail.fullName || "-"}</p>
-                <p>Email: {admissionDetail.email || "-"}</p>
-                <p>SĐT: {admissionDetail.phone || "-"}</p>
-                <p>
-                  Trạng thái:
-                  <span
-                    className={`ml-2 inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold ${getAdmissionApplicationStatusBadgeClass(admissionDetail.status)}`}
-                  >
-                    {toAdmissionApplicationStatusLabel(admissionDetail.status)}
-                  </span>
+        {SHOW_ADVANCED_ADMISSION_INSIGHTS ? (
+          <div className="px-4 pb-0">
+            <section className="space-y-3 rounded-[8px] border border-[#c7dceb] bg-[#f8fcff] p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-base font-semibold text-[#1a4f75]">
+                  Flow tuyển sinh toàn trình
+                </h3>
+                <p className="text-xs text-[#4f6d82]">
+                  Kiểm tra dữ liệu bắt buộc trước tuyển sinh và hậu kiểm sau nhập học theo đúng quy trình.
                 </p>
               </div>
-            ) : null}
-
-            <div className="grid gap-2 sm:grid-cols-[140px_1fr_140px]">
-              <select
-                className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                value={admissionReviewIdInput}
-                onChange={(event) => setAdmissionReviewIdInput(event.target.value)}
-              >
-                <option value="">Chọn hồ sơ</option>
-                {admissionApplicationOptions.map((option) => (
-                  <option key={`review-application-${option.id}`} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <input
-                className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                placeholder="Ghi chú review (không bắt buộc)"
-                value={admissionReviewNote}
-                onChange={(event) => setAdmissionReviewNote(event.target.value)}
-              />
-              <select
-                className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                value={admissionReviewStatus}
-                onChange={(event) =>
-                  setAdmissionReviewStatus(event.target.value as AdmissionApplicationStatus)
-                }
-              >
-                {admissionReviewStatusOptions.map((status) => (
-                  <option key={status} value={status}>
-                    {toAdmissionApplicationStatusLabel(status)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                void handleReviewSingleAdmission();
-              }}
-              disabled={isWorking}
-              className="h-10 rounded-[4px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
-            >
-              Duyệt hồ sơ
-            </button>
-
-            <div className="grid gap-2 sm:grid-cols-[1fr_140px]">
-              <div className="h-10 rounded-[4px] border border-[#c8d3dd] bg-white px-3 text-sm leading-[38px] text-[#355970]">
-                Đã chọn {admissionSelectedIds.length} hồ sơ để duyệt hàng loạt
-              </div>
-              <select
-                className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                value={admissionBulkStatus}
-                onChange={(event) =>
-                  setAdmissionBulkStatus(event.target.value as AdmissionApplicationStatus)
-                }
-              >
-                {admissionReviewStatusOptions.map((status) => (
-                  <option key={status} value={status}>
-                    {toAdmissionApplicationStatusLabel(status)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={clearAdmissionSelection}
-                disabled={isWorking || admissionSelectedIds.length === 0}
-                className="h-9 rounded-[4px] border border-[#9ec3dd] bg-white px-3 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
-              >
-                Bỏ chọn tất cả
-              </button>
-            </div>
-            <input
-              className="h-10 w-full rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-              placeholder="Ghi chú duyệt hàng loạt (không bắt buộc)"
-              value={admissionBulkNote}
-              onChange={(event) => setAdmissionBulkNote(event.target.value)}
-            />
-            <button
-              type="button"
-              onClick={() => {
-                void handleBulkReviewAdmissions();
-              }}
-              disabled={isWorking}
-              className="h-10 rounded-[4px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
-            >
-              Duyệt hàng loạt
-            </button>
-          </section>
-
-          <section className="space-y-2 rounded-[8px] border border-[#c7dceb] bg-[#f8fcff] p-3">
-            <h3 className="text-base font-semibold text-[#1a4f75]">Import hồ sơ từ CSV</h3>
-            <p className="text-xs text-[#4f6d82]">
-              Cột bắt buộc: `fullName,dateOfBirth,email,phone,nationalId,address,periodId,majorId,blockId,totalScore`
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <a
-                href="/samples/admission-applications-sample.csv"
-                download
-                className="inline-flex h-9 items-center rounded-[4px] border border-[#9ec3dd] bg-white px-3 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd]"
-              >
-                Tải CSV mẫu
-              </a>
-              <label className="inline-flex h-9 cursor-pointer items-center rounded-[4px] border border-[#9ec3dd] bg-white px-3 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd]">
-                <input
-                  type="file"
-                  accept=".csv,text/csv"
-                  className="hidden"
-                  onChange={handleAdmissionImportFileChange}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleCheckAdmissionFlowChecklist();
+                  }}
                   disabled={isWorking}
-                />
-                Chọn file CSV
-              </label>
-              <button
-                type="button"
-                onClick={clearAdmissionImportData}
-                disabled={isWorking}
-                className="h-9 rounded-[4px] border border-[#9ec3dd] bg-white px-3 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
-              >
-                Xóa file
-              </button>
+                  className="h-9 rounded-[4px] border border-[#9ec3dd] bg-white px-3 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
+                >
+                  Kiểm tra dữ liệu nền
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleVerifyPostOnboarding();
+                  }}
+                  disabled={isWorking}
+                  className="h-9 rounded-[4px] border border-[#9ec3dd] bg-white px-3 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
+                >
+                  Hậu kiểm sau onboarding
+                </button>
+              </div>
             </div>
 
-            {admissionImportFileName ? (
-              <p className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#355970]">
-                File đã chọn: {admissionImportFileName}
-              </p>
-            ) : null}
-
-            {admissionImportSummary ? (
-              <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-sm text-[#355970]">
-                <p>Tổng dòng dữ liệu: {admissionImportSummary.totalRows}</p>
-                <p>Dòng hợp lệ đã import: {admissionImportSummary.importedRows}</p>
-                <p>Dòng lỗi: {admissionImportSummary.failedRows}</p>
-              </div>
-            ) : null}
-
-            {admissionImportRowsPreview.length > 0 ? (
-              <div className="overflow-x-auto rounded-[6px] border border-[#d7e7f3] bg-white">
-                <table className="min-w-full text-left text-xs">
-                  <thead>
-                    <tr className="border-b border-[#e0ebf4] text-[#305970]">
-                      <th className="px-2 py-2">Dòng</th>
-                      <th className="px-2 py-2">Họ tên</th>
-                      <th className="px-2 py-2">CCCD</th>
-                      <th className="px-2 py-2">Điểm</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {admissionImportRowsPreview.map((row) => (
-                      <tr key={`import-preview-${row.lineNumber}`} className="border-b border-[#eef4f9] text-[#3f6178]">
-                        <td className="px-2 py-2">{row.lineNumber}</td>
-                        <td className="px-2 py-2">{row.fullName}</td>
-                        <td className="px-2 py-2">{row.nationalId}</td>
-                        <td className="px-2 py-2">{row.totalScore}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
-
-            {admissionImportFailures.length > 0 ? (
-              <div className="max-h-40 space-y-1 overflow-y-auto rounded-[6px] border border-[#f0d2d2] bg-[#fff8f8] px-3 py-2 text-xs text-[#9f2f2f]">
-                {admissionImportFailures.slice(0, 12).map((failure, index) => (
-                  <p key={`import-failure-${failure.lineNumber}-${index}`}>
-                    Dòng {failure.lineNumber}
-                    {failure.fullName ? ` (${failure.fullName})` : ""}: {failure.reason}
-                  </p>
-                ))}
-              </div>
-            ) : null}
-
-            <button
-              type="button"
-              onClick={() => {
-                void handleImportAdmissionCsvRows();
-              }}
-              disabled={isWorking || admissionImportRows.length === 0}
-              className="h-10 rounded-[4px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
-            >
-              Import hồ sơ từ CSV
-            </button>
-          </section>
-
-          <section className="space-y-2 rounded-[8px] border border-[#c7dceb] bg-[#f8fcff] p-3">
-            <h3 className="text-base font-semibold text-[#1a4f75]">Duyệt tự động và chốt nhập học</h3>
-            <div className="grid gap-2 sm:grid-cols-[1fr_180px]">
-              <select
-                className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                value={admissionAutoScreenPeriodId}
-                onChange={(event) => setAdmissionAutoScreenPeriodId(event.target.value)}
-              >
-                <option value="">Chọn kỳ tuyển sinh</option>
-                {admissionPeriodOptions.map((option) => (
-                  <option key={`auto-period-${option.id}`} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={() => {
-                  void handleAutoScreenAdmissions();
-                }}
-                disabled={isWorking}
-                className="h-10 rounded-[4px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
-              >
-                Duyệt tự động theo điểm chuẩn
-              </button>
-            </div>
-
-            <div className="grid gap-2 sm:grid-cols-2">
-              <select
-                className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                value={admissionOnboardPeriodId}
-                onChange={(event) => {
-                  setAdmissionOnboardPeriodId(event.target.value);
-                  setAdmissionOnboardingReadiness(null);
-                }}
-              >
-                <option value="">Chọn kỳ tuyển sinh</option>
-                {admissionPeriodOptions.map((option) => (
-                  <option key={`onboard-period-${option.id}`} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                value={admissionOnboardCohortId}
-                onChange={(event) => {
-                  setAdmissionOnboardCohortId(event.target.value);
-                  setAdmissionOnboardingReadiness(null);
-                }}
-              >
-                <option value="">Chọn niên khóa</option>
-                {admissionCohortOptions.map((option) => (
-                  <option key={`onboard-cohort-${option.id}`} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                void handleCheckOnboardingReadiness();
-              }}
-              disabled={isWorking}
-              className="h-9 rounded-[4px] border border-[#9ec3dd] bg-white px-3 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
-            >
-              Kiểm tra điều kiện chốt nhập học
-            </button>
-            {admissionOnboardingReadiness ? (
-              <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-sm text-[#355970]">
-                <p>Hồ sơ APPROVED: {admissionOnboardingReadiness.approvedCount}</p>
-                <p>
-                  Ngành có lớp phù hợp: {admissionOnboardingReadiness.coveredMajorCount}/
-                  {admissionOnboardingReadiness.requiredMajorCount}
+            {admissionOperationalSnapshot ? (
+              <div className="space-y-2">
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
+                  <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#355970]">
+                    <p className="font-semibold text-[#1a4f75]">Total hồ sơ</p>
+                    <p className="text-base font-semibold">{admissionOperationalSnapshot.totalApplications}</p>
+                    <p className="text-[11px] text-[#5a7589]">Tổng pipeline đang xử lý.</p>
+                  </div>
+                  <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#355970]">
+                    <p className="font-semibold text-[#1a4f75]">PENDING</p>
+                    <p className="text-base font-semibold">{admissionOperationalSnapshot.pendingCount}</p>
+                    <p className="text-[11px] text-[#5a7589]">Khối lượng review cần xử lý ngay.</p>
+                  </div>
+                  <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#355970]">
+                    <p className="font-semibold text-[#1a4f75]">APPROVED</p>
+                    <p className="text-base font-semibold">{admissionOperationalSnapshot.approvedCount}</p>
+                    <p className="text-[11px] text-[#5a7589]">Nguồn đầu vào cho onboarding.</p>
+                  </div>
+                  <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#355970]">
+                    <p className="font-semibold text-[#1a4f75]">ENROLLED</p>
+                    <p className="text-base font-semibold">{admissionOperationalSnapshot.enrolledCount}</p>
+                    <p className="text-[11px] text-[#5a7589]">Số hồ sơ đã chốt nhập học.</p>
+                  </div>
+                  <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#355970]">
+                    <p className="font-semibold text-[#1a4f75]">REJECTED</p>
+                    <p className="text-base font-semibold">{admissionOperationalSnapshot.rejectedCount}</p>
+                    <p className="text-[11px] text-[#5a7589]">Theo dõi chất lượng benchmark.</p>
+                  </div>
+                  <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#355970]">
+                    <p className="font-semibold text-[#1a4f75]">Period OPEN</p>
+                    <p className="text-base font-semibold">{admissionOperationalSnapshot.openPeriodCount}</p>
+                    <p className="text-[11px] text-[#5a7589]">Số đợt đang cấu hình mở.</p>
+                  </div>
+                  <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#355970]">
+                    <p className="font-semibold text-[#1a4f75]">OPEN active</p>
+                    <p className="text-base font-semibold">{admissionOperationalSnapshot.activeOpenPeriodCount}</p>
+                    <p className="text-[11px] text-[#5a7589]">Quyết định public form có nộp được không.</p>
+                  </div>
+                  <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#355970]">
+                    <p className="font-semibold text-[#1a4f75]">Tỷ lệ ENROLLED</p>
+                    <p className="text-base font-semibold">{admissionOperationalSnapshot.completionRate}%</p>
+                    <p className="text-[11px] text-[#5a7589]">Mức hoàn tất toàn pipeline tuyển sinh.</p>
+                  </div>
+                </div>
+                <p className="text-[11px] text-[#5a7589]">
+                  Cập nhật lần cuối: {formatDateTime(admissionOperationalSnapshot.lastUpdatedAt)}
                 </p>
-                {admissionOnboardingReadiness.missingMajorNames.length > 0 ? (
-                  <p className="text-[#9f2f2f]">
-                    Thiếu lớp hành chính cho:{" "}
-                    {formatMissingMajorNames(admissionOnboardingReadiness.missingMajorNames)}
-                  </p>
-                ) : (
-                  <p className="text-[#2f7b4f]">Đủ điều kiện dữ liệu để chốt nhập học.</p>
-                )}
               </div>
             ) : (
               <p className="text-xs text-[#4f6d82]">
-                Nên kiểm tra điều kiện trước khi chốt để tránh lỗi backend.
+                Chưa có snapshot vận hành. Bấm &quot;Làm mới dữ liệu&quot; để tải góc nhìn quản trị.
               </p>
             )}
-            <button
-              type="button"
-              onClick={() => {
-                void handleAdmissionOnboarding();
-              }}
-              disabled={
-                isWorking ||
-                (admissionOnboardingReadiness
-                  ? admissionOnboardingReadiness.approvedCount === 0 ||
-                    admissionOnboardingReadiness.missingMajorNames.length > 0
-                  : false)
-              }
-              className="h-10 rounded-[4px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
-            >
-              Chốt nhập học
-            </button>
+
+            {admissionOperationalRecommendations.length > 0 ? (
+              <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#355970]">
+                <p className="font-semibold text-[#1a4f75]">Gợi ý hành động cho admin</p>
+                {admissionOperationalRecommendations.map((recommendation, index) => (
+                  <p key={`admission-recommendation-${index + 1}`}>
+                    {index + 1}. {recommendation}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+
+            {admissionFlowChecklist ? (
+              <div className="grid gap-2 rounded-[6px] border border-[#d7e7f3] bg-white p-3 text-sm text-[#355970] sm:grid-cols-2 lg:grid-cols-5">
+                <p>Role STUDENT/GUARDIAN: {admissionFlowChecklist.hasStudentRole && admissionFlowChecklist.hasGuardianRole ? "Đủ" : "Thiếu"}</p>
+                <p>Period OPEN đang active: {admissionFlowChecklist.activeOpenPeriodCount}</p>
+                <p>Ngành/Khối/Benchmark: {admissionFlowChecklist.majorCount}/{admissionFlowChecklist.blockCount}/{admissionFlowChecklist.benchmarkCount}</p>
+                <p>Cohort/Lecturer/Class: {admissionFlowChecklist.cohortCount}/{admissionFlowChecklist.lecturerCount}/{admissionFlowChecklist.administrativeClassCount}</p>
+                <p>
+                  Sẵn sàng public/onboarding:{" "}
+                  {admissionFlowChecklist.readyForPublicApply && admissionFlowChecklist.readyForOnboarding
+                    ? "Đạt"
+                    : "Chưa đạt"}
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-[#4f6d82]">
+                Chạy &quot;Kiểm tra dữ liệu nền&quot; để biết hệ thống đã đủ điều kiện mở tuyển sinh hay chưa.
+              </p>
+            )}
+
+            {admissionPostOnboardingVerification ? (
+              <div className="grid gap-2 rounded-[6px] border border-[#d7e7f3] bg-white p-3 text-sm text-[#355970] sm:grid-cols-2 lg:grid-cols-5">
+                <p>Hồ sơ ENROLLED: {admissionPostOnboardingVerification.enrolledApplicationCount}</p>
+                <p>Account `sv_`: {admissionPostOnboardingVerification.studentAccountCount}</p>
+                <p>Account `ph_`: {admissionPostOnboardingVerification.guardianAccountCount}</p>
+                <p>Profile students: {admissionPostOnboardingVerification.studentProfileCount}</p>
+                <p>Profile guardians: {admissionPostOnboardingVerification.guardianProfileCount}</p>
+              </div>
+            ) : null}
+
+            <div className="rounded-[6px] border border-[#d7e7f3] bg-white p-3">
+              <p className="text-xs text-[#4f6d82]">
+                Thử đăng nhập bằng tài khoản vừa tạo để xác nhận truy cập hồ sơ cá nhân (gợi ý mật khẩu mặc định là ngày sinh `YYYY-MM-DD`).
+              </p>
+              <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_1fr_180px]">
+                <input
+                  className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  placeholder="Username (ví dụ: sv_2600150)"
+                  value={generatedProfileCheckUsername}
+                  onChange={(event) => setGeneratedProfileCheckUsername(event.target.value)}
+                />
+                <input
+                  className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  placeholder="Password"
+                  value={generatedProfileCheckPassword}
+                  onChange={(event) => setGeneratedProfileCheckPassword(event.target.value)}
+                  type="password"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleVerifyGeneratedAccountProfile();
+                  }}
+                  disabled={isWorking}
+                  className="h-10 rounded-[4px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
+                >
+                  Kiểm tra login + profile
+                </button>
+              </div>
+              {generatedProfileCheckResult ? (
+                <div className="mt-2 rounded-[6px] border border-[#d7e7f3] bg-[#f8fcff] px-3 py-2 text-xs text-[#355970]">
+                  <p>Username: {generatedProfileCheckResult.username}</p>
+                  <p>Role: {generatedProfileCheckResult.role}</p>
+                  <p>Account ID: {generatedProfileCheckResult.accountId}</p>
+                  <p>Tên hiển thị profile: {generatedProfileCheckResult.displayName}</p>
+                  <p>Thời điểm kiểm tra: {formatDateTime(generatedProfileCheckResult.checkedAt)}</p>
+                </div>
+              ) : null}
+            </div>
+            </section>
+          </div>
+        ) : null}
+        <div className="space-y-4 px-4 py-4">
+          <section className="space-y-3 rounded-[8px] border border-[#c7dceb] bg-[#f8fcff] p-3">
+            <div>
+              <h3 className="text-base font-semibold text-[#1a4f75]">
+                Xét duyệt hồ sơ tuyển sinh
+              </h3>
+              <p className="text-xs text-[#4f6d82]">
+                Tập trung vào lọc danh sách, duyệt từng hồ sơ hoặc duyệt nhanh hàng loạt.
+              </p>
+            </div>
+            <div className="grid gap-2 rounded-[6px] border border-[#d7e7f3] bg-white p-3 text-xs text-[#355970] sm:grid-cols-2 lg:grid-cols-5">
+              <p>Tổng hiển thị: {admissionApplications.rows.length}</p>
+              <p>Chờ duyệt: {admissionStatusSummary.PENDING}</p>
+              <p>Đã duyệt: {admissionStatusSummary.APPROVED}</p>
+              <p>Từ chối: {admissionStatusSummary.REJECTED}</p>
+              <p>Đã nhập học: {admissionStatusSummary.ENROLLED}</p>
+            </div>
+
+            <div className="space-y-2 rounded-[6px] border border-[#d7e7f3] bg-white p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#1a4f75]">
+                Danh sách và bộ lọc hồ sơ
+              </p>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                <input
+                  className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  placeholder="Tìm theo họ tên, email, số điện thoại"
+                  value={admissionFilterKeywordInput}
+                  onChange={(event) => setAdmissionFilterKeywordInput(event.target.value)}
+                />
+                <select
+                  className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  value={admissionFilterPeriodIdInput}
+                  onChange={(event) => setAdmissionFilterPeriodIdInput(event.target.value)}
+                >
+                  <option value="">Chọn kỳ tuyển sinh</option>
+                  {admissionPeriodOptions.map((option) => (
+                    <option key={`filter-period-${option.id}`} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  value={admissionFilterMajorIdInput}
+                  onChange={(event) => setAdmissionFilterMajorIdInput(event.target.value)}
+                >
+                  <option value="">Chọn ngành</option>
+                  {admissionMajorOptions.map((option) => (
+                    <option key={`filter-major-${option.id}`} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  value={admissionFilterStatusInput}
+                  onChange={(event) =>
+                    setAdmissionFilterStatusInput(event.target.value as AdmissionApplicationStatus | "")
+                  }
+                >
+                  <option value="">Chọn trạng thái</option>
+                  {admissionApplicationStatusOptions.map((status) => (
+                    <option key={`filter-status-${status}`} value={status}>
+                      {toAdmissionApplicationStatusLabel(status)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                <input
+                  className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  placeholder="Trang (bắt đầu từ 0)"
+                  value={admissionFilterPageInput}
+                  onChange={(event) => setAdmissionFilterPageInput(event.target.value)}
+                  inputMode="numeric"
+                />
+                <input
+                  className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  placeholder="Số hồ sơ mỗi trang"
+                  value={admissionFilterSizeInput}
+                  onChange={(event) => setAdmissionFilterSizeInput(event.target.value)}
+                  inputMode="numeric"
+                />
+                <select
+                  className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  value={admissionFilterSortByInput}
+                  onChange={(event) => setAdmissionFilterSortByInput(event.target.value)}
+                >
+                  {admissionApplicationSortByOptions.map((option) => (
+                    <option key={`admission-sort-by-${option.value}`} value={option.value}>
+                      Sắp xếp theo: {option.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  value={admissionFilterSortDirectionInput}
+                  onChange={(event) =>
+                    setAdmissionFilterSortDirectionInput(event.target.value as AdmissionSortDirection)
+                  }
+                >
+                  {admissionSortDirectionOptions.map((option) => (
+                    <option key={`admission-sort-direction-${option}`} value={option}>
+                      Thứ tự: {option === "DESC" ? "Mới đến cũ" : "Cũ đến mới"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleApplyAdmissionFilters();
+                  }}
+                  disabled={isWorking}
+                  className="h-9 rounded-[4px] border border-[#9ec3dd] bg-white px-3 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
+                >
+                  Áp dụng bộ lọc
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleResetAdmissionFilters();
+                  }}
+                  disabled={isWorking}
+                  className="h-9 rounded-[4px] border border-[#9ec3dd] bg-white px-3 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
+                >
+                  Xóa bộ lọc
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleQuickAdmissionStatusFilter("PENDING");
+                  }}
+                  disabled={isWorking}
+                  className="h-9 rounded-[4px] border border-[#f0bf72] bg-[#fff7ea] px-3 text-sm font-semibold text-[#91611f] transition hover:bg-[#ffefcf] disabled:opacity-60"
+                >
+                  Lọc nhanh: Chờ duyệt
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleQuickAdmissionStatusFilter("APPROVED");
+                  }}
+                  disabled={isWorking}
+                  className="h-9 rounded-[4px] border border-[#78bf93] bg-[#ecf8f0] px-3 text-sm font-semibold text-[#2f7b4f] transition hover:bg-[#dff2e6] disabled:opacity-60"
+                >
+                  Lọc nhanh: Đã duyệt
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleQuickAdmissionStatusFilter("");
+                  }}
+                  disabled={isWorking}
+                  className="h-9 rounded-[4px] border border-[#9ec3dd] bg-white px-3 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
+                >
+                  Bỏ lọc trạng thái
+                </button>
+              </div>
+              <p className="text-xs text-[#4f6d82]">
+                Kết quả hiện tại: trang {admissionApplications.page ?? 0}, số lượng/trang{" "}
+                {admissionApplications.size ?? admissionApplications.rows.length}, tổng{" "}
+                {admissionApplications.totalElements ?? admissionApplications.rows.length} hồ sơ.
+              </p>
+            </div>
+
+            <div className="space-y-2 rounded-[6px] border border-[#d7e7f3] bg-white p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#1a4f75]">
+                Duyệt một hồ sơ
+              </p>
+              <div className="grid gap-2 sm:grid-cols-[1fr_180px]">
+                <div className="h-10 rounded-[4px] border border-[#c8d3dd] bg-[#f8fcff] px-3 text-sm leading-[38px] text-[#355970]">
+                  {singleSelectedAdmission
+                    ? `Đang chọn #${singleSelectedAdmission.id} - ${singleSelectedAdmission.fullName || singleSelectedAdmission.email || singleSelectedAdmission.phone || "Ứng viên"}`
+                    : "Vui lòng chọn đúng 1 hồ sơ trong bảng để duyệt từng hồ sơ."}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleLoadAdmissionDetail();
+                  }}
+                  disabled={isWorking || !singleSelectedAdmission}
+                  className="h-10 rounded-[4px] border border-[#9ec3dd] bg-white px-3 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
+                >
+                  Tải chi tiết
+                </button>
+              </div>
+              {admissionDetail ? (
+                <div className="rounded-[6px] border border-[#d7e7f3] bg-[#f8fcff] px-3 py-2 text-sm text-[#355970]">
+                  <p>ID: {admissionDetail.id}</p>
+                  <p>Họ tên: {admissionDetail.fullName || "-"}</p>
+                  <p>Email: {admissionDetail.email || "-"}</p>
+                  <p>SĐT: {admissionDetail.phone || "-"}</p>
+                  <p>Ngày duyệt: {formatDateTime(admissionDetail.approvalDate)}</p>
+                  <p>
+                    Trạng thái:
+                    <span
+                      className={`ml-2 inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold ${getAdmissionApplicationStatusBadgeClass(admissionDetail.status)}`}
+                    >
+                      {toAdmissionApplicationStatusLabel(admissionDetail.status)}
+                    </span>
+                  </p>
+                </div>
+              ) : null}
+              <div className="grid gap-2 sm:grid-cols-[160px_1fr_220px]">
+                <select
+                  className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  value={admissionReviewStatus}
+                  onChange={(event) =>
+                    setAdmissionReviewStatus(event.target.value as AdmissionApplicationStatus)
+                  }
+                >
+                  {admissionReviewStatusOptions.map((status) => (
+                    <option key={status} value={status}>
+                      {toAdmissionApplicationStatusLabel(status)}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  placeholder="note (không bắt buộc)"
+                  value={admissionReviewNote}
+                  onChange={(event) => setAdmissionReviewNote(event.target.value)}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleReviewSingleAdmission();
+                  }}
+                  disabled={isWorking || !singleSelectedAdmission}
+                  className="h-10 rounded-[4px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
+                >
+                  Cập nhật hồ sơ đã chọn
+                </button>
+              </div>
+              <p className="text-xs text-[#4f6d82]">
+                Lưu ý: ghi chú chỉ dùng cho thao tác hiện tại.
+              </p>
+            </div>
+
+            <div className="space-y-2 rounded-[6px] border border-[#d7e7f3] bg-white p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-[#1a4f75]">
+                Duyệt hàng loạt
+              </p>
+              <div className="grid gap-2 sm:grid-cols-[1fr_140px]">
+                <div className="h-10 rounded-[4px] border border-[#c8d3dd] bg-[#f8fcff] px-3 text-sm leading-[38px] text-[#355970]">
+                  Đã chọn {admissionSelectedIds.length} hồ sơ
+                </div>
+                <select
+                  className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  value={admissionBulkStatus}
+                  onChange={(event) =>
+                    setAdmissionBulkStatus(event.target.value as AdmissionApplicationStatus)
+                  }
+                >
+                  {admissionReviewStatusOptions.map((status) => (
+                    <option key={status} value={status}>
+                      {toAdmissionApplicationStatusLabel(status)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {admissionSelectedIds.length > 0 ? (
+                <p className="text-xs text-[#4f6d82]">
+                  ID đã chọn:{" "}
+                  {admissionSelectedIds.length <= 8
+                    ? admissionSelectedIds.join(", ")
+                    : `${admissionSelectedIds.slice(0, 8).join(", ")} ... (+${
+                        admissionSelectedIds.length - 8
+                      })`}
+                </p>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={clearAdmissionSelection}
+                  disabled={isWorking || admissionSelectedIds.length === 0}
+                  className="h-9 rounded-[4px] border border-[#9ec3dd] bg-white px-3 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
+                >
+                  Bỏ chọn tất cả
+                </button>
+              </div>
+              <input
+                className="h-10 w-full rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                placeholder="note duyệt hàng loạt (không bắt buộc)"
+                value={admissionBulkNote}
+                onChange={(event) => setAdmissionBulkNote(event.target.value)}
+              />
+              <p className="text-xs text-[#4f6d82]">
+                Lưu ý: ghi chú hàng loạt chỉ dùng cho thao tác hiện tại.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleBulkReviewAdmissions();
+                }}
+                disabled={isWorking || admissionSelectedIds.length === 0}
+                className="h-10 rounded-[4px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
+              >
+                Duyệt hàng loạt
+              </button>
+            </div>
           </section>
+
+          {SHOW_ADMISSION_POST_REVIEW_ACTIONS ? (
+            <div className="grid gap-4 xl:grid-cols-2">
+            <section className="space-y-3 rounded-[8px] border border-[#c7dceb] bg-[#f8fcff] p-3">
+              <div>
+                <h3 className="text-base font-semibold text-[#1a4f75]">
+                  Duyệt tự động (tùy chọn)
+                </h3>
+                <p className="text-xs text-[#4f6d82]">
+                  Hệ thống tự đối chiếu điểm hồ sơ với ngưỡng xét tuyển của kỳ đã chọn.
+                </p>
+              </div>
+              <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#355970]">
+                <p>1. Lấy các hồ sơ chờ duyệt của kỳ đã chọn.</p>
+                <p>2. Đối chiếu ngưỡng xét tuyển theo ngành và tổ hợp.</p>
+                <p>3. Đủ điểm: chuyển sang Đã duyệt.</p>
+                <p>4. Chưa đủ điểm: chuyển sang Từ chối.</p>
+                <p>5. Thiếu ngưỡng xét tuyển: giữ nguyên Chờ duyệt.</p>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-[1fr_220px]">
+                <select
+                  className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  value={admissionAutoScreenPeriodId}
+                  onChange={(event) => setAdmissionAutoScreenPeriodId(event.target.value)}
+                >
+                  <option value="">Chọn kỳ tuyển sinh để duyệt tự động</option>
+                  {admissionPeriodOptions.map((option) => (
+                    <option key={`auto-period-${option.id}`} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void handleAutoScreenAdmissions();
+                  }}
+                  disabled={isWorking}
+                  className="h-10 rounded-[4px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
+                >
+                  Chạy duyệt tự động
+                </button>
+              </div>
+            </section>
+
+            <section className="space-y-3 rounded-[8px] border border-[#c7dceb] bg-[#f8fcff] p-3">
+              <div>
+                <h3 className="text-base font-semibold text-[#1a4f75]">
+                  Chốt nhập học
+                </h3>
+                <p className="text-xs text-[#4f6d82]">
+                  Tạo tài khoản và hồ sơ cho các thí sinh đã được duyệt.
+                </p>
+              </div>
+              <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#355970]">
+                <p>Kỳ tuyển sinh và niên khóa là hai thông tin bắt buộc.</p>
+                <p>Chỉ xử lý các hồ sơ đã duyệt của kỳ đã chọn.</p>
+                <p>Nếu đã có hồ sơ sinh viên theo CCCD thì hồ sơ đó sẽ được bỏ qua.</p>
+                <p>Tài khoản được tạo tự động theo quy ước mã chung của trường.</p>
+                <p>Mật khẩu mặc định dùng ngày sinh `YYYY-MM-DD`.</p>
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-2">
+                <select
+                  className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  value={admissionOnboardPeriodId}
+                  onChange={(event) => {
+                    setAdmissionOnboardPeriodId(event.target.value);
+                    setAdmissionOnboardingReadiness(null);
+                  }}
+                >
+                  <option value="">Chọn kỳ tuyển sinh</option>
+                  {admissionPeriodOptions.map((option) => (
+                    <option key={`onboard-period-${option.id}`} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                  value={admissionOnboardCohortId}
+                  onChange={(event) => {
+                    setAdmissionOnboardCohortId(event.target.value);
+                    setAdmissionOnboardingReadiness(null);
+                  }}
+                >
+                  <option value="">Chọn niên khóa</option>
+                  {admissionCohortOptions.map((option) => (
+                    <option key={`onboard-cohort-${option.id}`} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  void handleCheckOnboardingReadiness();
+                }}
+                disabled={isWorking}
+                className="h-9 rounded-[4px] border border-[#9ec3dd] bg-white px-3 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
+              >
+                Kiểm tra điều kiện trước khi onboard
+              </button>
+              {admissionOnboardingReadiness ? (
+                <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-sm text-[#355970]">
+                  <p>Hồ sơ APPROVED: {admissionOnboardingReadiness.approvedCount}</p>
+                  <p>
+                    Ngành có lớp phù hợp: {admissionOnboardingReadiness.coveredMajorCount}/
+                    {admissionOnboardingReadiness.requiredMajorCount}
+                  </p>
+                  {admissionOnboardingReadiness.missingMajorNames.length > 0 ? (
+                    <p className="text-[#9f2f2f]">
+                      Thiếu lớp hành chính cho:{" "}
+                      {formatMissingMajorNames(admissionOnboardingReadiness.missingMajorNames)}
+                    </p>
+                  ) : (
+                    <p className="text-[#2f7b4f]">Đủ điều kiện dữ liệu để chốt nhập học.</p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-[#4f6d82]">
+                  Nên kiểm tra điều kiện trước khi chốt nhập học để tránh thiếu dữ liệu lớp.
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  void handleAdmissionOnboarding();
+                }}
+                disabled={
+                  isWorking ||
+                  (admissionOnboardingReadiness
+                    ? admissionOnboardingReadiness.approvedCount === 0 ||
+                      admissionOnboardingReadiness.missingMajorNames.length > 0
+                    : false)
+                }
+                className="h-10 rounded-[4px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
+              >
+                Chốt nhập học
+              </button>
+            </section>
+            </div>
+          ) : null}
+
         </div>
       </section>
 
-      <section className={contentCardClass}>
-        <div className={sectionTitleClass}>
-          <h2>Thiết lập dữ liệu tuyển sinh</h2>
-        </div>
-        <div className="grid gap-4 px-4 py-4 xl:grid-cols-3">
+      {SHOW_ADMISSION_CONFIGURATION_PANELS ? (
+        <>
+          <section className={contentCardClass}>
+            <div className={sectionTitleClass}>
+              <h2>Thiết lập dữ liệu tuyển sinh</h2>
+            </div>
+            <div className="grid gap-4 px-4 py-4 xl:grid-cols-3">
           <section className="space-y-2 rounded-[8px] border border-[#c7dceb] bg-[#f8fcff] p-3">
             <h3 className="text-base font-semibold text-[#1a4f75]">Đợt tuyển sinh</h3>
             <div className="grid gap-2 sm:grid-cols-[1fr_160px]">
@@ -2504,158 +2972,160 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
               Lưu điểm chuẩn hàng loạt
             </button>
           </section>
-        </div>
-      </section>
+            </div>
+          </section>
 
-      <section className={contentCardClass}>
-        <div className={sectionTitleClass}>
-          <h2>Danh sách kỳ tuyển sinh</h2>
-          <button
-            type="button"
-            onClick={() => {
-              void refreshAllAdmissionData();
-            }}
-            disabled={isWorking}
-            className="rounded-[4px] bg-[#0d6ea6] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
-          >
-            Làm mới tất cả
-          </button>
-        </div>
-        <div className="overflow-x-auto px-4 py-4">
-          <table className="min-w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-[#cfdfec] text-[#305970]">
-                <th className="px-2 py-2">STT</th>
-                <th className="px-2 py-2">Ten ky</th>
-                <th className="px-2 py-2">Bat dau</th>
-                <th className="px-2 py-2">Ket thuc</th>
-                <th className="px-2 py-2">Status</th>
-                <th className="px-2 py-2">Tổng ho so</th>
-                <th className="px-2 py-2">Da duyet</th>
-              </tr>
-            </thead>
-            <tbody>
-              {admissionPeriods.rows.map((item, index) => (
-                <tr key={item.id} className="border-b border-[#e0ebf4] text-[#3f6178]">
-                  <td className="px-2 py-2">{index + 1}</td>
-                  <td className="px-2 py-2">{item.periodName || "-"}</td>
-                  <td className="px-2 py-2">{formatDateTime(item.startTime)}</td>
-                  <td className="px-2 py-2">{formatDateTime(item.endTime)}</td>
-                  <td className="px-2 py-2">{toAdmissionPeriodStatusLabel(item.status)}</td>
-                  <td className="px-2 py-2">{item.totalApplications ?? "-"}</td>
-                  <td className="px-2 py-2">{item.approvedApplications ?? "-"}</td>
-                  <td className="px-2 py-2">
-                    <button
-                      type="button"
-                      onClick={() => handleSelectPeriodForEdit(String(item.id))}
-                      className="rounded-[4px] border border-[#9ec3dd] bg-white px-2 py-1 text-xs font-semibold text-[#245977] transition hover:bg-[#edf6fd]"
-                    >
-                      Chỉnh sửa
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {admissionPeriods.rows.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="px-2 py-4 text-center text-[#577086]">
-                    Chưa có dữ liệu kỳ tuyển sinh.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
+          <section className={contentCardClass}>
+            <div className={sectionTitleClass}>
+              <h2>Danh sách kỳ tuyển sinh</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  void refreshAllAdmissionData();
+                }}
+                disabled={isWorking}
+                className="rounded-[4px] bg-[#0d6ea6] px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
+              >
+                Làm mới tất cả
+              </button>
+            </div>
+            <div className="overflow-x-auto px-4 py-4">
+              <table className="min-w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-[#cfdfec] text-[#305970]">
+                    <th className="px-2 py-2">STT</th>
+                    <th className="px-2 py-2">Ten ky</th>
+                    <th className="px-2 py-2">Bat dau</th>
+                    <th className="px-2 py-2">Ket thuc</th>
+                    <th className="px-2 py-2">Status</th>
+                    <th className="px-2 py-2">Tổng ho so</th>
+                    <th className="px-2 py-2">Da duyet</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {admissionPeriods.rows.map((item, index) => (
+                    <tr key={item.id} className="border-b border-[#e0ebf4] text-[#3f6178]">
+                      <td className="px-2 py-2">{index + 1}</td>
+                      <td className="px-2 py-2">{item.periodName || "-"}</td>
+                      <td className="px-2 py-2">{formatDateTime(item.startTime)}</td>
+                      <td className="px-2 py-2">{formatDateTime(item.endTime)}</td>
+                      <td className="px-2 py-2">{toAdmissionPeriodStatusLabel(item.status)}</td>
+                      <td className="px-2 py-2">{item.totalApplications ?? "-"}</td>
+                      <td className="px-2 py-2">{item.approvedApplications ?? "-"}</td>
+                      <td className="px-2 py-2">
+                        <button
+                          type="button"
+                          onClick={() => handleSelectPeriodForEdit(String(item.id))}
+                          className="rounded-[4px] border border-[#9ec3dd] bg-white px-2 py-1 text-xs font-semibold text-[#245977] transition hover:bg-[#edf6fd]"
+                        >
+                          Chỉnh sửa
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {admissionPeriods.rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="px-2 py-4 text-center text-[#577086]">
+                        Chưa có dữ liệu kỳ tuyển sinh.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </section>
 
-      <section className={contentCardClass}>
-        <div className={sectionTitleClass}>
-          <h2>Danh sách khối xét tuyển</h2>
-          <span className="text-sm font-medium text-[#396786]">{admissionBlocks.length} khối</span>
-        </div>
-        <div className="overflow-x-auto px-4 py-4">
-          <table className="min-w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-[#cfdfec] text-[#305970]">
-                <th className="px-2 py-2">STT</th>
-                <th className="px-2 py-2">Block</th>
-                <th className="px-2 py-2">Description</th>
-              </tr>
-            </thead>
-            <tbody>
-              {admissionBlocks.map((item, index) => (
-                <tr key={item.id} className="border-b border-[#e0ebf4] text-[#3f6178]">
-                  <td className="px-2 py-2">{index + 1}</td>
-                  <td className="px-2 py-2">{item.blockName || "-"}</td>
-                  <td className="px-2 py-2">{item.description || "-"}</td>
-                  <td className="px-2 py-2">
-                    <button
-                      type="button"
-                      onClick={() => handleSelectBlockForEdit(String(item.id))}
-                      className="rounded-[4px] border border-[#9ec3dd] bg-white px-2 py-1 text-xs font-semibold text-[#245977] transition hover:bg-[#edf6fd]"
-                    >
-                      Chỉnh sửa
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {admissionBlocks.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-2 py-4 text-center text-[#577086]">
-                    Chưa có dữ liệu khối xét tuyển.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
+          <section className={contentCardClass}>
+            <div className={sectionTitleClass}>
+              <h2>Danh sách khối xét tuyển</h2>
+              <span className="text-sm font-medium text-[#396786]">{admissionBlocks.length} khối</span>
+            </div>
+            <div className="overflow-x-auto px-4 py-4">
+              <table className="min-w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-[#cfdfec] text-[#305970]">
+                    <th className="px-2 py-2">STT</th>
+                    <th className="px-2 py-2">Block</th>
+                    <th className="px-2 py-2">Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {admissionBlocks.map((item, index) => (
+                    <tr key={item.id} className="border-b border-[#e0ebf4] text-[#3f6178]">
+                      <td className="px-2 py-2">{index + 1}</td>
+                      <td className="px-2 py-2">{item.blockName || "-"}</td>
+                      <td className="px-2 py-2">{item.description || "-"}</td>
+                      <td className="px-2 py-2">
+                        <button
+                          type="button"
+                          onClick={() => handleSelectBlockForEdit(String(item.id))}
+                          className="rounded-[4px] border border-[#9ec3dd] bg-white px-2 py-1 text-xs font-semibold text-[#245977] transition hover:bg-[#edf6fd]"
+                        >
+                          Chỉnh sửa
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {admissionBlocks.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-2 py-4 text-center text-[#577086]">
+                        Chưa có dữ liệu khối xét tuyển.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </section>
 
-      <section className={contentCardClass}>
-        <div className={sectionTitleClass}>
-          <h2>Danh sách điểm chuẩn</h2>
-          <span className="text-sm font-medium text-[#396786]">{admissionBenchmarks.rows.length} dòng</span>
-        </div>
-        <div className="overflow-x-auto px-4 py-4">
-          <table className="min-w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-[#cfdfec] text-[#305970]">
-                <th className="px-2 py-2">STT</th>
-                <th className="px-2 py-2">Nganh</th>
-                <th className="px-2 py-2">Block</th>
-                <th className="px-2 py-2">Period</th>
-                <th className="px-2 py-2">Score</th>
-              </tr>
-            </thead>
-            <tbody>
-              {admissionBenchmarks.rows.map((item, index) => (
-                <tr key={item.id} className="border-b border-[#e0ebf4] text-[#3f6178]">
-                  <td className="px-2 py-2">{index + 1}</td>
-                  <td className="px-2 py-2">{item.majorName || "-"}</td>
-                  <td className="px-2 py-2">{item.blockName || "-"}</td>
-                  <td className="px-2 py-2">{item.periodName || "-"}</td>
-                  <td className="px-2 py-2">{item.score ?? "-"}</td>
-                  <td className="px-2 py-2">
-                    <button
-                      type="button"
-                      onClick={() => handleSelectBenchmarkForEdit(String(item.id))}
-                      className="rounded-[4px] border border-[#9ec3dd] bg-white px-2 py-1 text-xs font-semibold text-[#245977] transition hover:bg-[#edf6fd]"
-                    >
-                      Chỉnh sửa
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {admissionBenchmarks.rows.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-2 py-4 text-center text-[#577086]">
-                    Chưa có dữ liệu điểm chuẩn.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </section>
+          <section className={contentCardClass}>
+            <div className={sectionTitleClass}>
+              <h2>Danh sách điểm chuẩn</h2>
+              <span className="text-sm font-medium text-[#396786]">{admissionBenchmarks.rows.length} dòng</span>
+            </div>
+            <div className="overflow-x-auto px-4 py-4">
+              <table className="min-w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-[#cfdfec] text-[#305970]">
+                    <th className="px-2 py-2">STT</th>
+                    <th className="px-2 py-2">Nganh</th>
+                    <th className="px-2 py-2">Block</th>
+                    <th className="px-2 py-2">Period</th>
+                    <th className="px-2 py-2">Score</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {admissionBenchmarks.rows.map((item, index) => (
+                    <tr key={item.id} className="border-b border-[#e0ebf4] text-[#3f6178]">
+                      <td className="px-2 py-2">{index + 1}</td>
+                      <td className="px-2 py-2">{item.majorName || "-"}</td>
+                      <td className="px-2 py-2">{item.blockName || "-"}</td>
+                      <td className="px-2 py-2">{item.periodName || "-"}</td>
+                      <td className="px-2 py-2">{item.score ?? "-"}</td>
+                      <td className="px-2 py-2">
+                        <button
+                          type="button"
+                          onClick={() => handleSelectBenchmarkForEdit(String(item.id))}
+                          className="rounded-[4px] border border-[#9ec3dd] bg-white px-2 py-1 text-xs font-semibold text-[#245977] transition hover:bg-[#edf6fd]"
+                        >
+                          Chỉnh sửa
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {admissionBenchmarks.rows.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-2 py-4 text-center text-[#577086]">
+                        Chưa có dữ liệu điểm chuẩn.
+                      </td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </>
+      ) : null}
 
       <section className={contentCardClass}>
         <div className={sectionTitleClass}>
@@ -2680,13 +3150,19 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
                 <th className="px-2 py-2">Block</th>
                 <th className="px-2 py-2">Period</th>
                 <th className="px-2 py-2">Tổng diem</th>
+                <th className="px-2 py-2">Ngày duyệt</th>
                 <th className="px-2 py-2">Trạng thái</th>
                 <th className="px-2 py-2">Thao tác</th>
               </tr>
             </thead>
             <tbody>
               {admissionApplications.rows.map((item, index) => (
-                <tr key={item.id} className="border-b border-[#e0ebf4] text-[#3f6178]">
+                <tr
+                  key={item.id}
+                  className={`border-b border-[#e0ebf4] text-[#3f6178] ${
+                    admissionSelectedIds.includes(item.id) ? "bg-[#eef7ff]" : ""
+                  }`}
+                >
                   <td className="px-2 py-2">
                     <input
                       type="checkbox"
@@ -2701,6 +3177,7 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
                   <td className="px-2 py-2">{item.blockName || "-"}</td>
                   <td className="px-2 py-2">{item.periodName || "-"}</td>
                   <td className="px-2 py-2">{item.totalScore ?? "-"}</td>
+                  <td className="px-2 py-2">{formatDateTime(item.approvalDate)}</td>
                   <td className="px-2 py-2">
                     <span
                       className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold ${getAdmissionApplicationStatusBadgeClass(item.status)}`}
@@ -2709,19 +3186,41 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
                     </span>
                   </td>
                   <td className="px-2 py-2">
-                    <button
-                      type="button"
-                      onClick={() => setActiveApplicationForActions(item.id)}
-                      className="rounded-[4px] border border-[#9ec3dd] bg-white px-2 py-1 text-xs font-semibold text-[#245977] transition hover:bg-[#edf6fd]"
-                    >
-                      Chọn thao tác
-                    </button>
+                    <div className="flex flex-wrap gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setActiveApplicationForActions(item.id)}
+                        className="rounded-[4px] border border-[#9ec3dd] bg-white px-2 py-1 text-xs font-semibold text-[#245977] transition hover:bg-[#edf6fd]"
+                      >
+                        Chọn
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleQuickReviewAdmission(item.id, "APPROVED");
+                        }}
+                        disabled={isWorking || toNormalizedUpperText(item.status) === "ENROLLED"}
+                        className="rounded-[4px] border border-[#78bf93] bg-[#ecf8f0] px-2 py-1 text-xs font-semibold text-[#2f7b4f] transition hover:bg-[#dff2e6] disabled:opacity-60"
+                      >
+                        Duyệt
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void handleQuickReviewAdmission(item.id, "REJECTED");
+                        }}
+                        disabled={isWorking || toNormalizedUpperText(item.status) === "ENROLLED"}
+                        className="rounded-[4px] border border-[#dc9d9d] bg-[#fff1f1] px-2 py-1 text-xs font-semibold text-[#b03d3d] transition hover:bg-[#ffe4e4] disabled:opacity-60"
+                      >
+                        Từ chối
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
               {admissionApplications.rows.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-2 py-4 text-center text-[#577086]">
+                  <td colSpan={10} className="px-2 py-4 text-center text-[#577086]">
                     Chưa có dữ liệu hồ sơ tuyển sinh.
                   </td>
                 </tr>

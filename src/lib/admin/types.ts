@@ -26,7 +26,8 @@ export type AdminTabKey =
   | "recurring-schedules"
   | "grade-management"
   | "attendance-management"
-  | "admissions";
+  | "admissions"
+  | "admissions-onboarding";
 
 export interface AdminFeatureTab {
   key: AdminTabKey;
@@ -162,6 +163,8 @@ export interface AdmissionApplicationSearchFilter {
   status?: AdmissionApplicationStatus;
   page?: number;
   size?: number;
+  sortBy?: string;
+  sortDirection?: "ASC" | "DESC";
 }
 
 export type AdmissionPeriodStatus = "UPCOMING" | "PAUSED" | "OPEN" | "CLOSED";
