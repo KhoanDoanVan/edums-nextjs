@@ -1,0 +1,4 @@
+fullName,dateOfBirth,email,phone,nationalId,address,periodId,majorId,blockId,totalScore
+Nguyen Van A,2007-05-12,nguyenvana@example.com,0988111222,012345678901,Ho Chi Minh,1,1,1,26.5
+Tran Thi B,2007-11-03,tranthib@example.com,0977333444,012345678902,Da Nang,1,2,2,23.0
+Le Quoc C,2007-02-18,lequocc@example.com,0909555666,012345678903,Can Tho,1,1,2,24.75

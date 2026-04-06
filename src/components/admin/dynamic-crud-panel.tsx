@@ -818,6 +818,14 @@ export const DynamicCrudPanel = ({
       }
 
       if (typeof templateValue === "boolean") {
+        const booleanOptions =
+          selectOptions.length > 0
+            ? selectOptions
+            : [
+                { value: "true", label: "Có" },
+                { value: "false", label: "Không" },
+              ];
+
         return (
           <label key={path} className="space-y-1">
             <span className="text-sm font-semibold text-[#2c5877]">
@@ -831,8 +839,11 @@ export const DynamicCrudPanel = ({
               disabled={isFieldDisabled}
               className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
             >
-              <option value="true">Có</option>
-              <option value="false">Không</option>
+              {booleanOptions.map((option) => (
+                <option key={`${path}-${option.value}`} value={option.value}>
+                  {toDisplayValue(option.label || option.value)}
+                </option>
+              ))}
             </select>
             {fieldHelperText ? (
               <span className="text-xs text-[#6b8497]">{fieldHelperText}</span>

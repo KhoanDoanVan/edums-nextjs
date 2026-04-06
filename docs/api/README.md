@@ -16,6 +16,8 @@ Snapshot được lấy từ file `EduMS API-2.json` (OpenAPI 3.1) vào ngày
 
 - `edums-openapi.json`: snapshot OpenAPI đầy đủ.
 - `endpoints.tsv`: danh sách endpoint chi tiết theo `TAG`, `METHOD`, `PATH`.
+- `frontend-flow-contract.md`: flow contract frontend bám theo
+  `README.md` backend (request pipeline, role matrix, chuỗi gọi API theo dashboard).
 
 ## Số lượng endpoint theo tag
 

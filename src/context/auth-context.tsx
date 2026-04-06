@@ -93,6 +93,11 @@ const mergeSessionWithAccount = (
   };
 };
 
+const canReadAccountDetailByRole = (role?: string | null): boolean => {
+  const normalized = normalizeRole(role);
+  return normalized === "ADMIN" || normalized === "MANAGER";
+};
+
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [status, setStatus] = useState<AuthStatus>("loading");
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -132,12 +137,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     async (credentials: LoginCredentials): Promise<void> => {
       const authData = await loginRequest(credentials);
       const authorization = buildAuthorization(authData.token, authData.type);
+      const roleCanReadAccount = canReadAccountDetailByRole(authData.role);
 
       let accountData: AccountResponse | undefined;
-      try {
-        accountData = await getAccountById(authData.accountId, authorization);
-      } catch {
-        accountData = undefined;
+      if (roleCanReadAccount) {
+        try {
+          accountData = await getAccountById(authData.accountId, authorization);
+        } catch {
+          accountData = undefined;
+        }
       }
 
       persistSession(toSession(authData, accountData));
@@ -158,6 +166,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
   const refreshCurrentAccount = useCallback(async (): Promise<void> => {
     if (!session) {
+      return;
+    }
+
+    if (!canReadAccountDetailByRole(session.role)) {
       return;
     }
 

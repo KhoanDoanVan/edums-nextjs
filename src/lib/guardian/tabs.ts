@@ -5,7 +5,10 @@ export const guardianFeatureTabs: GuardianFeatureTab[] = [
     key: "profile",
     label: "Hồ sơ phụ huynh",
     description: "Xem thông tin phụ huynh và danh sách học sinh liên kết.",
-    endpoints: [{ method: "GET", path: "/api/v1/guardians/{id}" }],
+    endpoints: [
+      { method: "GET", path: "/api/v1/profile/me" },
+      { method: "GET", path: "/api/v1/students/{id}" },
+    ],
   },
   {
     key: "attendance",

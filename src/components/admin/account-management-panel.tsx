@@ -7,6 +7,7 @@ import {
 } from "@/hooks/use-toast-feedback";
 import {
   createAccount,
+  getDynamicListByPath,
   getAccountById,
   getAccounts,
   getRoles,
@@ -18,6 +19,7 @@ import { formatDateTime, toErrorMessage } from "@/components/admin/format-utils"
 import type {
   AccountListItem,
   AccountStatus,
+  DynamicRow,
   PagedRows,
   RoleListItem,
 } from "@/lib/admin/types";
@@ -36,6 +38,7 @@ interface AccountFormState {
   password: string;
   confirmPassword: string;
   roleId: string;
+  linkedStudentId: string;
   avatarUrl: string;
   desiredStatus: AccountStatus;
 }
@@ -78,6 +81,63 @@ const parseRoleId = (value: string): number | null => {
   return parsed;
 };
 
+interface StudentLookupItem {
+  id: number;
+  studentCode: string;
+  fullName: string;
+  guardianId: number | null;
+}
+
+const toTrimmedString = (value: unknown): string => {
+  return typeof value === "string" ? value.trim() : "";
+};
+
+const toPositiveIntegerOrNull = (value: unknown): number | null => {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return parsed;
+};
+
+const toStudentLookupItems = (rows: DynamicRow[]): StudentLookupItem[] => {
+  return rows
+    .map((row) => {
+      const id = toPositiveIntegerOrNull(row.id);
+      if (!id) {
+        return null;
+      }
+
+      const studentCode = toTrimmedString(row.studentCode);
+      const fullName = toTrimmedString(row.fullName);
+      const guardianId = toPositiveIntegerOrNull(row.guardianId);
+
+      return {
+        id,
+        studentCode,
+        fullName,
+        guardianId,
+      } satisfies StudentLookupItem;
+    })
+    .filter((item): item is StudentLookupItem => item !== null);
+};
+
+const normalizeRoleName = (roleName: string): string => {
+  return roleName
+    .trim()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/^ROLE_/, "")
+    .replace(/[\s_-]+/g, "");
+};
+
+const isGuardianLikeRole = (roleName: string): boolean => {
+  const normalized = normalizeRoleName(roleName);
+  return normalized === "GUARDIAN" || normalized === "PARENT" || normalized === "PHUHUYNH";
+};
+
 const getAccountStatusClass = (status: AccountStatus): string => {
   switch (status) {
     case "ACTIVE":
@@ -99,6 +159,10 @@ export const AccountManagementPanel = ({
   const [statusDraftByAccountId, setStatusDraftByAccountId] = useState<
     Record<number, AccountStatus>
   >({});
+  const [studentLookupItems, setStudentLookupItems] = useState<StudentLookupItem[]>(
+    [],
+  );
+  const [isStudentLookupLoading, setIsStudentLookupLoading] = useState(false);
 
   const [keywordFilter, setKeywordFilter] = useState("");
   const [roleFilter, setRoleFilter] = useState<FilterRoleValue>("ALL");
@@ -124,6 +188,7 @@ export const AccountManagementPanel = ({
     password: "",
     confirmPassword: "",
     roleId: "",
+    linkedStudentId: "",
     avatarUrl: "",
     desiredStatus: "ACTIVE",
   });
@@ -218,6 +283,51 @@ export const AccountManagementPanel = ({
     }));
   }, [roles]);
 
+  const guardianRoleIds = useMemo(() => {
+    return new Set(
+      roles
+        .filter((role) => isGuardianLikeRole(role.roleName || ""))
+        .map((role) => role.id),
+    );
+  }, [roles]);
+
+  const selectedRoleId = parseRoleId(accountForm.roleId);
+  const isGuardianRoleSelected =
+    selectedRoleId !== null && guardianRoleIds.has(selectedRoleId);
+
+  const selectedLinkedStudent = useMemo(() => {
+    const studentId = parseRoleId(accountForm.linkedStudentId);
+    if (!studentId) {
+      return null;
+    }
+
+    return studentLookupItems.find((item) => item.id === studentId) || null;
+  }, [accountForm.linkedStudentId, studentLookupItems]);
+
+  const loadStudentLookup = useCallback(async () => {
+    if (!authorization) {
+      return;
+    }
+
+    setIsStudentLookupLoading(true);
+    try {
+      const data = await getDynamicListByPath(
+        "/api/v1/students",
+        authorization,
+        {
+          page: 0,
+          size: 200,
+          sortBy: "studentCode",
+        },
+      );
+      setStudentLookupItems(toStudentLookupItems(data.rows));
+    } catch (error) {
+      setErrorMessage(toErrorMessage(error));
+    } finally {
+      setIsStudentLookupLoading(false);
+    }
+  }, [authorization]);
+
   const openCreateModal = () => {
     setErrorMessage("");
     setAccountModalMode("create");
@@ -227,10 +337,13 @@ export const AccountManagementPanel = ({
       password: "",
       confirmPassword: "",
       roleId: roleOptions[0] ? String(roleOptions[0].id) : "",
+      linkedStudentId: "",
       avatarUrl: "",
       desiredStatus: "ACTIVE",
     });
     setIsAccountModalOpen(true);
+
+    void loadStudentLookup();
   };
 
   const openEditModal = async (accountId: number) => {
@@ -248,6 +361,7 @@ export const AccountManagementPanel = ({
         password: "",
         confirmPassword: "",
         roleId: account.roleId ? String(account.roleId) : "",
+        linkedStudentId: "",
         avatarUrl: account.avatarUrl || "",
         desiredStatus: isAccountStatus(account.status) ? account.status : "ACTIVE",
       });
@@ -302,10 +416,33 @@ export const AccountManagementPanel = ({
     const username = accountForm.username.trim();
     const roleId = parseRoleId(accountForm.roleId);
     const avatarUrl = accountForm.avatarUrl.trim();
+    const linkedStudentId = parseRoleId(accountForm.linkedStudentId);
 
     if (!username || !roleId) {
       setErrorMessage("Vui lòng nhập username và vai trò hợp lệ.");
       return;
+    }
+
+    if (accountModalMode === "create" && guardianRoleIds.has(roleId)) {
+      if (!linkedStudentId) {
+        setErrorMessage("Tài khoản phụ huynh bắt buộc phải gắn với một sinh viên.");
+        return;
+      }
+
+      const linkedStudent =
+        studentLookupItems.find((item) => item.id === linkedStudentId) || null;
+
+      if (!linkedStudent) {
+        setErrorMessage("Không tìm thấy sinh viên đã chọn. Vui lòng tải lại danh sách.");
+        return;
+      }
+
+      if (!linkedStudent.guardianId) {
+        setErrorMessage(
+          "Sinh viên đã chọn chưa có hồ sơ phụ huynh. Vui lòng cập nhật guardianId ở tab Quản lý sinh viên trước khi tạo tài khoản phụ huynh.",
+        );
+        return;
+      }
     }
 
     if (accountModalMode === "create") {
@@ -345,7 +482,17 @@ export const AccountManagementPanel = ({
           await updateAccountStatus(created.id, accountForm.desiredStatus, authorization);
         }
 
-        setSuccessMessage(`Tạo tài khoản thành công: ${created.username}.`);
+        if (guardianRoleIds.has(roleId) && selectedLinkedStudent) {
+          const studentLabel =
+            selectedLinkedStudent.studentCode ||
+            selectedLinkedStudent.fullName ||
+            `#${selectedLinkedStudent.id}`;
+          setSuccessMessage(
+            `Tạo tài khoản phụ huynh thành công: ${created.username}. Sinh viên ràng buộc: ${studentLabel}.`,
+          );
+        } else {
+          setSuccessMessage(`Tạo tài khoản thành công: ${created.username}.`);
+        }
       } else {
         if (!accountForm.id) {
           throw new Error("Không tìm thấy ID tài khoản để cập nhật.");
@@ -719,6 +866,7 @@ export const AccountManagementPanel = ({
                     setAccountForm((prev) => ({
                       ...prev,
                       roleId: event.target.value,
+                      linkedStudentId: "",
                     }))
                   }
                 >
@@ -730,6 +878,43 @@ export const AccountManagementPanel = ({
                   ))}
                 </select>
               </label>
+
+              {accountModalMode === "create" && isGuardianRoleSelected ? (
+                <label className="space-y-1 md:col-span-2">
+                  <span className="text-sm font-semibold text-[#2c5877]">
+                    Sinh viên liên kết (bắt buộc cho phụ huynh)
+                  </span>
+                  <select
+                    className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
+                    value={accountForm.linkedStudentId}
+                    onChange={(event) =>
+                      setAccountForm((prev) => ({
+                        ...prev,
+                        linkedStudentId: event.target.value,
+                      }))
+                    }
+                    disabled={isStudentLookupLoading}
+                  >
+                    <option value="">
+                      {isStudentLookupLoading ? "Đang tải danh sách..." : "Chọn sinh viên"}
+                    </option>
+                    {studentLookupItems.map((student) => (
+                      <option key={student.id} value={String(student.id)}>
+                        {[
+                          student.studentCode,
+                          student.fullName,
+                          `ID ${student.id}`,
+                        ]
+                          .filter(Boolean)
+                          .join(" - ")}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-[#4f6b7f]">
+                    Hệ thống yêu cầu chọn sinh viên để đảm bảo account phụ huynh được tạo đúng ngữ cảnh quản lý.
+                  </p>
+                </label>
+              ) : null}
 
               <label className="space-y-1">
                 <span className="text-sm font-semibold text-[#2c5877]">
@@ -917,9 +1102,6 @@ export const AccountManagementPanel = ({
     </section>
   );
 };
-
-
-
 
 
 

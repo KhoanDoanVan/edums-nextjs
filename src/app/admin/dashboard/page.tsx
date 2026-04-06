@@ -104,6 +104,17 @@ const semesterStatusOptions = [
   { value: "FINISHED"},
 ] as const;
 
+const guardianRelationshipOptions = [
+  { value: "Cha", label: "Cha" },
+  { value: "Mẹ", label: "Mẹ" },
+  { value: "Ông", label: "Ông" },
+  { value: "Bà", label: "Bà" },
+  { value: "Anh/Chị", label: "Anh/Chị" },
+  { value: "Cô/Chú/Bác", label: "Cô/Chú/Bác" },
+  { value: "Người giám hộ", label: "Người giám hộ" },
+  { value: "Khác", label: "Khác" },
+] as const;
+
 const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> = {
   semesters: {
     title: "Danh sách học kỳ",
@@ -538,6 +549,15 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
       placeOfBirth: "",
       nationality: "VN",
     },
+    fieldConfigs: {
+      gender: {
+        options: [
+          { value: "true", label: "Nam" },
+          { value: "false", label: "Nữ" },
+        ],
+        helperText: "Giới tính được lưu dạng boolean: Nam = true, Nữ = false.",
+      },
+    },
     statusPatch: {
       fieldName: "status",
       pathSuffix: "/status",
@@ -582,6 +602,32 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
       fullName: "",
       phone: "",
       relationship: "",
+    },
+    fieldConfigs: {
+      relationship: {
+        options: ({ currentRow, formPayload }) => {
+          const currentValue =
+            (typeof formPayload.relationship === "string" &&
+              formPayload.relationship.trim()) ||
+            (typeof currentRow?.relationship === "string" &&
+              currentRow.relationship.trim()) ||
+            "";
+
+          if (!currentValue) {
+            return [...guardianRelationshipOptions];
+          }
+
+          const exists = guardianRelationshipOptions.some(
+            (option) => option.value.toLowerCase() === currentValue.toLowerCase(),
+          );
+          if (exists) {
+            return [...guardianRelationshipOptions];
+          }
+
+          return [{ value: currentValue, label: `${currentValue} (hiện tại)` }, ...guardianRelationshipOptions];
+        },
+        helperText: "Chọn mối quan hệ từ danh sách để dữ liệu phụ huynh đồng nhất.",
+      },
     },
   },
   "course-sections": {

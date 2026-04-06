@@ -10,6 +10,7 @@ import type {
   AdmissionBlockUpsertPayload,
   AdmissionBulkReviewPayload,
   AdmissionOnboardingPayload,
+  AdmissionApplicationSearchFilter,
   AdmissionPeriodUpsertPayload,
   AdmissionReviewPayload,
   AdmissionSelectionOptions,
@@ -610,11 +611,16 @@ export const getAdmissionBenchmarks = async (
 
 export const getAdmissionApplications = async (
   authorization: string,
+  filter: AdmissionApplicationSearchFilter = {},
 ): Promise<PagedRows<ApplicationListItem>> => {
   const data = await getRequest<unknown>(
     `/api/v1/admin/admissions/applications${buildQueryString({
-      page: 0,
-      size: 20,
+      keyword: filter.keyword,
+      periodId: filter.periodId,
+      majorId: filter.majorId,
+      status: filter.status,
+      page: filter.page ?? 0,
+      size: filter.size ?? 20,
     })}`,
     authorization,
   );

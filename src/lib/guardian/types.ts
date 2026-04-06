@@ -12,6 +12,7 @@ export interface GuardianFeatureTab {
 
 export interface GuardianStudentItem {
   id?: number;
+  guardianId?: number;
   studentCode?: string;
   fullName?: string;
   className?: string;

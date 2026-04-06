@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AuthGuard } from "@/components/auth/auth-guard";
 import { useAuth } from "@/context/auth-context";
 import {
@@ -10,7 +10,6 @@ import {
 } from "@/hooks/use-toast-feedback";
 import {
   getGradeReportById,
-  getGuardianById,
   getGuardianStudentAttendances,
   getMyProfile,
   getStudentById,
@@ -42,6 +41,27 @@ const normalizeTextValue = (value?: string): string => {
   return String(value || "")
     .replace(/\s+/g, " ")
     .trim();
+};
+
+const decodeJwtPayload = (token?: string): Record<string, unknown> => {
+  if (!token) {
+    return {};
+  }
+
+  const parts = token.split(".");
+  if (parts.length < 2) {
+    return {};
+  }
+
+  try {
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+    const decoded = atob(padded);
+    const parsed = JSON.parse(decoded);
+    return isObject(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
 };
 
 const parsePositiveInteger = (value: string): number | null => {
@@ -116,6 +136,7 @@ const toGuardianStudentItem = (value: unknown): GuardianStudentItem | null => {
 
   const student: GuardianStudentItem = {
     id: pickNumber(value, ["id", "studentId"]),
+    guardianId: pickNumber(value, ["guardianId", "parentId"]),
     studentCode: pickText(value, ["studentCode", "code"]),
     fullName: pickText(value, ["fullName", "studentName", "name"]),
     className: pickText(value, ["className", "administrativeClassName"]),
@@ -152,6 +173,7 @@ const dedupeStudents = (items: GuardianStudentItem[]): GuardianStudentItem[] => 
       ...previous,
       ...item,
       id: item.id || previous.id,
+      guardianId: item.guardianId || previous.guardianId,
       studentCode: item.studentCode || previous.studentCode,
       fullName: item.fullName || previous.fullName,
       className: item.className || previous.className,
@@ -208,14 +230,19 @@ const parseGuardianProfile = (
     ...profileRaw,
     ...guardianRaw,
   };
+  const students = extractStudentsFromGuardian(merged);
+  const profileGuardianId =
+    pickNumber(merged, ["guardianId", "guardianID", "parentId", "profileId"]) ??
+    students.find((item) => typeof item.guardianId === "number")?.guardianId ??
+    pickNumber(merged, ["id"]);
 
   return {
-    id: pickNumber(merged, ["id", "guardianId"]),
+    id: profileGuardianId,
     fullName: pickText(merged, ["fullName", "guardianName", "name"]),
     phone: pickText(merged, ["phone", "phoneNumber"]),
     relationship: pickText(merged, ["relationship"]),
     address: pickText(merged, ["address"]),
-    students: extractStudentsFromGuardian(merged),
+    students,
     raw: merged,
   };
 };
@@ -326,7 +353,7 @@ export default function GuardianDashboardPage() {
   const [tabError, setTabError] = useState("");
   const [tabMessage, setTabMessage] = useState("");
 
-  const [guardianIdInput, setGuardianIdInput] = useState("");
+  const [hasAutoLoadedProfile, setHasAutoLoadedProfile] = useState(false);
   const [guardianProfile, setGuardianProfile] = useState<GuardianProfileResponse | null>(
     null,
   );
@@ -375,7 +402,6 @@ export default function GuardianDashboardPage() {
     [activeTabKey],
   );
 
-  const guardianIdValue = parsePositiveInteger(guardianIdInput);
   const selectedStudentIdValue = parsePositiveInteger(selectedStudentId);
 
   const selectedStudent = useMemo(() => {
@@ -395,6 +421,18 @@ export default function GuardianDashboardPage() {
       id: selectedStudentIdValue,
     } as GuardianStudentItem;
   }, [guardianProfile, selectedStudentIdValue, studentDetailsById]);
+
+  const selectableStudents = useMemo(
+    () =>
+      (guardianProfile?.students || []).filter(
+        (
+          student,
+        ): student is GuardianStudentItem & {
+          id: number;
+        } => typeof student.id === "number" && student.id > 0,
+      ),
+    [guardianProfile?.students],
+  );
 
   const attendanceDateRangeInvalid =
     attendanceDateFrom &&
@@ -511,12 +549,11 @@ export default function GuardianDashboardPage() {
   const isSelectedGradeReportLoading =
     selectedGradeReportId !== null && loadingGradeReportId === selectedGradeReportId;
 
-  const handleLoadGuardianProfile = async () => {
+  const handleLoadGuardianProfile = useCallback(async () => {
     const authorization = session?.authorization;
-    const guardianId = parsePositiveInteger(guardianIdInput);
 
-    if (!authorization || !guardianId) {
-      setTabError("Vui lòng nhập mã phụ huynh hợp lệ.");
+    if (!authorization) {
+      setTabError("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
       return;
     }
 
@@ -525,53 +562,105 @@ export default function GuardianDashboardPage() {
     setTabMessage("");
 
     try {
-      const [guardianRaw, myProfileRaw] = await Promise.all([
-        getGuardianById(guardianId, authorization),
-        getMyProfile(authorization).catch(() => ({})),
-      ]);
+      let myProfileRaw: Record<string, unknown> = {};
+      let profileRequestError = "";
+      const jwtPayload = decodeJwtPayload(session?.token);
 
-      const parsedProfile = parseGuardianProfile(guardianRaw, myProfileRaw);
-      const students = parsedProfile.students;
+      try {
+        myProfileRaw = await getMyProfile(authorization);
+      } catch (error) {
+        profileRequestError = toErrorMessage(error, "Không thể tải hồ sơ đăng nhập.");
+      }
 
-      setGuardianProfile(parsedProfile);
-      setSelectedStudentId(students.length > 0 && students[0].id ? String(students[0].id) : "");
+      if (Object.keys(myProfileRaw).length === 0 && profileRequestError) {
+        throw new Error(profileRequestError);
+      }
+
+      const parsedProfile = parseGuardianProfile({}, myProfileRaw);
+      const profileGuardianId =
+        parsedProfile.id ??
+        pickNumber(myProfileRaw, ["guardianId", "guardianID", "parentId", "profileId"]) ??
+        pickNumber(jwtPayload, ["guardianId", "guardianID", "parentId", "profileId"]) ??
+        parsedProfile.students.find((item) => typeof item.guardianId === "number")?.guardianId;
+      const normalizedProfile: GuardianProfileResponse = {
+        ...parsedProfile,
+        id: profileGuardianId,
+      };
+      const students = normalizedProfile.students;
+      const defaultStudentId =
+        students.find((item) => typeof item.id === "number" && item.id > 0)?.id ??
+        undefined;
+
+      setGuardianProfile(normalizedProfile);
+      setSelectedStudentId(defaultStudentId ? String(defaultStudentId) : "");
       setAttendanceItems([]);
       setGradeReports([]);
       setSelectedGradeReportId(null);
+      setGradeReportDetailsById({});
+      setStudentDetailsById({});
       setTabMessage(
         students.length > 0
           ? `Đã tải hồ sơ phụ huynh và ${students.length} học sinh liên kết.`
           : "Đã tải hồ sơ phụ huynh. Hiện chưa thấy học sinh liên kết trong dữ liệu.",
       );
+
+      if (profileRequestError) {
+        setTabMessage(
+          students.length > 0
+            ? `Đã tải hồ sơ phụ huynh (fallback, bỏ qua lỗi /profile/me) và ${students.length} học sinh liên kết.`
+            : "Đã tải hồ sơ phụ huynh theo chế độ fallback (bỏ qua lỗi /profile/me).",
+        );
+      }
+
+      if (!profileGuardianId) {
+        setTabError(
+          "Không xác định được mã hồ sơ phụ huynh từ phiên đăng nhập. Một số API như điểm danh có thể chưa dùng được.",
+        );
+      }
     } catch (error) {
       setGuardianProfile(null);
       setSelectedStudentId("");
       setAttendanceItems([]);
       setGradeReports([]);
       setSelectedGradeReportId(null);
+      setGradeReportDetailsById({});
+      setStudentDetailsById({});
       setTabError(toErrorMessage(error, "Không thể tải hồ sơ phụ huynh."));
     } finally {
       setIsGuardianLoading(false);
     }
-  };
+  }, [session?.authorization, session?.token]);
 
   useEffect(() => {
-    if (!session?.accountId) {
+    setHasAutoLoadedProfile(false);
+    setGuardianProfile(null);
+    setSelectedStudentId("");
+    setStudentDetailsById({});
+    setAttendanceItems([]);
+    setGradeReports([]);
+    setSelectedGradeReportId(null);
+    setGradeReportDetailsById({});
+    setTabError("");
+    setTabMessage("");
+  }, [session?.authorization]);
+
+  useEffect(() => {
+    if (!session?.authorization) {
       return;
     }
 
-    if (!guardianIdInput) {
-      setGuardianIdInput(String(session.accountId));
-    }
-  }, [guardianIdInput, session?.accountId]);
-
-  useEffect(() => {
-    if (!session?.authorization || !guardianIdInput || guardianProfile || isGuardianLoading) {
+    if (hasAutoLoadedProfile || isGuardianLoading) {
       return;
     }
 
+    setHasAutoLoadedProfile(true);
     void handleLoadGuardianProfile();
-  }, [guardianIdInput, guardianProfile, isGuardianLoading, session?.authorization]);
+  }, [
+    handleLoadGuardianProfile,
+    hasAutoLoadedProfile,
+    isGuardianLoading,
+    session?.authorization,
+  ]);
 
   useEffect(() => {
     if (!session?.authorization || !selectedStudentIdValue) {
@@ -629,7 +718,7 @@ export default function GuardianDashboardPage() {
     }
 
     const authorization = session?.authorization;
-    const guardianId = guardianIdValue;
+    const guardianId = guardianProfile?.id;
     const studentId = selectedStudentIdValue;
 
     if (!authorization || !guardianId || !studentId) {
@@ -676,7 +765,7 @@ export default function GuardianDashboardPage() {
     };
   }, [
     activeTabKey,
-    guardianIdValue,
+    guardianProfile?.id,
     selectedStudentIdValue,
     session?.authorization,
   ]);
@@ -818,13 +907,13 @@ export default function GuardianDashboardPage() {
               </div>
             </div>
 
-            <div className="grid gap-3 px-4 py-3 md:grid-cols-[220px_auto]">
-              <input
-                className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
-                value={guardianIdInput}
-                onChange={(event) => setGuardianIdInput(event.target.value)}
-                placeholder="Mã phụ huynh"
-              />
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+              <div className="rounded-[6px] border border-[#dbe7f1] bg-[#f7fbff] px-3 py-2 text-sm text-[#355970]">
+                <span className="text-[#69849a]">Mã phụ huynh:</span>{" "}
+                <span className="font-semibold text-[#1f567b]">
+                  {guardianProfile?.id || "-"}
+                </span>
+              </div>
               <button
                 type="button"
                 onClick={() => {
@@ -833,7 +922,7 @@ export default function GuardianDashboardPage() {
                 disabled={isGuardianLoading}
                 className="h-10 rounded-[6px] bg-[#0d6ea6] px-4 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
               >
-                {isGuardianLoading ? "Đang tải..." : "Tải hồ sơ phụ huynh"}
+                {isGuardianLoading ? "Đang tải..." : "Làm mới dữ liệu phụ huynh"}
               </button>
             </div>
 
@@ -966,13 +1055,13 @@ export default function GuardianDashboardPage() {
                     value={selectedStudentId}
                     onChange={(event) => setSelectedStudentId(event.target.value)}
                     className="h-10 rounded-[6px] border border-[#c8d3dd] bg-white px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
-                    disabled={(guardianProfile?.students || []).length === 0}
+                    disabled={selectableStudents.length === 0}
                   >
-                    {(guardianProfile?.students || []).length === 0 ? (
-                      <option value="">Chưa có học sinh</option>
+                    {selectableStudents.length === 0 ? (
+                      <option value="">Chưa có học sinh có mã hợp lệ</option>
                     ) : null}
-                    {(guardianProfile?.students || []).map((student) => (
-                      <option key={student.id || student.studentCode} value={student.id || ""}>
+                    {selectableStudents.map((student) => (
+                      <option key={student.id} value={student.id}>
                         {student.studentCode
                           ? `${student.studentCode} - ${student.fullName || "Học sinh"}`
                           : student.fullName || `Học sinh #${student.id}`}
@@ -1129,13 +1218,13 @@ export default function GuardianDashboardPage() {
                     value={selectedStudentId}
                     onChange={(event) => setSelectedStudentId(event.target.value)}
                     className="h-10 rounded-[6px] border border-[#c8d3dd] bg-white px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
-                    disabled={(guardianProfile?.students || []).length === 0}
+                    disabled={selectableStudents.length === 0}
                   >
-                    {(guardianProfile?.students || []).length === 0 ? (
-                      <option value="">Chưa có học sinh</option>
+                    {selectableStudents.length === 0 ? (
+                      <option value="">Chưa có học sinh có mã hợp lệ</option>
                     ) : null}
-                    {(guardianProfile?.students || []).map((student) => (
-                      <option key={student.id || student.studentCode} value={student.id || ""}>
+                    {selectableStudents.map((student) => (
+                      <option key={student.id} value={student.id}>
                         {student.studentCode
                           ? `${student.studentCode} - ${student.fullName || "Học sinh"}`
                           : student.fullName || `Học sinh #${student.id}`}

@@ -123,8 +123,11 @@ export interface BenchmarkListItem {
   id: number;
   score?: number;
   majorName?: string;
+  majorId?: number;
   blockName?: string;
+  blockId?: number;
   periodName?: string;
+  periodId?: number;
 }
 
 export interface ApplicationListItem {
@@ -151,6 +154,15 @@ export type AdmissionApplicationStatus =
   | "APPROVED"
   | "ENROLLED"
   | "REJECTED";
+
+export interface AdmissionApplicationSearchFilter {
+  keyword?: string;
+  periodId?: number;
+  majorId?: number;
+  status?: AdmissionApplicationStatus;
+  page?: number;
+  size?: number;
+}
 
 export type AdmissionPeriodStatus = "UPCOMING" | "PAUSED" | "OPEN" | "CLOSED";
 
