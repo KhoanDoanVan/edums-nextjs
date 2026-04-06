@@ -135,11 +135,18 @@ function LoginPageContent() {
         </button>
 
         <Link
-          href="/admissions"
+          href="/apply"
           className="flex h-10 w-full items-center justify-center gap-2 rounded-[4px] bg-[#0d6ea6] text-lg font-semibold text-white transition hover:bg-[#085d90]"
         >
           <BellIcon className="h-4 w-4 text-[#ef2e2e]" />
-          <span>Tuyển sinh công khai</span>
+          <span>Nộp hồ sơ tuyển sinh</span>
+        </Link>
+
+        <Link
+          href="/admissions"
+          className="flex h-10 w-full items-center justify-center gap-2 rounded-[4px] border border-[#9ec3dd] bg-white text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd]"
+        >
+          <span>Tra cứu hồ sơ tuyển sinh</span>
         </Link>
       </form>
     </AuthPageShell>

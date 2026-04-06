@@ -25,8 +25,10 @@ const toObjectRows = (value: unknown): Record<string, unknown>[] => {
   return value.filter((item): item is Record<string, unknown> => isObject(item));
 };
 
-const resolveOptionId = (row: Record<string, unknown>): number | null => {
-  const candidates = ["id", "periodId", "majorId", "blockId", "value"];
+const resolveOptionId = (
+  row: Record<string, unknown>,
+  candidates: string[],
+): number | null => {
   for (const key of candidates) {
     const parsed = Number(row[key]);
     if (Number.isInteger(parsed) && parsed > 0) {
@@ -37,49 +39,88 @@ const resolveOptionId = (row: Record<string, unknown>): number | null => {
   return null;
 };
 
-const resolveOptionLabel = (
-  row: Record<string, unknown>,
-  fallbackPrefix: string,
-  id: number,
-): string => {
-  const candidates = [
-    "label",
-    "name",
-    "periodName",
-    "majorName",
-    "blockName",
-    "code",
-    "majorCode",
-    "blockCode",
-  ];
-
-  const parts = candidates
-    .map((key) => row[key])
-    .filter((item): item is string => typeof item === "string" && item.trim().length > 0);
-
-  if (parts.length > 0) {
-    return parts.join(" - ");
-  }
-
-  return `${fallbackPrefix} #${id}`;
+const toPublicSelectRows = (value: unknown): Record<string, unknown>[] => {
+  return toObjectRows(unwrapApiData<unknown>(value));
 };
 
-const toSelectOptions = (
-  value: unknown,
-  fallbackPrefix: string,
-): PublicSelectOption[] => {
-  const rows = toObjectRows(unwrapApiData<unknown>(value));
+const toActivePeriodOptions = (value: unknown): PublicSelectOption[] => {
+  const rows = toPublicSelectRows(value);
 
   return rows
     .map((row) => {
-      const id = resolveOptionId(row);
+      const id = resolveOptionId(row, ["id", "periodId", "value"]);
       if (!id) {
         return null;
       }
 
+      const periodName =
+        typeof row.periodName === "string" && row.periodName.trim()
+          ? row.periodName.trim()
+          : typeof row.name === "string" && row.name.trim()
+            ? row.name.trim()
+            : `Kỳ #${id}`;
+
       return {
         id,
-        label: resolveOptionLabel(row, fallbackPrefix, id),
+        label: periodName,
+        raw: row,
+      };
+    })
+    .filter((item): item is PublicSelectOption => item !== null);
+};
+
+const toMajorOptions = (value: unknown): PublicSelectOption[] => {
+  const rows = toPublicSelectRows(value);
+
+  return rows
+    .map((row) => {
+      const id = resolveOptionId(row, ["id", "majorId", "value"]);
+      if (!id) {
+        return null;
+      }
+
+      const majorName =
+        typeof row.majorName === "string" && row.majorName.trim()
+          ? row.majorName.trim()
+          : typeof row.name === "string" && row.name.trim()
+            ? row.name.trim()
+            : `Ngành #${id}`;
+      const majorCode =
+        typeof row.majorCode === "string" && row.majorCode.trim()
+          ? row.majorCode.trim()
+          : typeof row.code === "string" && row.code.trim()
+            ? row.code.trim()
+            : "";
+
+      return {
+        id,
+        label: majorCode ? `${majorName} - ${majorCode}` : majorName,
+        raw: row,
+      };
+    })
+    .filter((item): item is PublicSelectOption => item !== null);
+};
+
+const toBlockOptions = (value: unknown): PublicSelectOption[] => {
+  const rows = toObjectRows(unwrapApiData<unknown>(value));
+
+  return rows
+    .map((row) => {
+      const id = resolveOptionId(row, ["id", "blockId", "value"]);
+      if (!id) {
+        return null;
+      }
+
+      const blockName =
+        typeof row.blockName === "string" && row.blockName.trim()
+          ? row.blockName.trim()
+          : typeof row.name === "string" && row.name.trim()
+            ? row.name.trim()
+            : `Khối #${id}`;
+
+      return {
+        id,
+        label: blockName,
         raw: row,
       };
     })
@@ -91,7 +132,7 @@ export const getPublicAdmissionActivePeriods = async (): Promise<PublicSelectOpt
     method: "GET",
   });
 
-  return toSelectOptions(response, "Kỳ");
+  return toActivePeriodOptions(response);
 };
 
 export const getPublicAdmissionMajorsByPeriod = async (
@@ -104,7 +145,7 @@ export const getPublicAdmissionMajorsByPeriod = async (
     },
   );
 
-  return toSelectOptions(response, "Ngành");
+  return toMajorOptions(response);
 };
 
 export const getPublicAdmissionBlocksByPeriodMajor = async (
@@ -118,7 +159,7 @@ export const getPublicAdmissionBlocksByPeriodMajor = async (
     },
   );
 
-  return toSelectOptions(response, "Khối");
+  return toBlockOptions(response);
 };
 
 export const lookupPublicAdmissions = async (

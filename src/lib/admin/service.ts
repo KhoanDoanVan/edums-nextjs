@@ -45,21 +45,95 @@ const toArray = <TItem>(value: unknown): TItem[] => {
 };
 
 const toPagedRows = <TItem>(value: unknown): PagedRows<TItem> => {
+  if (Array.isArray(value)) {
+    return { rows: value as TItem[] };
+  }
+
   if (value && typeof value === "object") {
-    const payload = value as {
+    const root = value as {
       page?: number;
+      pageNumber?: number;
+      number?: number;
       size?: number;
+      pageSize?: number;
       totalElements?: number;
+      totalItems?: number;
+      total?: number;
       totalPages?: number;
       data?: unknown;
+      content?: unknown;
+      items?: unknown;
+      rows?: unknown;
     };
 
+    const nested =
+      root.data && typeof root.data === "object"
+        ? (root.data as {
+            page?: number;
+            pageNumber?: number;
+            number?: number;
+            size?: number;
+            pageSize?: number;
+            totalElements?: number;
+            totalItems?: number;
+            total?: number;
+            totalPages?: number;
+            data?: unknown;
+            content?: unknown;
+            items?: unknown;
+            rows?: unknown;
+          })
+        : null;
+
+    const rowsFromRootData = toArray<TItem>(root.data);
+    const rowsFromRootContent = toArray<TItem>(root.content);
+    const rowsFromRootItems = toArray<TItem>(root.items);
+    const rowsFromRootRows = toArray<TItem>(root.rows);
+    const rowsFromNestedData = nested ? toArray<TItem>(nested.data) : [];
+    const rowsFromNestedContent = nested ? toArray<TItem>(nested.content) : [];
+    const rowsFromNestedItems = nested ? toArray<TItem>(nested.items) : [];
+    const rowsFromNestedRows = nested ? toArray<TItem>(nested.rows) : [];
+
+    const rows =
+      rowsFromRootData.length > 0
+        ? rowsFromRootData
+        : rowsFromRootContent.length > 0
+          ? rowsFromRootContent
+          : rowsFromRootItems.length > 0
+            ? rowsFromRootItems
+            : rowsFromRootRows.length > 0
+              ? rowsFromRootRows
+              : rowsFromNestedData.length > 0
+                ? rowsFromNestedData
+                : rowsFromNestedContent.length > 0
+                  ? rowsFromNestedContent
+                  : rowsFromNestedItems.length > 0
+                    ? rowsFromNestedItems
+                    : rowsFromNestedRows;
+
+    const page =
+      root.page ??
+      root.pageNumber ??
+      root.number ??
+      nested?.page ??
+      nested?.pageNumber ??
+      nested?.number;
+    const size = root.size ?? root.pageSize ?? nested?.size ?? nested?.pageSize;
+    const totalElements =
+      root.totalElements ??
+      root.totalItems ??
+      root.total ??
+      nested?.totalElements ??
+      nested?.totalItems ??
+      nested?.total;
+    const totalPages = root.totalPages ?? nested?.totalPages;
+
     return {
-      page: payload.page,
-      size: payload.size,
-      totalElements: payload.totalElements,
-      totalPages: payload.totalPages,
-      rows: toArray<TItem>(payload.data),
+      page,
+      size,
+      totalElements,
+      totalPages,
+      rows,
     };
   }
 
@@ -621,6 +695,8 @@ export const getAdmissionApplications = async (
       status: filter.status,
       page: filter.page ?? 0,
       size: filter.size ?? 20,
+      sortBy: filter.sortBy,
+      sortDirection: filter.sortDirection,
     })}`,
     authorization,
   );

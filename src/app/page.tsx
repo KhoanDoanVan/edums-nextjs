@@ -19,7 +19,7 @@ export default function RootPage() {
       return;
     }
 
-    router.replace("/login");
+    router.replace("/apply");
   }, [isAuthenticated, router, session, status]);
 
   return (

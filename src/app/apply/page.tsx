@@ -2,20 +2,15 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import {
-  shouldHideFeedbackMessage,
-  useToastFeedback,
-} from "@/hooks/use-toast-feedback";
+import { useToastFeedback } from "@/hooks/use-toast-feedback";
 import {
   getPublicAdmissionActivePeriods,
   getPublicAdmissionBlocksByPeriodMajor,
   getPublicAdmissionMajorsByPeriod,
-  lookupPublicAdmissions,
   submitPublicAdmissionApplication,
 } from "@/lib/public-admission/service";
 import type {
   PublicAdmissionApplyPayload,
-  PublicLookupResult,
   PublicSelectOption,
 } from "@/lib/public-admission/types";
 
@@ -24,80 +19,7 @@ const toErrorMessage = (error: unknown): string => {
     return error.message;
   }
 
-  return "Thao tác thất bại. Vui lòng thử lại.";
-};
-
-const isObject = (value: unknown): value is Record<string, unknown> => {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-};
-
-const parseLookupApiErrorMessage = (error: unknown): string | null => {
-  if (!(error instanceof Error) || !error.message) {
-    return null;
-  }
-
-  const message = error.message;
-  const jsonStart = message.indexOf("{");
-  const jsonEnd = message.lastIndexOf("}");
-  if (jsonStart < 0 || jsonEnd <= jsonStart) {
-    if (/\[API 400]/i.test(message)) {
-      return "Không tìm thấy hồ sơ phù hợp với CCCD và số điện thoại đã nhập.";
-    }
-    return null;
-  }
-
-  try {
-    const payload = JSON.parse(message.slice(jsonStart, jsonEnd + 1)) as unknown;
-    if (!isObject(payload)) {
-      return /\[API 400]/i.test(message)
-        ? "Không tìm thấy hồ sơ phù hợp với CCCD và số điện thoại đã nhập."
-        : null;
-    }
-
-    const data = payload.data;
-    if (isObject(data)) {
-      const entries = Object.entries(data)
-        .map(([field, detail]) => {
-          if (typeof detail !== "string" || !detail.trim()) {
-            return null;
-          }
-
-          const labels: Record<string, string> = {
-            nationalId: "CCCD",
-            phone: "Số điện thoại",
-          };
-          return `${labels[field] || field}: ${detail.trim()}`;
-        })
-        .filter((item): item is string => item !== null);
-
-      if (entries.length > 0) {
-        return entries.join(" | ");
-      }
-    }
-
-    const payloadMessage =
-      typeof payload.message === "string" ? payload.message.trim() : "";
-    if (payloadMessage) {
-      const normalizedMessage = payloadMessage.toLowerCase();
-      if (
-        normalizedMessage.includes("không có") ||
-        normalizedMessage.includes("not found")
-      ) {
-        return "Không tìm thấy hồ sơ phù hợp với CCCD và số điện thoại đã nhập.";
-      }
-      return payloadMessage;
-    }
-
-    if (/\[API 400]/i.test(message)) {
-      return "Không tìm thấy hồ sơ phù hợp với CCCD và số điện thoại đã nhập.";
-    }
-  } catch {
-    if (/\[API 400]/i.test(message)) {
-      return "Không tìm thấy hồ sơ phù hợp với CCCD và số điện thoại đã nhập.";
-    }
-  }
-
-  return null;
+  return "Nộp hồ sơ thất bại. Vui lòng thử lại.";
 };
 
 const emptyApplyForm = {
@@ -113,29 +35,170 @@ const emptyApplyForm = {
 const nationalIdRegex = /^\d{12}$/;
 const phoneRegex = /^(0[35789])[0-9]{8}$/;
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const apiStatusPattern = /\[API (\d{3})]/i;
 
-const admissionStatusLabels: Record<string, string> = {
-  PENDING: "Chờ duyệt",
-  APPROVED: "Đã duyệt",
-  ENROLLED: "Đã nhập học",
-  REJECTED: "Từ chối",
+const isObject = (value: unknown): value is Record<string, unknown> => {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 };
 
-const admissionStatusBadgeClass = (status?: string): string => {
-  switch (status) {
-    case "APPROVED":
-      return "border-[#9ccfad] bg-[#f0f9f3] text-[#1f6f3c]";
-    case "ENROLLED":
-      return "border-[#87c4e5] bg-[#edf7fd] text-[#185d85]";
-    case "REJECTED":
-      return "border-[#e4a5a5] bg-[#fff1f1] text-[#9f2f2f]";
-    case "PENDING":
-    default:
-      return "border-[#c8d3dd] bg-[#f8fafc] text-[#4a6578]";
+const normalizeMessage = (value: string): string => {
+  return value
+    .replace(/^Error:\s*/i, "")
+    .replace(/^-\s*/, "")
+    .trim();
+};
+
+const parseApiJsonFromErrorMessage = (message: string): Record<string, unknown> | null => {
+  const jsonStart = message.indexOf("{");
+  const jsonEnd = message.lastIndexOf("}");
+  if (jsonStart < 0 || jsonEnd <= jsonStart) {
+    return null;
+  }
+
+  const jsonPart = message.slice(jsonStart, jsonEnd + 1);
+  try {
+    const parsed = JSON.parse(jsonPart) as unknown;
+    return isObject(parsed) ? parsed : null;
+  } catch {
+    return null;
   }
 };
 
-export default function PublicAdmissionsPage() {
+const getFieldValidationMessage = (payload: Record<string, unknown>): string | null => {
+  const data = payload.data;
+  if (!isObject(data)) {
+    return null;
+  }
+
+  const fieldLabels: Record<string, string> = {
+    fullName: "Họ và tên",
+    dateOfBirth: "Ngày sinh",
+    email: "Email",
+    phone: "Số điện thoại",
+    nationalId: "CCCD",
+    address: "Địa chỉ",
+    periodId: "Kỳ tuyển sinh",
+    majorId: "Ngành",
+    blockId: "Khối",
+    totalScore: "Tổng điểm",
+  };
+
+  const entries = Object.entries(data)
+    .map(([key, value]) => {
+      if (typeof value !== "string" || !value.trim()) {
+        return null;
+      }
+
+      const label = fieldLabels[key] || key;
+      return `${label}: ${value.trim()}`;
+    })
+    .filter((item): item is string => item !== null);
+
+  if (entries.length === 0) {
+    return null;
+  }
+
+  return entries.join(" | ");
+};
+
+const getPublicApplyBusinessMessage = (
+  rawMessage: string,
+  payload?: Record<string, unknown> | null,
+): string | null => {
+  const message = normalizeMessage(rawMessage).toLowerCase();
+  const payloadMessage =
+    payload && typeof payload.message === "string"
+      ? normalizeMessage(payload.message).toLowerCase()
+      : "";
+  const merged = `${message} ${payloadMessage}`;
+
+  if (
+    merged.includes("existsbynationalidandadmissionperiodid") ||
+    merged.includes("đã nộp") ||
+    (merged.includes("national") && merged.includes("period") && merged.includes("exist"))
+  ) {
+    return "CCCD này đã nộp hồ sơ trong kỳ tuyển sinh đã chọn.";
+  }
+
+  if (
+    merged.includes("illegal_state") ||
+    merged.includes("đợt đã đóng") ||
+    merged.includes("hết hạn") ||
+    (merged.includes("period") && (merged.includes("closed") || merged.includes("expired")))
+  ) {
+    return "Đợt tuyển sinh không còn mở hoặc đã hết hạn nộp hồ sơ.";
+  }
+
+  if (merged.includes("period") && merged.includes("not found")) {
+    return "Kỳ tuyển sinh không tồn tại.";
+  }
+
+  if (merged.includes("major") && merged.includes("not found")) {
+    return "Ngành tuyển sinh không tồn tại.";
+  }
+
+  if (
+    (merged.includes("block") || merged.includes("admission block")) &&
+    merged.includes("not found")
+  ) {
+    return "Khối xét tuyển không tồn tại.";
+  }
+
+  if (
+    merged.includes("benchmark") ||
+    merged.includes("tổ hợp") ||
+    merged.includes("combination")
+  ) {
+    return "Tổ hợp ngành - khối chưa được mở benchmark cho kỳ tuyển sinh này.";
+  }
+
+  return null;
+};
+
+const toApplyErrorMessage = (error: unknown): string => {
+  if (!(error instanceof Error) || !error.message) {
+    return "Nộp hồ sơ thất bại. Vui lòng thử lại.";
+  }
+
+  const rawMessage = error.message;
+  const payload = parseApiJsonFromErrorMessage(rawMessage);
+
+  const fieldMessage = payload ? getFieldValidationMessage(payload) : null;
+  if (fieldMessage) {
+    return fieldMessage;
+  }
+
+  const businessMessage = getPublicApplyBusinessMessage(rawMessage, payload);
+  if (businessMessage) {
+    return businessMessage;
+  }
+
+  const payloadMessage =
+    payload && typeof payload.message === "string"
+      ? normalizeMessage(payload.message)
+      : "";
+  if (payloadMessage) {
+    return payloadMessage;
+  }
+
+  const statusMatch = rawMessage.match(apiStatusPattern);
+  if (statusMatch?.[1] === "409") {
+    return "Yêu cầu bị từ chối do trạng thái dữ liệu hiện tại không hợp lệ.";
+  }
+
+  return toErrorMessage(error);
+};
+
+const findOptionLabelById = (rows: PublicSelectOption[], selectedId: string): string => {
+  if (!selectedId) {
+    return "-";
+  }
+
+  const matched = rows.find((item) => String(item.id) === selectedId);
+  return matched?.label || "-";
+};
+
+export default function PublicAdmissionApplyPage() {
   const [periodOptions, setPeriodOptions] = useState<PublicSelectOption[]>([]);
   const [majorOptions, setMajorOptions] = useState<PublicSelectOption[]>([]);
   const [blockOptions, setBlockOptions] = useState<PublicSelectOption[]>([]);
@@ -143,11 +206,7 @@ export default function PublicAdmissionsPage() {
   const [selectedPeriodId, setSelectedPeriodId] = useState("");
   const [selectedMajorId, setSelectedMajorId] = useState("");
   const [selectedBlockId, setSelectedBlockId] = useState("");
-
   const [applyForm, setApplyForm] = useState(emptyApplyForm);
-  const [lookupNationalId, setLookupNationalId] = useState("");
-  const [lookupPhone, setLookupPhone] = useState("");
-  const [lookupRows, setLookupRows] = useState<PublicLookupResult[]>([]);
 
   const [isLoadingOptions, setIsLoadingOptions] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -157,8 +216,8 @@ export default function PublicAdmissionsPage() {
   useToastFeedback({
     errorMessage,
     successMessage,
-    errorTitle: "Thao tác tuyển sinh thất bại",
-    successTitle: "Thao tác tuyển sinh thành công",
+    errorTitle: "Nộp hồ sơ tuyển sinh thất bại",
+    successTitle: "Nộp hồ sơ tuyển sinh thành công",
   });
 
   useEffect(() => {
@@ -178,7 +237,7 @@ export default function PublicAdmissionsPage() {
           if (prev && periods.some((item) => String(item.id) === prev)) {
             return prev;
           }
-          return periods[0] ? String(periods[0].id) : "";
+          return "";
         });
       } catch (error) {
         if (!cancelled) {
@@ -221,7 +280,7 @@ export default function PublicAdmissionsPage() {
           if (prev && majors.some((item) => String(item.id) === prev)) {
             return prev;
           }
-          return majors[0] ? String(majors[0].id) : "";
+          return "";
         });
       } catch (error) {
         if (!cancelled) {
@@ -271,7 +330,7 @@ export default function PublicAdmissionsPage() {
           if (prev && blocks.some((item) => String(item.id) === prev)) {
             return prev;
           }
-          return blocks[0] ? String(blocks[0].id) : "";
+          return "";
         });
       } catch (error) {
         if (!cancelled) {
@@ -305,15 +364,14 @@ export default function PublicAdmissionsPage() {
     }
 
     const birthDate = new Date(payload.dateOfBirth);
-    const now = new Date();
-    if (Number.isNaN(birthDate.getTime()) || birthDate >= now) {
+    if (Number.isNaN(birthDate.getTime()) || birthDate >= new Date()) {
       return "Ngày sinh phải là ngày trong quá khứ.";
     }
     if (!emailRegex.test(payload.email)) {
       return "Email không hợp lệ.";
     }
     if (!phoneRegex.test(payload.phone)) {
-      return "Số điện thoại không hợp lệ (đúng định dạng 03/05/07/08/09 + 8 số).";
+      return "Số điện thoại không hợp lệ (03/05/07/08/09 + 8 số).";
     }
     if (!nationalIdRegex.test(payload.nationalId)) {
       return "CCCD phải gồm đúng 12 chữ số.";
@@ -422,98 +480,67 @@ export default function PublicAdmissionsPage() {
       setIsSubmitting(true);
       await submitPublicAdmissionApplication(payload);
       setApplyForm(emptyApplyForm);
-      setSuccessMessage("Nộp hồ sơ thành công. Vui lòng theo dõi trạng thái ở phần tra cứu.");
+      setSuccessMessage("Nộp hồ sơ thành công. Vui lòng dùng mục tra cứu để theo dõi kết quả.");
     } catch (error) {
-      setErrorMessage(toErrorMessage(error));
+      setErrorMessage(toApplyErrorMessage(error));
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleLookup = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setErrorMessage("");
-    setSuccessMessage("");
-    setLookupRows([]);
-
-    const nationalId = lookupNationalId.trim();
-    const phone = lookupPhone.trim();
-
-    if (!nationalId || !phone) {
-      setErrorMessage("Vui lòng nhập đủ CCCD và số điện thoại để tra cứu.");
-      return;
-    }
-
-    if (!nationalIdRegex.test(nationalId)) {
-      setErrorMessage("CCCD tra cứu phải gồm đúng 12 chữ số.");
-      return;
-    }
-
-    if (!phoneRegex.test(phone)) {
-      setErrorMessage("Số điện thoại tra cứu không hợp lệ.");
-      return;
-    }
-
-    try {
-      setIsSubmitting(true);
-      const rows = await lookupPublicAdmissions(nationalId, phone);
-      if (rows.length === 0) {
-        setErrorMessage("Không tìm thấy hồ sơ phù hợp với CCCD và số điện thoại đã nhập.");
-        return;
-      }
-      setLookupRows(rows);
-      setSuccessMessage(`Đã tìm thấy ${rows.length} hồ sơ phù hợp.`);
-    } catch (error) {
-      const parsedLookupError = parseLookupApiErrorMessage(error);
-      setErrorMessage(parsedLookupError || toErrorMessage(error));
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+  const selectedPeriodLabel = findOptionLabelById(periodOptions, selectedPeriodId);
+  const selectedMajorLabel = findOptionLabelById(majorOptions, selectedMajorId);
+  const selectedBlockLabel = findOptionLabelById(blockOptions, selectedBlockId);
 
   return (
     <main className="min-h-screen bg-[#edf1f5] px-4 py-6">
       <div className="mx-auto w-full max-w-[1100px] space-y-4">
         <section className="rounded-[10px] border border-[#8ab3d1] bg-white shadow-[0_1px_2px_rgba(7,51,84,0.16)]">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#c5dced] px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#c5dced] px-4 py-3">
             <div>
-              <h1 className="text-[24px] font-semibold text-[#1a4f75]">Cổng tuyển sinh công khai</h1>
+              <h1 className="text-[24px] font-semibold text-[#1a4f75]">Nộp Hồ Sơ Tuyển Sinh</h1>
               <p className="mt-1 text-sm text-[#4f6d82]">
-                Nộp hồ sơ trực tuyến và tra cứu trạng thái theo CCCD + số điện thoại.
+                Cổng nộp hồ sơ công khai. Không cần đăng nhập.
               </p>
             </div>
-            <div className="flex items-center gap-2 text-sm font-semibold">
+            <div className="flex flex-wrap gap-2">
+              <Link
+                href="/admissions"
+                className="rounded-[6px] border border-[#9ec3dd] bg-white px-3 py-2 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd]"
+              >
+                Tra cứu hồ sơ
+              </Link>
               <Link
                 href="/login"
-                className="rounded-[6px] border border-[#9ec3dd] bg-white px-3 py-2 text-[#245977] transition hover:bg-[#edf6fd]"
+                className="rounded-[6px] border border-[#9ec3dd] bg-white px-3 py-2 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd]"
               >
-                Đăng nhập
+                Đăng nhập quản trị
               </Link>
             </div>
           </div>
 
-          {(errorMessage || successMessage) && (
-            <div className="space-y-2 px-4 py-3 text-sm">
-              {errorMessage ? (
-                <p className="rounded-[4px] border border-[#e8b2b2] bg-[#fff4f4] px-3 py-2 text-[#b03d3d]">
-                  {errorMessage}
-                </p>
-              ) : null}
-              {successMessage && !shouldHideFeedbackMessage(successMessage) ? (
-                <p className="rounded-[4px] border border-[#b3dbc1] bg-[#f2fbf5] px-3 py-2 text-[#2f7b4f]">
-                  {successMessage}
-                </p>
-              ) : null}
-            </div>
-          )}
-
-          <div className="grid gap-4 px-4 py-4 xl:grid-cols-2">
+          <div className="grid gap-4 px-4 py-4 lg:grid-cols-[1.6fr_1fr]">
             <section className="rounded-[8px] border border-[#c7dceb] bg-[#f8fcff] p-3">
-              <h2 className="text-base font-semibold text-[#1a4f75]">Nộp hồ sơ tuyển sinh</h2>
-              <p className="mt-1 text-xs text-[#4f6d82]">
-                Điều kiện đầu vào: CCCD 12 số, SĐT đúng định dạng Việt Nam, tổng điểm trong khoảng 0-30.
+              <p className="mb-3 rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#4f6d82]">
+                Vui lòng nhập đúng CCCD 12 số, SĐT và tổng điểm để hệ thống xét duyệt chính xác.
               </p>
-              <form className="mt-3 space-y-2" onSubmit={handleSubmitApply}>
+
+              {(errorMessage || successMessage) && (
+                <div className="mb-3 space-y-2 text-sm">
+                  {errorMessage ? (
+                    <p className="rounded-[4px] border border-[#e8b2b2] bg-[#fff4f4] px-3 py-2 text-[#b03d3d]">
+                      {errorMessage}
+                    </p>
+                  ) : null}
+                  {successMessage ? (
+                    <p className="rounded-[4px] border border-[#b3dbc1] bg-[#f2fbf5] px-3 py-2 text-[#2f7b4f]">
+                      {successMessage}
+                    </p>
+                  ) : null}
+                </div>
+              )}
+
+              <form className="space-y-2" onSubmit={handleSubmitApply}>
                 <div className="grid gap-2 sm:grid-cols-3">
                   <select
                     className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
@@ -642,88 +669,27 @@ export default function PublicAdmissionsPage() {
               </form>
             </section>
 
-            <section className="rounded-[8px] border border-[#c7dceb] bg-[#f8fcff] p-3">
-              <h2 className="text-base font-semibold text-[#1a4f75]">Tra cứu hồ sơ</h2>
-              <p className="mt-1 text-xs text-[#4f6d82]">
-                Hệ thống hỗ trợ trả nhiều hồ sơ nếu thí sinh đã nộp ở nhiều đợt tuyển sinh.
-              </p>
-              <form className="mt-3 space-y-2" onSubmit={handleLookup}>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <input
-                    className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                    placeholder="CCCD"
-                    value={lookupNationalId}
-                    onChange={(event) => setLookupNationalId(event.target.value)}
-                    inputMode="numeric"
-                    maxLength={12}
-                  />
-                  <input
-                    className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                    placeholder="Số điện thoại"
-                    value={lookupPhone}
-                    onChange={(event) => setLookupPhone(event.target.value)}
-                    inputMode="numeric"
-                    maxLength={10}
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="h-10 w-full rounded-[4px] border border-[#9ec3dd] bg-white px-3 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
-                >
-                  {isSubmitting ? "Đang tra cứu..." : "Tra cứu hồ sơ"}
-                </button>
-              </form>
-
-              <div className="mt-3 rounded-[6px] border border-[#d7e7f3] bg-white p-2 text-sm text-[#355970]">
-                <p>Periods: {periodOptions.length}</p>
-                <p>Majors: {majorOptions.length}</p>
-                <p>Blocks: {blockOptions.length}</p>
+            <section className="space-y-2 rounded-[8px] border border-[#c7dceb] bg-[#f8fcff] p-3">
+              <h2 className="text-base font-semibold text-[#1a4f75]">Thông tin đã chọn</h2>
+              <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-sm text-[#355970]">
+                <p>Kỳ tuyển sinh: {selectedPeriodLabel}</p>
+                <p>Ngành: {selectedMajorLabel}</p>
+                <p>Khối: {selectedBlockLabel}</p>
+              </div>
+              <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#4f6d82]">
+                <p>Step 1: Chọn kỳ tuyển sinh để tải danh sách ngành.</p>
+                <p>Step 2: Chọn ngành để tải danh sách khối xét tuyển.</p>
+                <p>Step 3: Khi nộp, backend sẽ kiểm tra đợt còn mở, trùng CCCD trong kỳ và benchmark tổ hợp ngành-khối.</p>
+                <p>1. Chọn kỳ tuyển sinh đang mở.</p>
+                <p>2. Chọn ngành và khối xét tuyển.</p>
+                <p>3. Điền đầy đủ thông tin cá nhân để nộp.</p>
+                <p>4. Sau khi nộp, vào mục Tra cứu hồ sơ để xem trạng thái.</p>
               </div>
 
-              <div className="mt-3 overflow-x-auto">
-                <table className="min-w-full text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-[#cfdfec] text-[#305970]">
-                      <th className="px-2 py-2">Họ tên</th>
-                      <th className="px-2 py-2">CCCD</th>
-                      <th className="px-2 py-2">Trạng thái</th>
-                      <th className="px-2 py-2">Kỳ</th>
-                      <th className="px-2 py-2">Ngành</th>
-                      <th className="px-2 py-2">Khối</th>
-                      <th className="px-2 py-2">Điểm</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {lookupRows.map((item, index) => (
-                      <tr
-                        key={`lookup-row-${index + 1}`}
-                        className="border-b border-[#e0ebf4] text-[#3f6178]"
-                      >
-                        <td className="px-2 py-2">{item.fullName || "-"}</td>
-                        <td className="px-2 py-2">{item.nationalId || "-"}</td>
-                        <td className="px-2 py-2">
-                          <span
-                            className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold ${admissionStatusBadgeClass(item.status)}`}
-                          >
-                            {item.status ? admissionStatusLabels[item.status] || item.status : "-"}
-                          </span>
-                        </td>
-                        <td className="px-2 py-2">{item.periodName || "-"}</td>
-                        <td className="px-2 py-2">{item.majorName || "-"}</td>
-                        <td className="px-2 py-2">{item.blockName || "-"}</td>
-                        <td className="px-2 py-2">{item.totalScore ?? "-"}</td>
-                      </tr>
-                    ))}
-                    {lookupRows.length === 0 ? (
-                      <tr>
-                        <td colSpan={7} className="px-2 py-3 text-center text-[#577086]">
-                          Chưa có dữ liệu tra cứu.
-                        </td>
-                      </tr>
-                    ) : null}
-                  </tbody>
-                </table>
+              <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#4f6d82]">
+                <p>Số kỳ đang mở public: {periodOptions.length}</p>
+                <p>Số ngành theo kỳ đã chọn: {majorOptions.length}</p>
+                <p>Số khối theo ngành đã chọn: {blockOptions.length}</p>
               </div>
             </section>
           </div>
