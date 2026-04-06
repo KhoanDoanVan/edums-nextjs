@@ -1390,7 +1390,7 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
           <table className="min-w-full text-left text-sm">
             <thead>
               <tr className="border-b border-[#cfdfec] text-[#305970]">
-                <th className="px-2 py-2">ID</th>
+                <th className="px-2 py-2">STT</th>
                 <th className="px-2 py-2">Ten ky</th>
                 <th className="px-2 py-2">Bat dau</th>
                 <th className="px-2 py-2">Ket thuc</th>
@@ -1400,9 +1400,9 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
               </tr>
             </thead>
             <tbody>
-              {admissionPeriods.rows.map((item) => (
+              {admissionPeriods.rows.map((item, index) => (
                 <tr key={item.id} className="border-b border-[#e0ebf4] text-[#3f6178]">
-                  <td className="px-2 py-2">{item.id}</td>
+                  <td className="px-2 py-2">{index + 1}</td>
                   <td className="px-2 py-2">{item.periodName || "-"}</td>
                   <td className="px-2 py-2">{formatDateTime(item.startTime)}</td>
                   <td className="px-2 py-2">{formatDateTime(item.endTime)}</td>
@@ -1432,15 +1432,15 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
           <table className="min-w-full text-left text-sm">
             <thead>
               <tr className="border-b border-[#cfdfec] text-[#305970]">
-                <th className="px-2 py-2">ID</th>
+                <th className="px-2 py-2">STT</th>
                 <th className="px-2 py-2">Block</th>
                 <th className="px-2 py-2">Description</th>
               </tr>
             </thead>
             <tbody>
-              {admissionBlocks.map((item) => (
+              {admissionBlocks.map((item, index) => (
                 <tr key={item.id} className="border-b border-[#e0ebf4] text-[#3f6178]">
-                  <td className="px-2 py-2">{item.id}</td>
+                  <td className="px-2 py-2">{index + 1}</td>
                   <td className="px-2 py-2">{item.blockName || "-"}</td>
                   <td className="px-2 py-2">{item.description || "-"}</td>
                 </tr>
@@ -1466,7 +1466,7 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
           <table className="min-w-full text-left text-sm">
             <thead>
               <tr className="border-b border-[#cfdfec] text-[#305970]">
-                <th className="px-2 py-2">ID</th>
+                <th className="px-2 py-2">STT</th>
                 <th className="px-2 py-2">Nganh</th>
                 <th className="px-2 py-2">Block</th>
                 <th className="px-2 py-2">Period</th>
@@ -1474,9 +1474,9 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
               </tr>
             </thead>
             <tbody>
-              {admissionBenchmarks.rows.map((item) => (
+              {admissionBenchmarks.rows.map((item, index) => (
                 <tr key={item.id} className="border-b border-[#e0ebf4] text-[#3f6178]">
-                  <td className="px-2 py-2">{item.id}</td>
+                  <td className="px-2 py-2">{index + 1}</td>
                   <td className="px-2 py-2">{item.majorName || "-"}</td>
                   <td className="px-2 py-2">{item.blockName || "-"}</td>
                   <td className="px-2 py-2">{item.periodName || "-"}</td>
@@ -1512,7 +1512,7 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
                     aria-label="Chọn tất cả hồ sơ hiển thị"
                   />
                 </th>
-                <th className="px-2 py-2">ID</th>
+                <th className="px-2 py-2">STT</th>
                 <th className="px-2 py-2">Ho ten</th>
                 <th className="px-2 py-2">Nganh</th>
                 <th className="px-2 py-2">Block</th>
@@ -1522,7 +1522,7 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
               </tr>
             </thead>
             <tbody>
-              {admissionApplications.rows.map((item) => (
+              {admissionApplications.rows.map((item, index) => (
                 <tr key={item.id} className="border-b border-[#e0ebf4] text-[#3f6178]">
                   <td className="px-2 py-2">
                     <input
@@ -1532,7 +1532,7 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
                       aria-label={`Chọn hồ sơ ${item.id}`}
                     />
                   </td>
-                  <td className="px-2 py-2">{item.id}</td>
+                  <td className="px-2 py-2">{index + 1}</td>
                   <td className="px-2 py-2">{item.fullName || "-"}</td>
                   <td className="px-2 py-2">{item.majorName || "-"}</td>
                   <td className="px-2 py-2">{item.blockName || "-"}</td>

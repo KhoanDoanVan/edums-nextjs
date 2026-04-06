@@ -226,7 +226,7 @@ export const getAvailableCourseSections = async (
 
   const queryString = query.toString();
   const response = await apiRequest<ApiResponse<unknown> | unknown>(
-    `/api/v1/course-registrations/available-sections${
+      `/api/v1/course-registrations/available-sections${
       queryString ? `?${queryString}` : ""
     }`,
     {

@@ -7,7 +7,7 @@ import { AccountManagementPanel } from "@/components/admin/account-management-pa
 import { AdmissionsPanel } from "@/components/admin/admissions-panel";
 import { AttendanceManagementPanel } from "@/components/admin/attendance-management-panel";
 import { CohortManagementPanel } from "@/components/admin/cohort-management-panel";
-import { CourseSectionPanel } from "@/components/admin/course-section-panel";
+import { CourseSectionScheduleSummary } from "@/components/admin/course-section-schedule-summary";
 import { DynamicCrudPanel } from "@/components/admin/dynamic-crud-panel";
 import { GradeComponentPanel } from "@/components/admin/grade-component-panel";
 import { GradeManagementPanel } from "@/components/admin/grade-management-panel";
@@ -585,8 +585,27 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
     },
   },
   "course-sections": {
-    title: "Quản lý lop hoc phan",
+    title: "Quản lý lớp học phần",
     basePath: "/api/v1/course-sections",
+    hiddenColumns: [
+      "courseName",
+      "courseCode",
+      "lecturerName",
+      "createdAt",
+      "updatedAt",
+      "courseId",
+      "lecturerId",
+      "semesterId",
+      "sectionName",
+      "notes",
+      "course",
+      "lecturer",
+      "semester",
+      "semesterName",
+      "lecturerFullName",
+      "createdBy",
+      "updatedBy",
+    ],
     fieldLookups: {
       courseId: {
         path: "/api/v1/courses",
@@ -597,17 +616,46 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
         query: { page: 0, size: 100 },
         labelKeys: ["fullName", "email", "id"],
       },
+      semesterId: {
+        path: "/api/v1/semesters",
+        query: {
+          page: 0,
+          size: 1000,
+        },
+        filterBy: {
+          status: "PLANNING",
+        },
+        labelKeys: ["displayName", "semesterNumber", "academicYear", "id"],
+      },
     },
     priorityColumns: [
-      "id",
-      "sectionCode",
       "displayName",
-      "courseId",
-      "lecturerId",
-      "semesterId",
+      "sectionCode",
+      "academicYear",
+      "semesterNumber",
       "maxCapacity",
       "status",
     ],
+    fieldConfigs: {
+      sectionCode: {
+        hidden: true,
+      },
+      displayName: {
+        hidden: true,
+      },
+      semesterId: {
+        helperText: "Chỉ hiển thị học kỳ có trạng thái PLANNING.",
+      },
+      status: {
+        hidden: ({ formMode }) => formMode === "create",
+        options: ["DRAFT", "OPEN", "ONGOING", "FINISHED", "CANCELLED"].map(
+          (value) => ({
+            value,
+            label: value,
+          }),
+        ),
+      },
+    },
     createTemplate: {
       sectionCode: "",
       displayName: "",
@@ -625,11 +673,6 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
       semesterId: 1,
       maxCapacity: 60,
       status: "DRAFT",
-    },
-    statusPatch: {
-      fieldName: "status",
-      pathSuffix: "/status",
-      options: ["DRAFT", "OPEN", "ONGOING", "FINISHED", "CANCELLED"],
     },
   },
 };
@@ -654,6 +697,8 @@ export default function AdminDashboardPage() {
   );
   const [courseFacultyFilterValue, setCourseFacultyFilterValue] = useState("");
   const [courseListPath, setCourseListPath] = useState("/api/v1/courses");
+  const [recurringScheduleSectionPrefill, setRecurringScheduleSectionPrefill] =
+    useState<number | null>(null);
 
   const activeTab = useMemo(
     () =>
@@ -843,8 +888,7 @@ export default function AdminDashboardPage() {
 
   const activeDynamicCrudConfig =
     activeTab.key === "cohorts" ||
-    activeTab.key === "recurring-schedules" ||
-    activeTab.key === "course-sections"
+    activeTab.key === "recurring-schedules"
       ? undefined
       : dynamicCrudTabConfigs[activeTab.key];
 
@@ -1005,11 +1049,10 @@ export default function AdminDashboardPage() {
             ) : null}
 
             {activeTab.key === "recurring-schedules" ? (
-              <RecurringSchedulePanel authorization={session?.authorization} />
-            ) : null}
-
-            {activeTab.key === "course-sections" ? (
-              <CourseSectionPanel authorization={session?.authorization} />
+              <RecurringSchedulePanel
+                authorization={session?.authorization}
+                initialSectionId={recurringScheduleSectionPrefill || undefined}
+              />
             ) : null}
 
             {activeTab.key === "majors" ? (
@@ -1129,10 +1172,51 @@ export default function AdminDashboardPage() {
                 priorityColumns={activeDynamicCrudConfig.priorityColumns}
                 createTemplate={activeDynamicCrudConfig.createTemplate}
                 updateTemplate={activeDynamicCrudConfig.updateTemplate}
-                statusPatch={activeDynamicCrudConfig.statusPatch}
+                statusPatch={
+                  activeTab.key === "course-sections"
+                    ? undefined
+                    : activeDynamicCrudConfig.statusPatch
+                }
                 beforeDelete={activeDynamicCrudConfig.beforeDelete}
                 transformCreatePayload={activeDynamicCrudConfig.transformCreatePayload}
                 transformUpdatePayload={activeDynamicCrudConfig.transformUpdatePayload}
+                enableDetailView={activeTab.key === "course-sections"}
+                detailFieldOrder={
+                  activeTab.key === "course-sections"
+                    ? [
+                        "courseName",
+                        "courseCode",
+                        "sectionCode",
+                        "displayName",
+                        "lecturerName",
+                        "academicYear",
+                        "semesterNumber",
+                        "maxCapacity",
+                        "status",
+                      ]
+                    : undefined
+                }
+                renderDetailExtra={
+                  activeTab.key === "course-sections"
+                    ? (row) => {
+                        const sectionId = Number(row.id || 0);
+                        if (!Number.isInteger(sectionId) || sectionId <= 0) {
+                          return null;
+                        }
+
+                        return (
+                        <CourseSectionScheduleSummary
+                          authorization={session?.authorization}
+                          sectionId={sectionId}
+                          onOpenFullManagement={(nextSectionId) => {
+                            setRecurringScheduleSectionPrefill(nextSectionId);
+                            setActiveTabKey("recurring-schedules");
+                          }}
+                        />
+                        );
+                      }
+                    : undefined
+                }
               />
             ) : null}
 

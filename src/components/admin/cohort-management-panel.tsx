@@ -357,7 +357,6 @@ export function CohortManagementPanel({
                           <p className="font-semibold text-[#1f567b]">
                             {row.cohortName || "-"}
                           </p>
-                          <p className="mt-1 text-xs text-[#6b8497]">ID: {row.id}</p>
                         </td>
                         <td className="px-3 py-3">
                           {row.startYear || "-"} - {row.endYear || "-"}

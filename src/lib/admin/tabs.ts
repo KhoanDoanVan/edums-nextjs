@@ -141,7 +141,7 @@ export const adminFeatureTabs: AdminFeatureTab[] = [
   },
   {
     key: "course-sections",
-    label: "Lớp học phần",
+    label: "Quản lý Lớp học phần",
     description:
       "Tạo lớp học phần theo môn và học kỳ, sau đó mở trạng thái cho đợt đăng ký.",
     endpoints: [
@@ -156,7 +156,7 @@ export const adminFeatureTabs: AdminFeatureTab[] = [
   },
   {
     key: "recurring-schedules",
-    label: "Lịch học lặp lại",
+    label: "Quản lý Lịch học định kỳ",
     description:
       "Gắn lịch học định kỳ cho từng lớp học phần theo thứ, tiết và phạm vi tuần học.",
     endpoints: [
