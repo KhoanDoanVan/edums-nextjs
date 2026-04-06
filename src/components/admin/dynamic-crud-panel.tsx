@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { useToastFeedback } from "@/hooks/use-toast-feedback";
 import {
   createDynamicByPath,
@@ -72,6 +72,9 @@ interface DynamicCrudPanelProps {
     payload: Record<string, unknown>,
     currentRow: DynamicRow | null,
   ) => Record<string, unknown>;
+  enableDetailView?: boolean;
+  detailFieldOrder?: string[];
+  renderDetailExtra?: (row: DynamicRow) => ReactNode;
 }
 
 type FormMode = "create" | "edit";
@@ -314,6 +317,9 @@ export const DynamicCrudPanel = ({
   beforeDelete,
   transformCreatePayload,
   transformUpdatePayload,
+  enableDetailView = false,
+  detailFieldOrder,
+  renderDetailExtra,
 }: DynamicCrudPanelProps) => {
   const [dataRows, setDataRows] = useState<PagedRows<DynamicRow>>(emptyRows);
   const [isLoading, setIsLoading] = useState(false);
@@ -339,6 +345,8 @@ export const DynamicCrudPanel = ({
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const [formPayload, setFormPayload] = useState<Record<string, unknown>>({});
   const [currentEditRow, setCurrentEditRow] = useState<DynamicRow | null>(null);
+  const [detailRow, setDetailRow] = useState<DynamicRow | null>(null);
+  const [detailRowId, setDetailRowId] = useState<string | null>(null);
   const [lookupOptionsByField, setLookupOptionsByField] = useState<
     Record<string, Array<{ value: string; label: string }>>
   >({});
@@ -544,9 +552,21 @@ export const DynamicCrudPanel = ({
     }
 
     return dataRows.rows.filter((row) =>
-      tableColumns.some((column) =>
-        toDisplayValue(row[column]).toLowerCase().includes(normalizedKeyword),
-      ),
+      tableColumns.some((column) => {
+        const rawValue = row[column];
+        const rawText =
+          typeof rawValue === "string" ||
+          typeof rawValue === "number" ||
+          typeof rawValue === "boolean"
+            ? String(rawValue).toLowerCase()
+            : "";
+
+        const displayText = toDisplayValue(rawValue).toLowerCase();
+        return (
+          displayText.includes(normalizedKeyword) ||
+          rawText.includes(normalizedKeyword)
+        );
+      }),
     );
   }, [dataRows.rows, keyword, tableColumns]);
 
@@ -592,6 +612,45 @@ export const DynamicCrudPanel = ({
     setCurrentEditRow(null);
   };
 
+  const closeDetailView = () => {
+    if (isLoading) {
+      return;
+    }
+    setDetailRow(null);
+    setDetailRowId(null);
+  };
+
+  const openDetailView = async (row: DynamicRow, rowId: string) => {
+    if (!authorization) {
+      setErrorMessage("Không tìm thấy phiên đăng nhập. Vui lòng đăng nhập lại.");
+      return;
+    }
+
+    await runAction(async () => {
+      const detail = await getDynamicByPath(`${basePath}/${rowId}`, authorization);
+      setDetailRow({
+        ...row,
+        ...detail,
+      });
+      setDetailRowId(rowId);
+      setSuccessMessage("");
+    });
+  };
+
+  const orderedDetailEntries = useMemo(() => {
+    if (!detailRow) {
+      return [] as Array<[string, unknown]>;
+    }
+
+    if (!detailFieldOrder || detailFieldOrder.length === 0) {
+      return (Object.entries(detailRow) as Array<[string, unknown]>).filter(
+        ([key]) => key !== "id",
+      );
+    }
+
+    return detailFieldOrder.map((field): [string, unknown] => [field, detailRow[field]]);
+  }, [detailFieldOrder, detailRow]);
+
   const handleSubmitEditor = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setErrorMessage("");
@@ -617,7 +676,7 @@ export const DynamicCrudPanel = ({
     await runAction(async () => {
       if (formMode === "create") {
         await createDynamicByPath(basePath, payload, authorization);
-        setSuccessMessage("Tạo moi thành công.");
+        setSuccessMessage("Tạo mới thành công.");
       } else {
         if (!editingRowId) {
           throw new Error("Không tìm thấy ID bản ghi để cập nhật.");
@@ -925,7 +984,6 @@ export const DynamicCrudPanel = ({
         <div>
           <h2>{title}</h2>
           <p className="mt-1 text-sm font-medium text-[#5a7890]">
-            Quản lý dữ liệu danh muc voi bo loc nhanh va thao tac tap trung hon.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -935,7 +993,7 @@ export const DynamicCrudPanel = ({
             disabled={isLoading}
             className="rounded-[6px] bg-[#0d6ea6] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
           >
-            Tạo moi
+            Tạo mới
           </button>
           <button
             type="button"
@@ -964,6 +1022,7 @@ export const DynamicCrudPanel = ({
           <table className="min-w-full text-left text-sm">
             <thead>
               <tr className="border-b border-[#cfdfec] text-[#305970]">
+                <th className="w-16 px-2 py-2">STT</th>
                 {tableColumns.map((column) => (
                   <th key={column} className="px-2 py-2">
                     {toColumnLabel(column)}
@@ -978,6 +1037,7 @@ export const DynamicCrudPanel = ({
                 const rowId = resolveRowId(row, idFieldCandidates);
                 return (
                   <tr key={`row-${rowId || index}`} className="border-b border-[#e0ebf4] text-[#1f3344]">
+                    <td className="px-2 py-2 font-medium text-[#355970]">{index + 1}</td>
                     {tableColumns.map((column) => (
                       <td key={`${index}-${column}`} className="max-w-[260px] px-2 py-2">
                         <span className="line-clamp-2">{toDisplayValue(row[column])}</span>
@@ -1026,7 +1086,19 @@ export const DynamicCrudPanel = ({
 
                     <td className="px-2 py-2">
                       {rowId ? (
-                        <div className="flex min-w-[160px] items-center gap-2">
+                        <div className="flex min-w-[230px] items-center gap-2">
+                          {enableDetailView ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void openDetailView(row, rowId);
+                              }}
+                              disabled={isLoading}
+                              className="h-9 rounded-[6px] border border-[#9ec3dd] bg-white px-3 text-xs font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
+                            >
+                              Chi tiết
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             onClick={() => {
@@ -1058,7 +1130,7 @@ export const DynamicCrudPanel = ({
               {filteredRows.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={tableColumns.length + (statusPatch ? 2 : 1)}
+                    colSpan={tableColumns.length + (statusPatch ? 3 : 2)}
                     className="px-2 py-4 text-center text-[#577086]"
                   >
                     Không có dữ liệu phu hop voi bo loc hiện tại.
@@ -1125,6 +1197,58 @@ export const DynamicCrudPanel = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      ) : null}
+
+      {detailRow ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#08273f]/55 px-3 py-6 backdrop-blur-[1px]"
+          onClick={closeDetailView}
+        >
+          <div
+            className="w-full max-w-[860px] rounded-[14px] border border-[#8db7d5] bg-white shadow-[0_18px_60px_rgba(7,35,62,0.36)]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-[#d2e4f1] px-5 py-3">
+              <h3 className="text-[20px] font-semibold text-[#154f75]">
+                Chi tiết bản ghi {detailRowId ? `#${detailRowId}` : ""}
+              </h3>
+              <button
+                type="button"
+                onClick={closeDetailView}
+                className="rounded-full border border-[#bdd5e7] px-2 py-0.5 text-xl leading-none text-[#346180] transition hover:bg-[#edf6fd]"
+                disabled={isLoading}
+                aria-label="Dong popup chi tiet"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="max-h-[65vh] overflow-y-auto px-5 py-4">
+              <table className="min-w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-[#cfdfec] text-[#305970]">
+                    <th className="px-2 py-2">Trường</th>
+                    <th className="px-2 py-2">Giá trị</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orderedDetailEntries.map(([key, value]) => (
+                    <tr key={`detail-${key}`} className="border-b border-[#e0ebf4] text-[#1f3344]">
+                      <td className="px-2 py-2 font-semibold text-[#285a7b]">{toColumnLabel(key)}</td>
+                      <td className="px-2 py-2">{toDisplayValue(value)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {renderDetailExtra ? (
+                <div className="mt-4">
+                  {renderDetailExtra(detailRow)}
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
       ) : null}

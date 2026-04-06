@@ -331,16 +331,16 @@ export const RolePermissionPanel = ({
             <table className="min-w-full text-left text-sm">
               <thead>
                 <tr className="border-b border-[#cfdfec] text-[#305970]">
-                  <th className="px-2 py-2">ID</th>
+                  <th className="px-2 py-2">STT</th>
                   <th className="px-2 py-2">Tên vai trò</th>
                   <th className="px-2 py-2">Quyền</th>
                   <th className="px-2 py-2">Thao tác</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredRoles.map((role) => (
+                {filteredRoles.map((role, index) => (
                   <tr key={role.id} className="border-b border-[#e0ebf4] text-[#1f3344]">
-                    <td className="px-2 py-2">{role.id}</td>
+                    <td className="px-2 py-2">{index + 1}</td>
                     <td className="px-2 py-2">
                       <p className="font-semibold text-[#1f567b]">
                         {role.roleName || "-"}

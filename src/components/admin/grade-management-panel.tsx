@@ -634,6 +634,7 @@ export function GradeManagementPanel({
           <table className="min-w-full text-left text-sm">
             <thead>
               <tr className="border-b border-[#cfdfec] text-[#305970]">
+                <th className="w-16 px-2 py-2">STT</th>
                 {gradeColumns.map((column) => (
                   <th key={column} className="px-2 py-2">
                     {toColumnLabel(column)}
@@ -644,6 +645,7 @@ export function GradeManagementPanel({
             <tbody>
               {gradeRows.map((row, index) => (
                 <tr key={`dynamic-row-${index}`} className="border-b border-[#e0ebf4] text-[#3f6178]">
+                  <td className="px-2 py-2 font-medium text-[#355970]">{index + 1}</td>
                   {gradeColumns.map((column) => (
                     <td key={`${index}-${column}`} className="max-w-[260px] px-2 py-2">
                       <span className="line-clamp-2">{toDisplayValue(row[column])}</span>
@@ -653,7 +655,7 @@ export function GradeManagementPanel({
               ))}
               {gradeRows.length === 0 ? (
                 <tr>
-                  <td colSpan={Math.max(gradeColumns.length, 1)} className="px-2 py-4 text-center text-[#577086]">
+                  <td colSpan={Math.max(gradeColumns.length + 1, 1)} className="px-2 py-4 text-center text-[#577086]">
                     Chưa co dữ liệu.
                   </td>
                 </tr>

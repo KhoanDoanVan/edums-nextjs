@@ -1,12 +1,52 @@
 import type { DynamicRow } from "@/lib/admin/types";
 
+const isoDatePattern = /^\d{4}-\d{2}-\d{2}$/;
+const isoDateTimePattern =
+  /^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})?$/;
+
+const toReadableDateTime = (value: string): string | null => {
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const isIsoDate = isoDatePattern.test(normalized);
+  const isIsoDateTime = isoDateTimePattern.test(normalized);
+  if (!isIsoDate && !isIsoDateTime) {
+    return null;
+  }
+
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  if (isIsoDate) {
+    return date.toLocaleDateString("vi-VN", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+    });
+  }
+
+  return date.toLocaleString("vi-VN", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+};
+
 const fieldLabelMap: Record<string, string> = {
   id: "Mã",
   name: "Tên",
   code: "Mã",
   status: "Trạng thái",
   displayName: "Tên hiển thị",
-  semesterId: "Mã Học kỳ",
+  semesterId: "Học kỳ",
   semesterNumber: "Học kỳ",
   academicYear: "Năm học",
   startDate: "Ngày bắt đầu",
@@ -32,7 +72,7 @@ const fieldLabelMap: Record<string, string> = {
   credits: "Số tín chỉ",
   classId: "Lớp hành chính",
   className: "Tên lớp",
-  sectionCode: "Mã lớp học phần",
+  sectionCode: "Nhóm",
   lecturerId: "Giảng viên",
   headLecturerId: "Giảng viên chủ nhiệm",
   guardianId: "Phụ huynh",
@@ -53,7 +93,7 @@ const fieldLabelMap: Record<string, string> = {
   roomName: "Tên phòng",
   roomType: "Loại phòng",
   capacity: "Sức chứa",
-  maxCapacity: "Sĩ số tối đa",
+  maxCapacity: "Sỉ số",
   componentName: "Tên thành phần điểm",
   weightPercentage: "Tỷ trọng (%)",
   dayOfWeek: "Thứ",
@@ -113,8 +153,15 @@ export const toDisplayValue = (value: unknown): string => {
     return "Có dữ liệu";
   }
 
-  if (typeof value === "string" && valueLabelMap[value]) {
-    return valueLabelMap[value];
+  if (typeof value === "string") {
+    if (valueLabelMap[value]) {
+      return valueLabelMap[value];
+    }
+
+    const formattedDateTime = toReadableDateTime(value);
+    if (formattedDateTime) {
+      return formattedDateTime;
+    }
   }
 
   return String(value);
@@ -138,7 +185,9 @@ export const buildColumns = (
     }
   }
 
-  const visibleKeys = [...scalarKeys].filter((key) => !complexKeys.has(key));
+  const visibleKeys = [...scalarKeys].filter(
+    (key) => !complexKeys.has(key) && key !== "id",
+  );
   const priority = priorityColumns.filter((key) => visibleKeys.includes(key));
   const others = visibleKeys
     .filter((key) => !priorityColumns.includes(key))

@@ -49,6 +49,7 @@ import {
   studentFeatureTabs,
   studentTopHeaderTabs,
 } from "@/lib/student/tabs";
+import { toErrorMessage as toSharedErrorMessage } from "@/components/admin/format-utils";
 import type {
   AdministrativeClassResponse,
   AvailableCourseSectionResponse,
@@ -71,16 +72,47 @@ import type {
   StudentFeatureTab,
 } from "@/lib/student/types";
 
-const toErrorMessage = (error: unknown): string => {
-  if (error instanceof Error && error.message) {
-    return error.message;
+const getApiStatusFromError = (error: unknown): number | null => {
+  if (!(error instanceof Error) || !error.message) {
+    return null;
   }
 
-  return "Thao tác thất bại. Vui lòng thử lại.";
+  const matched = error.message.match(/^\[API\s+(\d{3})\]/);
+  if (!matched) {
+    return null;
+  }
+
+  const statusCode = Number(matched[1]);
+  return Number.isInteger(statusCode) ? statusCode : null;
+};
+
+const toErrorMessage = (error: unknown): string => {
+  const statusCode = getApiStatusFromError(error);
+  if (statusCode === 401) {
+    return "Phiên đăng nhập không hợp lệ. Vui lòng đăng nhập lại.";
+  }
+
+  if (statusCode === 403) {
+    return "Bạn không có quyền thực hiện thao tác này.";
+  }
+
+  if (statusCode === 404) {
+    return "Không tìm thấy dữ liệu.";
+  }
+
+  return toSharedErrorMessage(error);
 };
 
 const isForbiddenOrNotFoundError = (errorMessage: string): boolean => {
-  return errorMessage.includes("[API 403]") || errorMessage.includes("[API 404]");
+  const normalized = errorMessage.toLowerCase();
+  return (
+    errorMessage.includes("[API 403]") ||
+    errorMessage.includes("[API 404]") ||
+    normalized.includes("không có quyền") ||
+    normalized.includes("khong co quyen") ||
+    normalized.includes("không tìm thấy") ||
+    normalized.includes("khong tim thay")
+  );
 };
 
 const formatDate = (value?: string): string => {
@@ -762,17 +794,31 @@ const parseRegistrationError = (error: unknown): RegistrationNotice => {
           message: backendDetail,
         };
       }
+
+      if (payload.status === 403) {
+        return {
+          title: fallback.title,
+          message: "Bạn không có quyền thực hiện thao tác này.",
+        };
+      }
+
+      if (payload.status === 404) {
+        return {
+          title: fallback.title,
+          message: "Không tìm thấy dữ liệu.",
+        };
+      }
     } catch {
       return {
         title: fallback.title,
-        message: error.message,
+        message: toErrorMessage(error),
       };
     }
   }
 
   return {
     title: fallback.title,
-    message: error.message,
+    message: toErrorMessage(error),
   };
 };
 
