@@ -5,6 +5,7 @@ import {
   shouldHideFeedbackMessage,
   useToastFeedback,
 } from "@/hooks/use-toast-feedback";
+import { TablePaginationControls } from "@/components/admin/table-pagination-controls";
 import {
   createDynamicByPath,
   getCoursesByFaculty,
@@ -15,6 +16,7 @@ import {
 } from "@/lib/admin/service";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import { toErrorMessage } from "@/components/admin/format-utils";
+import { useTablePagination } from "@/hooks/use-table-pagination";
 import type { DynamicRow } from "@/lib/admin/types";
 
 interface GradeComponentPanelProps {
@@ -172,6 +174,8 @@ export const GradeComponentPanel = ({
       return matchesKeyword && matchesCourse;
     });
   }, [courseFilter, keyword, rows]);
+
+  const gradeComponentPagination = useTablePagination(filteredRows);
 
   const resetForm = () => {
     setEditingRowId(null);
@@ -370,7 +374,7 @@ export const GradeComponentPanel = ({
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRows.map((row) => (
+                  {gradeComponentPagination.paginatedRows.map((row) => (
                     <tr key={row.id} className="border-b border-[#e0ebf4] text-[#3f6178]">
                       <td className="px-3 py-3 font-semibold text-[#1f567b]">
                         {row.componentName}
@@ -411,6 +415,17 @@ export const GradeComponentPanel = ({
                 </tbody>
               </table>
             </div>
+
+            <TablePaginationControls
+              pageIndex={gradeComponentPagination.pageIndex}
+              pageSize={gradeComponentPagination.pageSize}
+              totalItems={gradeComponentPagination.totalItems}
+              totalPages={gradeComponentPagination.totalPages}
+              startItem={gradeComponentPagination.startItem}
+              endItem={gradeComponentPagination.endItem}
+              onPageChange={gradeComponentPagination.setPageIndex}
+              onPageSizeChange={gradeComponentPagination.setPageSize}
+            />
           </section>
 
           <section className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff]">

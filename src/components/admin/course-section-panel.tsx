@@ -10,7 +10,9 @@ import {
   updateDynamicByPath,
 } from "@/lib/admin/service";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
+import { TablePaginationControls } from "@/components/admin/table-pagination-controls";
 import { formatDateTime, toErrorMessage } from "@/components/admin/format-utils";
+import { useTablePagination } from "@/hooks/use-table-pagination";
 import type { DynamicRow } from "@/lib/admin/types";
 
 interface CourseSectionPanelProps {
@@ -323,6 +325,9 @@ export const CourseSectionPanel = ({
       return matchesKeyword && matchesStatus && matchesCourse && matchesSemester;
     });
   }, [courseFilter, keyword, rows, semesterFilter, statusFilter]);
+
+  const sectionTablePagination = useTablePagination(filteredRows);
+  const sectionSchedulePagination = useTablePagination(scheduleRows);
 
   const loadReferenceData = useCallback(async () => {
     if (!authorization) {
@@ -838,7 +843,7 @@ export const CourseSectionPanel = ({
                         </td>
                       </tr>
                     ) : (
-                      filteredRows.map((row) => {
+                      sectionTablePagination.paginatedRows.map((row) => {
                         const active = row.id === selectedSectionId;
 
                         return (
@@ -893,6 +898,17 @@ export const CourseSectionPanel = ({
                   </tbody>
                 </table>
               </div>
+
+              <TablePaginationControls
+                pageIndex={sectionTablePagination.pageIndex}
+                pageSize={sectionTablePagination.pageSize}
+                totalItems={sectionTablePagination.totalItems}
+                totalPages={sectionTablePagination.totalPages}
+                startItem={sectionTablePagination.startItem}
+                endItem={sectionTablePagination.endItem}
+                onPageChange={sectionTablePagination.setPageIndex}
+                onPageSizeChange={sectionTablePagination.setPageSize}
+              />
             </div>
 
             <div className="space-y-4">
@@ -1145,7 +1161,7 @@ export const CourseSectionPanel = ({
                           </tr>
                         </thead>
                         <tbody>
-                          {scheduleRows.map((row) => (
+                          {sectionSchedulePagination.paginatedRows.map((row) => (
                             <tr key={row.id} className="border-t border-[#e0ebf4] text-[#365f7b]">
                               <td className="px-3 py-2">
                                 {row.dayOfWeekName ||
@@ -1170,6 +1186,17 @@ export const CourseSectionPanel = ({
                         </tbody>
                       </table>
                     </div>
+
+                    <TablePaginationControls
+                      pageIndex={sectionSchedulePagination.pageIndex}
+                      pageSize={sectionSchedulePagination.pageSize}
+                      totalItems={sectionSchedulePagination.totalItems}
+                      totalPages={sectionSchedulePagination.totalPages}
+                      startItem={sectionSchedulePagination.startItem}
+                      endItem={sectionSchedulePagination.endItem}
+                      onPageChange={sectionSchedulePagination.setPageIndex}
+                      onPageSizeChange={sectionSchedulePagination.setPageSize}
+                    />
                   </div>
                 )}
               </div>

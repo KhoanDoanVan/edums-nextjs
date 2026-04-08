@@ -12,7 +12,9 @@ import {
 } from "@/lib/admin/service";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import { toErrorMessage } from "@/components/admin/format-utils";
+import { TablePaginationControls } from "@/components/admin/table-pagination-controls";
 import { buildColumns, toColumnLabel, toDisplayValue } from "@/components/admin/table-utils";
+import { useTablePagination } from "@/hooks/use-table-pagination";
 import type { DynamicRow, PagedRows } from "@/lib/admin/types";
 
 interface StatusPatchConfig {
@@ -672,6 +674,8 @@ export const DynamicCrudPanel = ({
     );
   }, [dataRows.rows, keyword, tableColumns]);
 
+  const tablePagination = useTablePagination(filteredRows);
+
   const fieldRuleContext = useMemo<FieldRuleContext>(
     () => ({
       formMode,
@@ -1162,13 +1166,14 @@ export const DynamicCrudPanel = ({
               </tr>
             </thead>
             <tbody>
-              {filteredRows.map((row, index) => {
+              {tablePagination.paginatedRows.map((row, index) => {
+                const rowNumber = tablePagination.startItem + index;
                 const rowId = resolveRowId(row, idFieldCandidates);
                 return (
-                  <tr key={`row-${rowId || index}`} className="border-b border-[#e0ebf4] text-[#1f3344]">
-                    <td className="px-2 py-2 font-medium text-[#355970]">{index + 1}</td>
+                  <tr key={`row-${rowId || rowNumber}`} className="border-b border-[#e0ebf4] text-[#1f3344]">
+                    <td className="px-2 py-2 font-medium text-[#355970]">{rowNumber}</td>
                     {tableColumns.map((column) => (
-                      <td key={`${index}-${column}`} className="max-w-[260px] px-2 py-2">
+                      <td key={`${rowNumber}-${column}`} className="max-w-[260px] px-2 py-2">
                         <span className="line-clamp-2">{toDisplayValue(row[column])}</span>
                       </td>
                     ))}
@@ -1269,6 +1274,17 @@ export const DynamicCrudPanel = ({
             </tbody>
           </table>
         </div>
+
+        <TablePaginationControls
+          pageIndex={tablePagination.pageIndex}
+          pageSize={tablePagination.pageSize}
+          totalItems={tablePagination.totalItems}
+          totalPages={tablePagination.totalPages}
+          startItem={tablePagination.startItem}
+          endItem={tablePagination.endItem}
+          onPageChange={tablePagination.setPageIndex}
+          onPageSizeChange={tablePagination.setPageSize}
+        />
       </div>
 
       {isEditorOpen ? (

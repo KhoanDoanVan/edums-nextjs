@@ -669,11 +669,12 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
       semesterId: {
         path: "/api/v1/semesters",
         query: {
+          status: ["PLANNING", "REGISTRATION_OPEN"].join(","),
           page: 0,
           size: 1000,
         },
         filterBy: {
-          status: "PLANNING",
+          status: ["PLANNING", "REGISTRATION_OPEN"],
         },
         labelKeys: ["displayName", "semesterNumber", "academicYear", "id"],
       },
@@ -694,7 +695,8 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
         hidden: true,
       },
       semesterId: {
-        helperText: "Chỉ hiển thị học kỳ có trạng thái PLANNING.",
+        helperText:
+          "Hiển thị học kỳ ở trạng thái PLANNING hoặc OPEN (REGISTRATION_OPEN).",
       },
       status: {
         hidden: ({ formMode }) => formMode === "create",

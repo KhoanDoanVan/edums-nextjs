@@ -111,11 +111,10 @@ export const changeMyPassword = async (
 };
 
 export const getMyGradeReports = async (
-  studentId: number,
   authorization: string,
 ): Promise<GradeReportResponse[]> => {
   const response = await apiRequest<ApiResponse<unknown> | unknown>(
-    `/api/v1/students/${studentId}/grade-reports`,
+    "/api/v1/students/me/grade-reports",
     {
       method: "GET",
       accessToken: authorization,
@@ -130,7 +129,7 @@ export const getGradeReportById = async (
   authorization: string,
 ): Promise<GradeReportResponse> => {
   const response = await apiRequest<ApiResponse<unknown> | unknown>(
-    `/api/v1/grade-reports/${gradeReportId}`,
+    `/api/v1/students/me/grade-reports/${gradeReportId}`,
     {
       method: "GET",
       accessToken: authorization,
@@ -156,11 +155,10 @@ export const getGradeComponentsByCourse = async (
 };
 
 export const getMyAttendance = async (
-  studentId: number,
   authorization: string,
 ): Promise<AttendanceResponse[]> => {
   const response = await apiRequest<ApiResponse<unknown> | unknown>(
-    `/api/v1/students/${studentId}/attendances`,
+    "/api/v1/students/me/attendances",
     {
       method: "GET",
       accessToken: authorization,

@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, Fragment, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AuthGuard } from "@/components/auth/auth-guard";
 import { useAuth } from "@/context/auth-context";
@@ -147,6 +147,133 @@ const formatScore = (value?: number): string => {
   }
 
   return value.toFixed(2);
+};
+
+const pickReportNumber = (
+  source: Record<string, unknown>,
+  keys: string[],
+): number | null => {
+  for (const key of keys) {
+    const rawValue = source[key];
+
+    if (typeof rawValue === "number" && Number.isFinite(rawValue)) {
+      return rawValue;
+    }
+
+    if (typeof rawValue === "string" && rawValue.trim()) {
+      const parsed = Number(rawValue);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+
+  return null;
+};
+
+const pickReportText = (
+  source: Record<string, unknown>,
+  keys: string[],
+): string | null => {
+  for (const key of keys) {
+    const rawValue = source[key];
+
+    if (typeof rawValue === "string" && rawValue.trim()) {
+      return rawValue.trim();
+    }
+  }
+
+  return null;
+};
+
+const getGradeScore10FromReport = (report: GradeReportResponse): number | null => {
+  if (typeof report.finalScore === "number" && Number.isFinite(report.finalScore)) {
+    return report.finalScore;
+  }
+
+  return pickReportNumber(report as unknown as Record<string, unknown>, [
+    "finalScore10",
+    "score10",
+    "totalScore10",
+  ]);
+};
+
+const getGradeScore4FromReport = (report: GradeReportResponse): number | null => {
+  return pickReportNumber(report as unknown as Record<string, unknown>, [
+    "finalScore4",
+    "score4",
+    "totalScore4",
+    "gpa4",
+    "gradePoint",
+  ]);
+};
+
+const getGradeLetterFromReport = (report: GradeReportResponse): string => {
+  if (typeof report.letterGrade === "string" && report.letterGrade.trim()) {
+    return report.letterGrade.trim();
+  }
+
+  const fallback = pickReportText(report as unknown as Record<string, unknown>, [
+    "finalLetterGrade",
+    "gradeLetter",
+    "scoreLetter",
+  ]);
+
+  return fallback || "-";
+};
+
+const getGradeResultMetaFromReport = (
+  report: GradeReportResponse,
+): { label: string; passed: boolean | null } => {
+  const rawReport = report as unknown as Record<string, unknown>;
+
+  const passFlag = ["passed", "isPassed", "pass", "resultPassed"]
+    .map((key) => rawReport[key])
+    .find((value) => typeof value === "boolean");
+
+  if (typeof passFlag === "boolean") {
+    return {
+      label: passFlag ? "Đạt" : "Không đạt",
+      passed: passFlag,
+    };
+  }
+
+  const resultLabel = pickReportText(rawReport, [
+    "result",
+    "finalResult",
+    "resultLabel",
+    "outcome",
+  ]);
+
+  if (resultLabel) {
+    const normalized = resultLabel.toLowerCase();
+    if (normalized.includes("đạt") || normalized.includes("pass")) {
+      return { label: resultLabel, passed: true };
+    }
+
+    if (
+      normalized.includes("không đạt") ||
+      normalized.includes("khong dat") ||
+      normalized.includes("fail")
+    ) {
+      return { label: resultLabel, passed: false };
+    }
+
+    return {
+      label: resultLabel,
+      passed: null,
+    };
+  }
+
+  return {
+    label: "-",
+    passed: null,
+  };
+};
+
+const getAcademicYearStart = (academicYear?: string): number => {
+  const matched = String(academicYear || "").trim().match(/^(\d{4})/);
+  return matched ? Number(matched[1]) : 0;
 };
 
 const normalizeTextValue = (value?: string): string => {
@@ -684,6 +811,15 @@ const getRegistrationStatusClass = (status?: string): string => {
   }
 };
 
+const isRegistrationWindowOpen = (
+  semester: ScheduleSemesterOptionResponse,
+): boolean => {
+  return (
+    semester.registrationOpen === true ||
+    semester.registrationPeriodStatus === "OPEN"
+  );
+};
+
 const getGradeStatusLabel = (status?: string): string => {
   switch (status) {
     case "PUBLISHED":
@@ -945,6 +1081,8 @@ export default function DashboardPage() {
     useState<number | null>(null);
 
   const [gradeReports, setGradeReports] = useState<GradeReportResponse[]>([]);
+  const [hasLoadedGrades, setHasLoadedGrades] = useState(false);
+  const [gradeLastLoadedAt, setGradeLastLoadedAt] = useState("");
   const [gradeKeyword, setGradeKeyword] = useState("");
   const [gradeStatusFilter, setGradeStatusFilter] = useState("");
   const [gradeSemesterFilter, setGradeSemesterFilter] = useState("");
@@ -952,6 +1090,7 @@ export default function DashboardPage() {
   const [selectedGradeReportId, setSelectedGradeReportId] = useState<
     number | null
   >(null);
+  const [isGradeDetailModalOpen, setIsGradeDetailModalOpen] = useState(false);
   const [gradeReportDetailsById, setGradeReportDetailsById] = useState<
     Record<number, GradeReportResponse | null>
   >({});
@@ -968,6 +1107,8 @@ export default function DashboardPage() {
   const [loadingGradeComponentCourseId, setLoadingGradeComponentCourseId] =
     useState<number | null>(null);
   const [attendanceItems, setAttendanceItems] = useState<AttendanceResponse[]>([]);
+  const [hasLoadedAttendance, setHasLoadedAttendance] = useState(false);
+  const [attendanceLastLoadedAt, setAttendanceLastLoadedAt] = useState("");
   const [attendanceKeyword, setAttendanceKeyword] = useState("");
   const [attendanceStatusFilter, setAttendanceStatusFilter] = useState("");
   const [attendanceDateFrom, setAttendanceDateFrom] = useState("");
@@ -988,6 +1129,9 @@ export default function DashboardPage() {
   >([]);
   const [registrationNotice, setRegistrationNotice] =
     useState<RegistrationNotice | null>(null);
+  const [isRegistrationAccessChecked, setIsRegistrationAccessChecked] =
+    useState(false);
+  const [isRegistrationPeriodOpen, setIsRegistrationPeriodOpen] = useState(true);
   const [registrationDeleteTarget, setRegistrationDeleteTarget] =
     useState<RegisteredCourseItem | null>(null);
   const [registrationSwitchTarget, setRegistrationSwitchTarget] =
@@ -1033,6 +1177,9 @@ export default function DashboardPage() {
   });
 
   const [isWorking, setIsWorking] = useState(false);
+
+  const isCourseRegistrationBlocked =
+    isRegistrationAccessChecked && !isRegistrationPeriodOpen;
 
   useEffect(() => {
     if (!session?.authorization) {
@@ -1809,6 +1956,141 @@ export default function DashboardPage() {
     gradeSemesterFilter,
     gradeStatusFilter,
   ]);
+
+  const gradeGroupedRows = useMemo(() => {
+    const rows = filteredGradeReports
+      .map((report) => {
+        const section = report.sectionId ? gradeSectionsById[report.sectionId] : undefined;
+        const sectionCredits = (section as { credits?: unknown } | undefined)?.credits;
+        const courseCredits =
+          typeof sectionCredits === "number" && Number.isFinite(sectionCredits)
+            ? sectionCredits
+            : typeof section?.courseId === "number" &&
+                typeof courseCatalogById.get(section.courseId)?.credits === "number"
+              ? courseCatalogById.get(section.courseId)?.credits || null
+              : null;
+        const score10 = getGradeScore10FromReport(report);
+        const score4 = getGradeScore4FromReport(report);
+        const letterGrade = getGradeLetterFromReport(report);
+        const resultMeta = getGradeResultMetaFromReport(report);
+
+        return {
+          report,
+          section: section || null,
+          semesterNumber: section?.semesterNumber,
+          academicYear: section?.academicYear || "",
+          semesterLabel: getSemesterDisplayLabel(
+            section?.semesterNumber,
+            section?.academicYear,
+          ),
+          courseCode: section?.courseCode || "-",
+          sectionCode: section?.sectionCode || "-",
+          courseName: report.courseName || section?.courseName || "-",
+          credits: courseCredits,
+          score10,
+          score4,
+          letterGrade,
+          resultLabel: resultMeta.label,
+          passed: resultMeta.passed,
+        };
+      })
+      .sort((first, second) => {
+        const firstYear = getAcademicYearStart(first.academicYear);
+        const secondYear = getAcademicYearStart(second.academicYear);
+
+        if (firstYear !== secondYear) {
+          return secondYear - firstYear;
+        }
+
+        const firstSemester = first.semesterNumber || 0;
+        const secondSemester = second.semesterNumber || 0;
+
+        if (firstSemester !== secondSemester) {
+          return secondSemester - firstSemester;
+        }
+
+        if (first.courseCode !== second.courseCode) {
+          return first.courseCode.localeCompare(second.courseCode, "vi");
+        }
+
+        return first.sectionCode.localeCompare(second.sectionCode, "vi");
+      });
+
+    const allScoreRows = rows.filter((item) => item.score10 !== null);
+    const allScore4Rows = rows.filter((item) => item.score4 !== null);
+    const cumulativeAverage10 =
+      allScoreRows.length > 0
+        ? allScoreRows.reduce((sum, item) => sum + (item.score10 || 0), 0) /
+          allScoreRows.length
+        : null;
+    const cumulativeAverage4 =
+      allScore4Rows.length > 0
+        ? allScore4Rows.reduce((sum, item) => sum + (item.score4 || 0), 0) /
+          allScore4Rows.length
+        : null;
+    const hasCumulativePassFlag = rows.some((item) => item.passed !== null);
+    const cumulativeEarnedCredits = hasCumulativePassFlag
+      ? rows.reduce((sum, item) => {
+          if (item.passed !== true || typeof item.credits !== "number") {
+            return sum;
+          }
+
+          return sum + item.credits;
+        }, 0)
+      : null;
+
+    const buckets = new Map<string, typeof rows>();
+
+    rows.forEach((item) => {
+      const semesterLabel = item.semesterLabel || "Học kỳ chưa xác định";
+      if (!buckets.has(semesterLabel)) {
+        buckets.set(semesterLabel, []);
+      }
+
+      buckets.get(semesterLabel)?.push(item);
+    });
+
+    return Array.from(buckets.entries()).map(([semesterLabel, items]) => {
+      const semesterScoreRows = items.filter((item) => item.score10 !== null);
+      const semesterScore4Rows = items.filter((item) => item.score4 !== null);
+      const semesterAverage10 =
+        semesterScoreRows.length > 0
+          ? semesterScoreRows.reduce((sum, item) => sum + (item.score10 || 0), 0) /
+            semesterScoreRows.length
+          : null;
+      const semesterAverage4 =
+        semesterScore4Rows.length > 0
+          ? semesterScore4Rows.reduce((sum, item) => sum + (item.score4 || 0), 0) /
+            semesterScore4Rows.length
+          : null;
+      const hasSemesterPassFlag = items.some((item) => item.passed !== null);
+      const semesterEarnedCredits = hasSemesterPassFlag
+        ? items.reduce((sum, item) => {
+            if (item.passed !== true || typeof item.credits !== "number") {
+              return sum;
+            }
+
+            return sum + item.credits;
+          }, 0)
+        : null;
+
+      const first = items[0];
+
+      return {
+        key: `${first.semesterNumber || 0}-${first.academicYear || "na"}`,
+        semesterLabel,
+        semesterNumber: first.semesterNumber,
+        academicYear: first.academicYear,
+        items,
+        semesterAverage10,
+        semesterAverage4,
+        semesterEarnedCredits,
+        cumulativeAverage10,
+        cumulativeAverage4,
+        cumulativeEarnedCredits,
+      };
+    });
+  }, [courseCatalogById, filteredGradeReports, gradeSectionsById]);
 
   const gradeSummary = useMemo(() => {
     const validScores = gradeReports
@@ -2607,26 +2889,6 @@ export default function DashboardPage() {
     }
 
     return session.authorization;
-  };
-
-  const getStudentIdValue = (): number | null => {
-    const parsed = Number(studentIdInput);
-    if (Number.isInteger(parsed) && parsed > 0) {
-      return parsed;
-    }
-
-    if (
-      typeof profile?.id === "number" &&
-      Number.isInteger(profile.id) &&
-      profile.id > 0
-    ) {
-      return profile.id;
-    }
-
-    setTabError(
-      "Không xác định được mã định danh sinh viên từ hồ sơ. Vui lòng tải lại thông tin cá nhân.",
-    );
-    return null;
   };
 
   const runAction = async (action: () => Promise<void>) => {
@@ -3434,16 +3696,17 @@ export default function DashboardPage() {
 
   const handleLoadGrades = async () => {
     const authorization = requireSession();
-    const studentId = getStudentIdValue();
-
-    if (!authorization || !studentId) {
+    if (!authorization) {
       return;
     }
 
     await runAction(async () => {
-      const data = await getMyGradeReports(studentId, authorization);
+      const data = await getMyGradeReports(authorization);
       setGradeReports(data);
+      setHasLoadedGrades(true);
+      setGradeLastLoadedAt(new Date().toISOString());
       setSelectedGradeReportId(data[0]?.id ?? null);
+      setIsGradeDetailModalOpen(false);
       setGradeReportDetailsById({});
       setLoadingGradeReportId(null);
       setGradeComponentsByCourseId({});
@@ -3524,17 +3787,98 @@ export default function DashboardPage() {
     }
   };
 
+  const handleExportGradesCsv = () => {
+    const rows = gradeGroupedRows.flatMap((group) =>
+      group.items.map((item, index) => ({
+        semesterLabel: group.semesterLabel || "Học kỳ chưa xác định",
+        stt: index + 1,
+        courseCode: item.courseCode,
+        sectionCode: item.sectionCode,
+        courseName: item.courseName,
+        credits:
+          typeof item.credits === "number" ? String(item.credits) : "",
+        score10: formatScore(item.score10 === null ? undefined : item.score10),
+        score4: formatScore(item.score4 === null ? undefined : item.score4),
+        letterGrade: item.letterGrade,
+        result: item.resultLabel,
+      })),
+    );
+
+    if (rows.length === 0) {
+      setTabMessage("Không có dữ liệu điểm để xuất.");
+      return;
+    }
+
+    const escapeCell = (value: string): string => {
+      const normalized = String(value || "");
+      if (
+        normalized.includes(",") ||
+        normalized.includes("\"") ||
+        normalized.includes("\n")
+      ) {
+        return `"${normalized.replace(/\"/g, '""')}"`;
+      }
+
+      return normalized;
+    };
+
+    const headers = [
+      "Hoc ky",
+      "STT",
+      "Ma MH",
+      "Nhom/to mon hoc",
+      "Ten mon hoc",
+      "So tin chi",
+      "Diem TK (10)",
+      "Diem TK (4)",
+      "Diem TK (C)",
+      "Ket qua",
+    ];
+
+    const csvLines = [headers.join(",")].concat(
+      rows.map((row) =>
+        [
+          row.semesterLabel,
+          String(row.stt),
+          row.courseCode,
+          row.sectionCode,
+          row.courseName,
+          row.credits,
+          row.score10,
+          row.score4,
+          row.letterGrade,
+          row.result,
+        ]
+          .map((cell) => escapeCell(cell))
+          .join(","),
+      ),
+    );
+
+    const csvContent = `\uFEFF${csvLines.join("\r\n")}`;
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `bang-diem-${toLocalIsoDate(new Date())}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+
+    setTabMessage("Đã xuất bảng điểm ra tệp CSV.");
+  };
+
   const handleLoadAttendance = async () => {
     const authorization = requireSession();
-    const studentId = getStudentIdValue();
-
-    if (!authorization || !studentId) {
+    if (!authorization) {
       return;
     }
 
     await runAction(async () => {
-      const data = await getMyAttendance(studentId, authorization);
+      const data = await getMyAttendance(authorization);
       setAttendanceItems(data);
+      setHasLoadedAttendance(true);
+      setAttendanceLastLoadedAt(new Date().toISOString());
       setTabMessage(`Đã tải ${data.length} bản ghi chuyên cần.`);
     });
   };
@@ -3841,13 +4185,35 @@ export default function DashboardPage() {
 
     await runAction(async () => {
       setRegistrationNotice(null);
-      const [faculties, allCourses] = await Promise.all([
+      setIsRegistrationAccessChecked(false);
+
+      const [faculties, allCourses, scheduleSemesters] = await Promise.all([
         getFaculties(authorization).catch(() => []),
         getCourses(authorization).catch(() => []),
+        getMyScheduleSemesterOptions(authorization).catch(() => []),
       ]);
 
       setFacultyCatalog(faculties);
       setAllCoursesCatalog(allCourses);
+
+      setScheduleSemesterCatalog(scheduleSemesters);
+      const hasOpenRegistrationWindow = scheduleSemesters.some(
+        isRegistrationWindowOpen,
+      );
+
+      setIsRegistrationPeriodOpen(hasOpenRegistrationWindow);
+      setIsRegistrationAccessChecked(true);
+
+      if (!hasOpenRegistrationWindow) {
+        setCourseSections([]);
+        setRegistrationSectionsBySemester({});
+        setRegisteredSections([]);
+        setSelectedSectionId("");
+        setRegistrationDeleteTarget(null);
+        setRegistrationSwitchTarget(null);
+        setTabMessage("Hiện chưa có đợt đăng ký học phần nào đang mở.");
+        return;
+      }
 
       const facultyId = parsePositiveInteger(facultyIdValue);
       let coursesInSelectedFaculty: CourseResponse[] = [];
@@ -3925,6 +4291,15 @@ export default function DashboardPage() {
   const handleRegisterSection = async () => {
     const authorization = requireSession();
     if (!authorization) {
+      return;
+    }
+
+    if (isCourseRegistrationBlocked) {
+      setRegistrationNotice({
+        title: "Chưa mở đợt đăng ký",
+        message:
+          "Hiện chưa có đợt đăng ký học phần đang mở. Bạn chưa thể thực hiện thao tác đăng ký.",
+      });
       return;
     }
 
@@ -4156,8 +4531,11 @@ export default function DashboardPage() {
                       if (item.key === "schedule") {
                         void handleLoadStudentWeeklySchedule();
                       }
-                      if (item.key === "grades") {
+                      if (item.key === "grades" && !hasLoadedGrades) {
                         void handleLoadGrades();
+                      }
+                      if (item.key === "attendance" && !hasLoadedAttendance) {
+                        void handleLoadAttendance();
                       }
                     }}
                     className={`mb-1 flex w-full items-center justify-between rounded-[4px] px-3 py-2 text-left text-[17px] transition ${
@@ -4166,7 +4544,15 @@ export default function DashboardPage() {
                         : "text-[#234d69] hover:bg-[#e5eef6]"
                     }`}
                   >
-                    <span>{getStudentTabDisplayLabel(item)}</span>
+                    <span className="flex items-center gap-2">
+                      <span>{getStudentTabDisplayLabel(item)}</span>
+                      {item.key === "course-registration" &&
+                      isCourseRegistrationBlocked ? (
+                        <span className="rounded-full border border-[#efc9a8] bg-[#fff5e9] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.04em] text-[#8a5a00]">
+                          Tạm đóng
+                        </span>
+                      ) : null}
+                    </span>
                   </button>
                 );
               })}
@@ -4593,7 +4979,9 @@ export default function DashboardPage() {
                         disabled={isWorking}
                         className="h-10 rounded-[8px] border border-[#0d6ea6] bg-[#0d6ea6] px-4 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                       >
-                        Tải lớp được phép đăng ký
+                        {isWorking
+                          ? "Đang kiểm tra..."
+                          : "Tải lớp được phép đăng ký"}
                       </button>
                       <button
                         type="button"
@@ -4603,7 +4991,7 @@ export default function DashboardPage() {
                           setCourseKeyword("");
                           void handleLoadRegistrationSections("", "");
                         }}
-                        disabled={isWorking}
+                        disabled={isWorking || isCourseRegistrationBlocked}
                         className="h-10 rounded-[8px] border border-[#6da8c9] bg-white px-4 text-sm font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
                       >
                         Xóa bộ lọc
@@ -4612,6 +5000,30 @@ export default function DashboardPage() {
                   </div>
                 </div>
 
+                {isCourseRegistrationBlocked ? (
+                  <div className="px-4 py-4">
+                    <div className="rounded-[10px] border border-[#efc9a8] bg-[#fff8ef] px-4 py-4 text-[#8a5a00]">
+                      <p className="text-base font-semibold">
+                        Hiện chưa có đợt đăng ký học phần nào đang mở.
+                      </p>
+                      <p className="mt-1 text-sm">
+                        Bạn chưa thể truy cập chức năng đăng ký môn học ở thời điểm này. Vui lòng quay lại khi nhà trường mở đợt đăng ký.
+                      </p>
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void handleLoadRegistrationSections();
+                          }}
+                          disabled={isWorking}
+                          className="h-10 rounded-[8px] border border-[#d7ab7f] bg-white px-4 text-sm font-semibold text-[#8a5a00] transition hover:bg-[#fff1e3] disabled:opacity-60"
+                        >
+                          {isWorking ? "Đang kiểm tra..." : "Kiểm tra lại"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
                 <div className="space-y-5 px-4 py-4">
                   <div className="grid gap-3 md:grid-cols-3">
                     <input
@@ -4963,6 +5375,7 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 </div>
+                )}
               </section>
             ) : null}
 
@@ -5364,363 +5777,283 @@ export default function DashboardPage() {
             {activeTab.key === "grades" ? (
               <section className={contentCardClass}>
                 <div className={sectionTitleClass}>
-                  <h2>Bảng điểm sinh viên</h2>
+                  <h2 className="uppercase tracking-[0.02em]">Xem điểm</h2>
                   <div className="flex items-center gap-2">
-                    <input
-                      className="h-9 w-[180px] rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                      placeholder="Mã sinh viên"
-                      value={studentIdInput}
-                      onChange={(event) => setStudentIdInput(event.target.value)}
-                    />
                     <button
                       type="button"
                       onClick={() => {
                         void handleLoadGrades();
                       }}
                       disabled={isWorking}
-                      className="h-9 rounded-[4px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
+                      className="h-9 rounded-[6px] border border-[#0d6ea6] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                     >
-                      Tải bảng điểm
+                      {isWorking ? "Đang tải..." : "Làm mới"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => window.print()}
+                      className="h-9 rounded-[6px] border border-[#8cb3ce] bg-white px-3 text-sm font-semibold text-[#235775] transition hover:bg-[#edf6fd]"
+                    >
+                      In
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleExportGradesCsv}
+                      disabled={isWorking || gradeGroupedRows.length === 0}
+                      className="h-9 rounded-[6px] border border-[#8cb3ce] bg-white px-3 text-sm font-semibold text-[#235775] transition hover:bg-[#edf6fd] disabled:opacity-60"
+                    >
+                      Xuất Excel
                     </button>
                   </div>
                 </div>
 
-                <div className="space-y-4 px-4 py-4">
-                  <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_190px_220px_240px_auto]">
-                    <input
-                      className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
-                      placeholder="Tìm theo môn học, mã lớp, điểm chữ, học kỳ..."
-                      value={gradeKeyword}
-                      onChange={(event) => setGradeKeyword(event.target.value)}
-                    />
-                    <select
-                      className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
-                      value={gradeStatusFilter}
-                      onChange={(event) => setGradeStatusFilter(event.target.value)}
-                    >
-                      <option value="">Tất cả trạng thái</option>
-                      <option value="PUBLISHED">Đã công bố</option>
-                      <option value="LOCKED">Đã chốt</option>
-                      <option value="DRAFT">Nháp</option>
-                    </select>
-                    <select
-                      className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
-                      value={gradeSemesterFilter}
-                      onChange={(event) =>
-                        setGradeSemesterFilter(event.target.value)
-                      }
-                    >
-                      <option value="">Tất cả học kỳ</option>
-                      {gradeSemesterOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
-                      value={gradeCourseFilter}
-                      onChange={(event) => setGradeCourseFilter(event.target.value)}
-                    >
-                      <option value="">Tất cả môn học</option>
-                      {gradeCourseOptions.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setGradeKeyword("");
-                        setGradeStatusFilter("");
-                        setGradeSemesterFilter("");
-                        setGradeCourseFilter("");
-                      }}
-                      className="h-10 rounded-[6px] border border-[#6da8c9] bg-white px-3 text-sm font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff]"
-                    >
-                      Xóa lọc
-                    </button>
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                    <div className="rounded-[8px] border border-[#d5e4ef] bg-[#f6fbff] px-3 py-2">
-                      <p className="text-xs text-[#648095]">Tổng số môn</p>
-                      <p className="mt-1 text-xl font-semibold text-[#1e4d6f]">
-                        {gradeSummary.total}
-                      </p>
-                    </div>
-                    <div className="rounded-[8px] border border-[#d5e4ef] bg-[#f6fbff] px-3 py-2">
-                      <p className="text-xs text-[#648095]">Điểm trung bình</p>
-                      <p className="mt-1 text-xl font-semibold text-[#1e4d6f]">
-                        {gradeSummary.averageScore !== null
-                          ? formatScore(gradeSummary.averageScore)
-                          : "-"}
-                      </p>
-                    </div>
-                    <div className="rounded-[8px] border border-[#d5e4ef] bg-[#f6fbff] px-3 py-2">
-                      <p className="text-xs text-[#648095]">Đã công bố</p>
-                      <p className="mt-1 text-xl font-semibold text-[#1e4d6f]">
-                        {gradeSummary.publishedCount}
-                      </p>
-                    </div>
-                    <div className="rounded-[8px] border border-[#d5e4ef] bg-[#f6fbff] px-3 py-2">
-                      <p className="text-xs text-[#648095]">Đã chốt</p>
-                      <p className="mt-1 text-xl font-semibold text-[#1e4d6f]">
-                        {gradeSummary.lockedCount}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
-                    <div className="overflow-x-auto rounded-[8px] border border-[#d5e4ef]">
-                      <table className="min-w-[860px] text-left text-sm">
-                        <thead className="bg-[#f7fbff]">
-                          <tr className="border-b border-[#d8e5ef] text-[#305970]">
-                            <th className="px-3 py-2">Môn học</th>
-                            <th className="px-3 py-2">Điểm</th>
-                            <th className="px-3 py-2">Điểm chữ</th>
-                            <th className="px-3 py-2">Học kỳ</th>
-                            <th className="px-3 py-2">Trạng thái</th>
-                            <th className="px-3 py-2">Cập nhật</th>
+                <div className="space-y-4 px-1 py-3 sm:px-3">
+                  <div className="overflow-x-auto rounded-[8px] border border-[#b8d2e5]">
+                    <table className="min-w-[1280px] border-collapse text-left text-sm">
+                      <thead>
+                        <tr className="border-b border-[#7aafd0] bg-[#f8fcff] text-[#234d69]">
+                          <th className="w-[50px] px-3 py-3">STT</th>
+                          <th className="w-[100px] px-3 py-3">Mã MH</th>
+                          <th className="w-[140px] px-3 py-3">Nhóm/tổ môn học</th>
+                          <th className="min-w-[320px] px-3 py-3">Tên môn học</th>
+                          <th className="w-[90px] px-3 py-3">Số tín chỉ</th>
+                          <th className="w-[110px] px-3 py-3">Điểm TK (10)</th>
+                          <th className="w-[110px] px-3 py-3">Điểm TK (4)</th>
+                          <th className="w-[100px] px-3 py-3">Điểm TK (C)</th>
+                          <th className="w-[100px] px-3 py-3">Kết quả</th>
+                          <th className="w-[90px] px-3 py-3">Chi tiết</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {gradeGroupedRows.length === 0 ? (
+                          <tr>
+                            <td colSpan={10} className="px-3 py-8 text-center text-[#5f7e93]">
+                              Chưa có dữ liệu bảng điểm.
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody>
-                          {filteredGradeReports.map((item) => {
-                            const selected = selectedGradeReport?.id === item.id;
-                            const sectionInfo = item.sectionId
-                              ? gradeSectionsById[item.sectionId]
-                              : undefined;
+                        ) : null}
 
-                            return (
-                              <tr
-                                key={item.id}
-                                onClick={() => setSelectedGradeReportId(item.id)}
-                                className={`cursor-pointer border-b border-[#e0ebf4] text-[#3f6178] transition ${
-                                  selected ? "bg-[#eaf4fb]" : "hover:bg-[#f5fbff]"
-                                }`}
-                              >
-                                <td className="px-3 py-2">
-                                  <p className="font-semibold text-[#1f567b]">
-                                    {item.courseName || "-"}
-                                  </p>
-                                  <p className="text-xs text-[#5f7e93]">
-                                    {sectionInfo?.sectionCode || "Chưa có mã lớp"}
-                                  </p>
-                                </td>
-                                <td className="px-3 py-2">{formatScore(item.finalScore)}</td>
-                                <td className="px-3 py-2">{item.letterGrade || "-"}</td>
-                                <td className="px-3 py-2">
-                                  {sectionInfo
-                                    ? getSemesterDisplayLabel(
-                                        sectionInfo.semesterNumber,
-                                        sectionInfo.academicYear,
-                                      )
-                                    : "-"}
-                                </td>
-                                <td className="px-3 py-2">
-                                  <span
-                                    className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getGradeStatusClass(
-                                      item.status,
-                                    )}`}
-                                  >
-                                    {getGradeStatusLabel(item.status)}
-                                  </span>
-                                </td>
-                                <td className="px-3 py-2">
-                                  {formatDateTime(item.createdAt)}
+                        {gradeGroupedRows.map((group) => {
+                          const semesterTitle =
+                            typeof group.semesterNumber === "number" && group.academicYear
+                              ? `Học kỳ ${group.semesterNumber} - Năm học ${group.academicYear}`
+                              : group.semesterLabel;
+
+                          return (
+                            <Fragment key={group.key}>
+                              <tr className="border-y border-[#7aafd0] bg-[#eef6fc] text-[#1e4f72]">
+                                <td colSpan={10} className="px-3 py-2 font-semibold">
+                                  {semesterTitle}
                                 </td>
                               </tr>
-                            );
-                          })}
-                          {filteredGradeReports.length === 0 ? (
-                            <tr>
-                              <td
-                                colSpan={6}
-                                className="px-3 py-8 text-center text-[#577086]"
-                              >
-                                Chưa có dữ liệu điểm phù hợp với bộ lọc.
-                              </td>
-                            </tr>
-                          ) : null}
-                        </tbody>
-                      </table>
-                    </div>
 
-                    <div className="space-y-3 rounded-[8px] border border-[#d5e4ef] bg-[#f9fcff] p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <h3 className="text-base font-semibold text-[#1f567b]">
-                          Chi tiết môn học
-                        </h3>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void handleRefreshSelectedGradeDetail();
-                          }}
-                          disabled={!selectedGradeReport || isLoadingSelectedGradeReportDetail}
-                          className="rounded-[6px] border border-[#6da8c9] bg-white px-2.5 py-1 text-xs font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
-                        >
-                          {isLoadingSelectedGradeReportDetail
-                            ? "Đang tải..."
-                            : "Làm mới chi tiết"}
-                        </button>
-                      </div>
-
-                      {isLoadingSelectedGradeReportDetail ? (
-                        <p className="text-sm text-[#5f7e93]">
-                          Đang tải chi tiết điểm theo từng môn...
-                        </p>
-                      ) : null}
-
-                      {selectedGradeReportResolved ? (
-                        <>
-                          <div className="grid gap-2 sm:grid-cols-2">
-                            <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2">
-                              <p className="text-xs text-[#69849a]">Môn học</p>
-                              <p className="text-sm font-semibold text-[#1f567b]">
-                                {selectedGradeReportResolved.courseName || "-"}
-                              </p>
-                            </div>
-                            <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2">
-                              <p className="text-xs text-[#69849a]">Điểm tổng</p>
-                              <p className="text-sm font-semibold text-[#1f567b]">
-                                {formatScore(selectedGradeReportResolved.finalScore)}
-                              </p>
-                            </div>
-                            <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2">
-                              <p className="text-xs text-[#69849a]">Điểm chữ</p>
-                              <p className="text-sm font-semibold text-[#1f567b]">
-                                {selectedGradeReportResolved.letterGrade || "-"}
-                              </p>
-                            </div>
-                            <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2">
-                              <p className="text-xs text-[#69849a]">Trạng thái</p>
-                              <span
-                                className={`mt-1 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getGradeStatusClass(
-                                  selectedGradeReportResolved.status,
-                                )}`}
-                              >
-                                {getGradeStatusLabel(selectedGradeReportResolved.status)}
-                              </span>
-                            </div>
-                            <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2 sm:col-span-2">
-                              <p className="text-xs text-[#69849a]">Lớp học phần</p>
-                              <p className="text-sm font-semibold text-[#1f567b]">
-                                {selectedGradeSection?.sectionCode ||
-                                  selectedGradeSection?.displayName ||
-                                  "-"}
-                              </p>
-                              <p className="mt-1 text-xs text-[#5f7e93]">
-                                {selectedGradeSection
-                                  ? `${getSemesterDisplayLabel(
-                                      selectedGradeSection.semesterNumber,
-                                      selectedGradeSection.academicYear,
-                                    )} | GV ${selectedGradeSection.lecturerName || "-"}`
-                                  : isGradeContextLoading
-                                    ? "Đang tải thông tin lớp học phần..."
-                                    : "Chưa có thông tin lớp học phần."}
-                              </p>
-                            </div>
-                          </div>
-
-                          <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2">
-                            <p className="text-sm font-semibold text-[#1f567b]">
-                              Điểm thành phần
-                            </p>
-                            {isLoadingSelectedGradeComponents ? (
-                              <p className="mt-2 text-sm text-[#5f7e93]">
-                                Đang tải cấu hình trọng số môn học...
-                              </p>
-                            ) : selectedGradeComponentRows.length > 0 ? (
-                              <div className="mt-2 overflow-x-auto">
-                                <table className="min-w-full text-left text-sm">
-                                  <thead>
-                                    <tr className="border-b border-[#e1ecf4] text-[#44657d]">
-                                      <th className="px-2 py-1.5">Thành phần</th>
-                                      <th className="px-2 py-1.5">Tỷ trọng</th>
-                                      <th className="px-2 py-1.5">Điểm</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {selectedGradeComponentRows.map((detail, index) => (
-                                      <tr
-                                        key={
-                                          detail.id ||
-                                          detail.componentId ||
-                                          `grade-detail-${index}`
-                                        }
-                                        className="border-b border-[#edf3f8] text-[#3f6178]"
-                                      >
-                                        <td className="px-2 py-1.5">
-                                          {detail.componentName || "-"}
-                                        </td>
-                                        <td className="px-2 py-1.5">
-                                          {typeof detail.weightPercentage === "number"
-                                            ? `${detail.weightPercentage}%`
-                                            : "-"}
-                                        </td>
-                                        <td className="px-2 py-1.5">
-                                          {typeof detail.score === "number"
-                                            ? formatScore(detail.score)
-                                            : "Chưa có"}
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            ) : selectedGradeCourseId ? (
-                              <p className="mt-2 text-sm text-[#5f7e93]">
-                                Chưa có cấu hình điểm thành phần cho môn học này.
-                              </p>
-                            ) : (
-                              <p className="mt-2 text-sm text-[#5f7e93]">
-                                Chưa xác định được môn học để tải cấu trúc điểm.
-                              </p>
-                            )}
-
-                            {selectedGradeComponentRows.length > 0 ? (
-                              <div className="mt-2 grid gap-2 text-xs text-[#4e6e84] sm:grid-cols-3">
-                                <div className="rounded-[6px] border border-[#e1ecf4] bg-[#f8fbff] px-2 py-1.5">
-                                  Tổng tỷ trọng:{" "}
-                                  <span className="font-semibold">
-                                    {formatScore(selectedGradeComponentStats.totalWeight)}%
-                                  </span>
-                                </div>
-                                <div className="rounded-[6px] border border-[#e1ecf4] bg-[#f8fbff] px-2 py-1.5">
-                                  Đã có điểm:{" "}
-                                  <span className="font-semibold">
-                                    {formatScore(selectedGradeComponentStats.gradedWeight)}%
-                                  </span>
-                                </div>
-                                <div className="rounded-[6px] border border-[#e1ecf4] bg-[#f8fbff] px-2 py-1.5">
-                                  Điểm quy đổi:{" "}
-                                  <span className="font-semibold">
+                              {group.items.map((item, index) => (
+                                <tr
+                                  key={item.report.id}
+                                  className="border-b border-[#c4d9e8] text-[#1f4059] hover:bg-[#f8fcff]"
+                                >
+                                  <td className="px-3 py-2">{index + 1}</td>
+                                  <td className="px-3 py-2 font-semibold">{item.courseCode}</td>
+                                  <td className="px-3 py-2">{item.sectionCode}</td>
+                                  <td className="px-3 py-2">{item.courseName}</td>
+                                  <td className="px-3 py-2">
+                                    {typeof item.credits === "number" ? item.credits : "-"}
+                                  </td>
+                                  <td className="px-3 py-2">
                                     {formatScore(
-                                      selectedGradeComponentStats.weightedScore,
+                                      item.score10 === null ? undefined : item.score10,
                                     )}
-                                  </span>
-                                </div>
-                              </div>
-                            ) : null}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    {formatScore(
+                                      item.score4 === null ? undefined : item.score4,
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2">{item.letterGrade}</td>
+                                  <td className="px-3 py-2">
+                                    {item.passed === true ? (
+                                      <span className="font-semibold text-[#1f7a47]">✓</span>
+                                    ) : item.passed === false ? (
+                                      <span className="font-semibold text-[#bc4a4a]">✕</span>
+                                    ) : (
+                                      <span className="text-[#5f7e93]">{item.resultLabel}</span>
+                                    )}
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedGradeReportId(item.report.id);
+                                        setIsGradeDetailModalOpen(true);
+                                      }}
+                                      className="inline-flex h-7 w-7 items-center justify-center rounded-[4px] border border-[#95bdd8] text-[#1f5f8f] transition hover:bg-[#eef6fc]"
+                                      aria-label={`Xem chi tiết ${item.courseName}`}
+                                    >
+                                      ≡
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
 
-                            {hasSelectedGradeWeight && !isSelectedGradeWeightBalanced ? (
-                              <p className="mt-2 rounded-[6px] border border-[#e4c089] bg-[#fff8ef] px-2 py-1.5 text-xs text-[#8b5b0c]">
-                                Tổng tỷ trọng hiện là{" "}
-                                {formatScore(selectedGradeComponentStats.totalWeight)}%.
-                                Cấu hình chuẩn thường bằng 100%, vui lòng kiểm tra lại với
-                                cố vấn học tập nếu thấy bất thường.
-                              </p>
-                            ) : null}
-                          </div>
-                        </>
-                      ) : (
-                        <p className="text-sm text-[#5f7e93]">
-                          Chọn một môn ở bảng bên trái để xem chi tiết điểm.
-                        </p>
-                      )}
-                    </div>
+                              <tr className="border-b border-[#7aafd0] bg-[#d8ebf8] text-[#1f567b]">
+                                <td colSpan={5} className="px-3 py-2 text-xs leading-6">
+                                  <p>
+                                    - Điểm trung bình học kỳ hệ 4: {" "}
+                                    {formatScore(
+                                      group.semesterAverage4 === null
+                                        ? undefined
+                                        : group.semesterAverage4,
+                                    )}
+                                  </p>
+                                  <p>
+                                    - Điểm trung bình học kỳ hệ 10: {" "}
+                                    {formatScore(
+                                      group.semesterAverage10 === null
+                                        ? undefined
+                                        : group.semesterAverage10,
+                                    )}
+                                  </p>
+                                  <p>
+                                    - Số tín chỉ đạt học kỳ: {" "}
+                                    {group.semesterEarnedCredits === null
+                                      ? "-"
+                                      : group.semesterEarnedCredits}
+                                  </p>
+                                </td>
+                                <td colSpan={5} className="px-3 py-2 text-xs leading-6">
+                                  <p>
+                                    - Điểm trung bình tích lũy hệ 4: {" "}
+                                    {formatScore(
+                                      group.cumulativeAverage4 === null
+                                        ? undefined
+                                        : group.cumulativeAverage4,
+                                    )}
+                                  </p>
+                                  <p>
+                                    - Điểm trung bình tích lũy hệ 10: {" "}
+                                    {formatScore(
+                                      group.cumulativeAverage10 === null
+                                        ? undefined
+                                        : group.cumulativeAverage10,
+                                    )}
+                                  </p>
+                                  <p>
+                                    - Số tín chỉ tích lũy: {" "}
+                                    {group.cumulativeEarnedCredits === null
+                                      ? "-"
+                                      : group.cumulativeEarnedCredits}
+                                  </p>
+                                </td>
+                              </tr>
+                            </Fragment>
+                          );
+                        })}
+                      </tbody>
+                    </table>
                   </div>
+
+                  {isGradeDetailModalOpen ? (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0f2f47]/35 px-4">
+                      <button
+                        type="button"
+                        aria-label="Đóng chi tiết điểm"
+                        className="absolute inset-0 cursor-default"
+                        onClick={() => setIsGradeDetailModalOpen(false)}
+                      />
+                      <div className="relative w-full max-w-[840px] rounded-[16px] border border-[#d5e4ef] bg-white px-5 py-5 shadow-[0_20px_60px_rgba(15,47,71,0.22)]">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <h3 className="text-base font-semibold text-[#1f567b]">
+                            Chi tiết điểm thành phần
+                          </h3>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                void handleRefreshSelectedGradeDetail();
+                              }}
+                              disabled={!selectedGradeReport || isLoadingSelectedGradeReportDetail}
+                              className="rounded-[6px] border border-[#6da8c9] bg-white px-3 py-1.5 text-xs font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
+                            >
+                              {isLoadingSelectedGradeReportDetail
+                                ? "Đang tải..."
+                                : "Làm mới chi tiết"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setIsGradeDetailModalOpen(false)}
+                              className="rounded-[6px] border border-[#9ec3dd] bg-white px-3 py-1.5 text-xs font-semibold text-[#245977] transition hover:bg-[#edf6fd]"
+                            >
+                              Đóng
+                            </button>
+                          </div>
+                        </div>
+
+                        {selectedGradeReportResolved ? (
+                          <>
+                            <div className="mt-3 grid gap-3 md:grid-cols-2">
+                              <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2">
+                                <p className="text-xs text-[#6a8599]">Môn học</p>
+                                <p className="text-sm font-semibold text-[#1f567b]">
+                                  {selectedGradeReportResolved.courseName || "-"}
+                                </p>
+                              </div>
+                              <div className="rounded-[6px] border border-[#dbe7f1] bg-white px-3 py-2">
+                                <p className="text-xs text-[#6a8599]">Lớp học phần</p>
+                                <p className="text-sm font-semibold text-[#1f567b]">
+                                  {selectedGradeSection?.sectionCode ||
+                                    selectedGradeSection?.displayName ||
+                                    "-"}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="mt-3 max-h-[55vh] overflow-auto rounded-[6px] border border-[#dbe7f1] bg-white">
+                              <table className="min-w-full text-left text-sm">
+                                <thead className="bg-[#f7fbff]">
+                                  <tr className="border-b border-[#e1ecf4] text-[#44657d]">
+                                    <th className="px-3 py-2">Thành phần</th>
+                                    <th className="px-3 py-2">Tỷ trọng</th>
+                                    <th className="px-3 py-2">Điểm</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {selectedGradeComponentRows.map((detail, index) => (
+                                    <tr
+                                      key={detail.id || detail.componentId || `grade-detail-${index}`}
+                                      className="border-b border-[#edf3f8] text-[#3f6178]"
+                                    >
+                                      <td className="px-3 py-2">{detail.componentName || "-"}</td>
+                                      <td className="px-3 py-2">
+                                        {typeof detail.weightPercentage === "number"
+                                          ? `${detail.weightPercentage}%`
+                                          : "-"}
+                                      </td>
+                                      <td className="px-3 py-2">
+                                        {typeof detail.score === "number"
+                                          ? formatScore(detail.score)
+                                          : "-"}
+                                      </td>
+                                    </tr>
+                                  ))}
+                                  {selectedGradeComponentRows.length === 0 ? (
+                                    <tr>
+                                      <td colSpan={3} className="px-3 py-4 text-center text-[#5f7e93]">
+                                        Chưa có dữ liệu điểm thành phần.
+                                      </td>
+                                    </tr>
+                                  ) : null}
+                                </tbody>
+                              </table>
+                            </div>
+                          </>
+                        ) : (
+                          <p className="mt-3 rounded-[6px] border border-[#dbe7f1] bg-[#f8fbff] px-3 py-4 text-sm text-[#5f7e93]">
+                            Chưa có dữ liệu chi tiết để hiển thị.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </section>
             ) : null}
@@ -5728,14 +6061,16 @@ export default function DashboardPage() {
             {activeTab.key === "attendance" ? (
               <section className={contentCardClass}>
                 <div className={sectionTitleClass}>
-                  <h2>Chuyên cần sinh viên</h2>
+                  <h2>Chuyên cần của tôi</h2>
                   <div className="flex items-center gap-2">
-                    <input
-                      className="h-9 w-[180px] rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                      placeholder="Mã sinh viên"
-                      value={studentIdInput}
-                      onChange={(event) => setStudentIdInput(event.target.value)}
-                    />
+                    <span className="rounded-[4px] border border-[#c8d3dd] bg-[#f6fbff] px-3 py-1.5 text-xs text-[#47677e]">
+                      Dữ liệu cá nhân theo tài khoản đang đăng nhập
+                    </span>
+                    {attendanceLastLoadedAt ? (
+                      <span className="text-xs text-[#5f7e93]">
+                        Cập nhật: {formatDateTime(attendanceLastLoadedAt)}
+                      </span>
+                    ) : null}
                     <button
                       type="button"
                       onClick={() => {
@@ -5744,7 +6079,7 @@ export default function DashboardPage() {
                       disabled={isWorking}
                       className="h-9 rounded-[4px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                     >
-                      Tải chuyên cần
+                      {isWorking ? "Đang tải..." : "Làm mới chuyên cần"}
                     </button>
                   </div>
                 </div>
@@ -5876,7 +6211,9 @@ export default function DashboardPage() {
                         {filteredAttendanceItems.length === 0 ? (
                           <tr>
                             <td colSpan={4} className="px-2 py-4 text-center text-[#577086]">
-                              Chưa có dữ liệu điểm danh phù hợp với bộ lọc.
+                              {hasLoadedAttendance
+                                ? "Chưa có dữ liệu điểm danh phù hợp với bộ lọc."
+                                : "Nhấn 'Làm mới chuyên cần' để tải dữ liệu mới nhất."}
                             </td>
                           </tr>
                         ) : null}

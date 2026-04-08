@@ -65,10 +65,10 @@ export const studentFeatureTabs: StudentFeatureTab[] = [
     key: "grades",
     label: "Xem điểm",
     description:
-      "Tra cứu bảng điểm, xem chi tiết điểm thành phần theo cấu hình trọng số của môn học.",
+      "Tra cứu bảng điểm cá nhân theo tài khoản đăng nhập, xem chi tiết điểm thành phần theo cấu hình trọng số của môn học.",
     endpoints: [
-      { method: "GET", path: "/api/v1/students/{studentId}/grade-reports" },
-      { method: "GET", path: "/api/v1/grade-reports/{id}" },
+      { method: "GET", path: "/api/v1/students/me/grade-reports" },
+      { method: "GET", path: "/api/v1/students/me/grade-reports/{id}" },
       { method: "GET", path: "/api/v1/course-sections/{id}" },
       { method: "GET", path: "/api/v1/courses/{courseId}/grade-components" },
     ],
@@ -76,8 +76,8 @@ export const studentFeatureTabs: StudentFeatureTab[] = [
   {
     key: "attendance",
     label: "Thông tin điểm danh",
-    description: "Theo dõi thông tin điểm danh của sinh viên.",
-    endpoints: [{ method: "GET", path: "/api/v1/students/{studentId}/attendances" }],
+    description: "Theo dõi thông tin điểm danh cá nhân theo tài khoản đăng nhập.",
+    endpoints: [{ method: "GET", path: "/api/v1/students/me/attendances" }],
   },
   {
     key: "password",
