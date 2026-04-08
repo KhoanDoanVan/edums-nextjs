@@ -184,15 +184,13 @@ export const adminFeatureTabs: AdminFeatureTab[] = [
   {
     key: "attendance-management",
     label: "Quản lý điểm danh",
-    description: "Theo dõi điểm danh theo buổi học, sinh viên và phụ huynh.",
+    description:
+      "Theo dõi và hiệu chỉnh điểm danh theo lớp học phần, lịch học định kỳ và từng buổi học.",
     endpoints: [
-      { method: "GET", path: "/api/v1/students/{studentId}/attendances" },
-      {
-        method: "GET",
-        path: "/api/v1/guardians/{guardianId}/students/{studentId}/attendances",
-      },
+      { method: "GET", path: "/api/v1/course-sections" },
+      { method: "GET", path: "/api/v1/recurring-schedules/section/{sectionId}" },
+      { method: "GET", path: "/api/v1/recurring-schedules/{id}/sessions" },
       { method: "GET", path: "/api/v1/class-sessions/{sessionId}/attendances" },
-      { method: "POST", path: "/api/v1/class-sessions/{sessionId}/attendances/batch" },
       { method: "PUT", path: "/api/v1/attendances/{id}" },
       { method: "DELETE", path: "/api/v1/attendances/{id}" },
     ],
@@ -204,7 +202,7 @@ export const adminFeatureTabs: AdminFeatureTab[] = [
     endpoints: [
       { method: "GET", path: "/api/v1/admin/admissions/config/periods" },
       { method: "GET", path: "/api/v1/admin/admissions/config/periods/{id}" },
-      { method: "POST", path: "/api/v1/admin/admissions/config/periods" },
+      { method: "POST", path: "/api/v1/admin/admissions/config/periods/campaign" },
       { method: "PUT", path: "/api/v1/admin/admissions/config/periods/{id}" },
       { method: "DELETE", path: "/api/v1/admin/admissions/config/periods/{id}" },
       { method: "GET", path: "/api/v1/admin/admissions/config/blocks" },
@@ -230,7 +228,7 @@ export const adminFeatureTabs: AdminFeatureTab[] = [
     endpoints: [
       { method: "GET", path: "/api/v1/admin/admissions/config/form-options" },
       { method: "GET", path: "/api/v1/admin/admissions/applications" },
-      { method: "POST", path: "/api/v1/admin/admissions/applications/onboard" },
+      { method: "POST", path: "/api/v1/admin/admissions/applications/onboard/{periodId}" },
       { method: "GET", path: "/api/v1/roles" },
       { method: "GET", path: "/api/v1/cohorts" },
       { method: "GET", path: "/api/v1/administrative-classes" },

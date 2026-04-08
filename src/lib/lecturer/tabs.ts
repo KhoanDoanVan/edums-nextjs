@@ -20,13 +20,13 @@ export const lecturerFeatureTabs: LecturerFeatureTab[] = [
   {
     key: "attendance",
     label: "Điểm danh buổi học",
-    description: "Xem và lưu điểm danh theo từng buổi học của lớp học phần.",
+    description:
+      "Chọn buổi dạy từ lịch cá nhân rồi chấm điểm danh theo từng sinh viên.",
     endpoints: [
-      { method: "GET", path: "/api/v1/course-sections" },
-      { method: "GET", path: "/api/v1/recurring-schedules/section/{sectionId}" },
-      { method: "GET", path: "/api/v1/recurring-schedules/{id}/sessions" },
+      { method: "GET", path: "/api/v1/schedules/lecturers/me" },
       { method: "GET", path: "/api/v1/class-sessions/{sessionId}/attendances" },
       { method: "POST", path: "/api/v1/class-sessions/{sessionId}/attendances/batch" },
+      { method: "PUT", path: "/api/v1/attendances/{id}" },
     ],
   },
 ];

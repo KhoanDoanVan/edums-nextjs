@@ -17,7 +17,7 @@ export const guardianFeatureTabs: GuardianFeatureTab[] = [
     endpoints: [
       {
         method: "GET",
-        path: "/api/v1/guardians/{guardianId}/students/{studentId}/attendances",
+        path: "/api/v1/guardians/me/students/{studentId}/attendances",
       },
     ],
   },

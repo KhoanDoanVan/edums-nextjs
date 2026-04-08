@@ -5,6 +5,7 @@ import { formatDateTime, toErrorMessage } from "@/components/admin/format-utils"
 import {
   getAdmissionApplications,
   getAdmissionFormOptions,
+  getAdmissionPeriodById,
   getDynamicListByPath,
   processAdmissionOnboarding,
 } from "@/lib/admin/service";
@@ -12,7 +13,6 @@ import type {
   AdmissionApplicationStatus,
   ApplicationListItem,
   AdmissionSelectionOption,
-  DynamicRow,
   PagedRows,
 } from "@/lib/admin/types";
 
@@ -43,20 +43,18 @@ type SelectionOptionItem = {
 
 type AdmissionOnboardingReadiness = {
   periodId: number;
-  cohortId: number;
+  periodStatus: string;
+  isPeriodClosed: boolean;
   approvedCount: number;
-  requiredMajorCount: number;
-  coveredMajorCount: number;
-  missingMajorNames: string[];
   hasStudentRole: boolean;
   hasGuardianRole: boolean;
+  hasLecturerRole: boolean;
   checkedAt: string;
   canOnboard: boolean;
 };
 
 type OnboardingRunSummary = {
   periodId: number;
-  cohortId: number;
   enrolledCount: number;
   approvedRemaining: number;
   executedAt: string;
@@ -139,52 +137,6 @@ const toSelectionOptionItems = (
     .filter((item): item is SelectionOptionItem => item !== null);
 };
 
-const toCohortSelectionOptions = (rows: DynamicRow[]): SelectionOptionItem[] => {
-  return rows
-    .map((row) => {
-      const id = Number(row.id || 0);
-      if (!Number.isInteger(id) || id <= 0) {
-        return null;
-      }
-
-      const cohortName =
-        typeof row.cohortName === "string" && row.cohortName.trim()
-          ? row.cohortName.trim()
-          : `Niên khóa #${id}`;
-      const startYear = Number(row.startYear || 0);
-      const endYear = Number(row.endYear || 0);
-      const yearsLabel =
-        Number.isInteger(startYear) &&
-        startYear > 0 &&
-        Number.isInteger(endYear) &&
-        endYear > 0
-          ? ` (${startYear}-${endYear})`
-          : "";
-
-      return {
-        id,
-        label: `${cohortName}${yearsLabel}`,
-      };
-    })
-    .filter((item): item is SelectionOptionItem => item !== null);
-};
-
-const formatMissingMajorNames = (missingMajorNames: string[]): string => {
-  const cleaned = missingMajorNames
-    .map((name) => name.trim())
-    .filter((name) => name.length > 0);
-
-  if (cleaned.length === 0) {
-    return "";
-  }
-
-  if (cleaned.length <= 3) {
-    return cleaned.join(", ");
-  }
-
-  return `${cleaned.slice(0, 3).join(", ")} và ${cleaned.length - 3} ngành khác`;
-};
-
 const toAdmissionApplicationStatusLabel = (value?: string): string => {
   if (!value) {
     return "-";
@@ -211,50 +163,17 @@ const getAdmissionApplicationStatusBadgeClass = (status?: string): string => {
 const getOnboardingReadiness = async (
   token: string,
   periodId: number,
-  cohortId: number,
 ): Promise<AdmissionOnboardingReadiness> => {
-  const [approvedApplications, administrativeClasses, roles] = await Promise.all([
+  const [approvedApplications, roles, periodDetail] = await Promise.all([
     getAdmissionApplications(token, {
       periodId,
       status: "APPROVED",
       page: 0,
       size: 500,
     }),
-    getDynamicListByPath("/api/v1/administrative-classes", token, {
-      page: 0,
-      size: 500,
-    }),
     getDynamicListByPath("/api/v1/roles", token),
+    getAdmissionPeriodById(periodId, token),
   ]);
-
-  const requiredMajors = new Map<number, string>();
-  approvedApplications.rows.forEach((row) => {
-    const majorId = Number(row.majorId || 0);
-    if (!Number.isInteger(majorId) || majorId <= 0) {
-      return;
-    }
-
-    const majorName =
-      (typeof row.majorName === "string" && row.majorName.trim()) ||
-      `Ngành #${majorId}`;
-
-    requiredMajors.set(majorId, majorName);
-  });
-
-  const coveredMajorIds = new Set<number>();
-  administrativeClasses.rows.forEach((row) => {
-    const classCohortId = Number(row.cohortId || 0);
-    const classMajorId = Number(row.majorId || 0);
-
-    if (
-      Number.isInteger(classCohortId) &&
-      classCohortId === cohortId &&
-      Number.isInteger(classMajorId) &&
-      requiredMajors.has(classMajorId)
-    ) {
-      coveredMajorIds.add(classMajorId);
-    }
-  });
 
   const roleNames = new Set(
     roles.rows
@@ -262,28 +181,39 @@ const getOnboardingReadiness = async (
       .filter((name) => name.length > 0),
   );
 
-  const missingMajorNames = [...requiredMajors.entries()]
-    .filter(([majorId]) => !coveredMajorIds.has(majorId))
-    .map(([, name]) => name);
-
   const approvedCount = resolvePagedCount(approvedApplications);
   const hasStudentRole = roleNames.has("STUDENT");
   const hasGuardianRole = roleNames.has("GUARDIAN");
+  const hasLecturerRole = roleNames.has("LECTURER");
+  const rawPeriodStatus = periodDetail.status;
+  const periodStatus =
+    typeof rawPeriodStatus === "number"
+      ? rawPeriodStatus === 3
+        ? "CLOSED"
+        : rawPeriodStatus === 2
+          ? "OPEN"
+          : rawPeriodStatus === 1
+            ? "PAUSED"
+            : rawPeriodStatus === 0
+              ? "UPCOMING"
+              : "UNKNOWN"
+      : toNormalizedUpperText(rawPeriodStatus || "");
+  const isPeriodClosed = periodStatus === "CLOSED";
   const canOnboard =
     approvedCount > 0 &&
     hasStudentRole &&
     hasGuardianRole &&
-    missingMajorNames.length === 0;
+    hasLecturerRole &&
+    isPeriodClosed;
 
   return {
     periodId,
-    cohortId,
+    periodStatus: periodStatus || "UNKNOWN",
+    isPeriodClosed,
     approvedCount,
-    requiredMajorCount: requiredMajors.size,
-    coveredMajorCount: coveredMajorIds.size,
-    missingMajorNames,
     hasStudentRole,
     hasGuardianRole,
+    hasLecturerRole,
     checkedAt: new Date().toISOString(),
     canOnboard,
   };
@@ -301,12 +231,10 @@ export function AdmissionsOnboardingPanel({
   const [successMessage, setSuccessMessage] = useState("");
   const [periodOptions, setPeriodOptions] = useState<SelectionOptionItem[]>([]);
   const [majorOptions, setMajorOptions] = useState<SelectionOptionItem[]>([]);
-  const [cohortOptions, setCohortOptions] = useState<SelectionOptionItem[]>([]);
   const [applicationRows, setApplicationRows] = useState<PagedRows<ApplicationListItem>>({
     rows: [],
   });
   const [periodIdInput, setPeriodIdInput] = useState("");
-  const [cohortIdInput, setCohortIdInput] = useState("");
   const [keywordInput, setKeywordInput] = useState("");
   const [majorIdInput, setMajorIdInput] = useState("");
   const [statusInput, setStatusInput] = useState<AdmissionApplicationStatus | "">("APPROVED");
@@ -321,11 +249,6 @@ export function AdmissionsOnboardingPanel({
     const selected = periodOptions.find((item) => String(item.id) === periodIdInput);
     return selected ? selected.label : "-";
   }, [periodIdInput, periodOptions]);
-
-  const selectedCohortLabel = useMemo(() => {
-    const selected = cohortOptions.find((item) => String(item.id) === cohortIdInput);
-    return selected ? selected.label : "-";
-  }, [cohortIdInput, cohortOptions]);
 
   const onboardingStatusSummary = useMemo(() => {
     const summary: Record<AdmissionApplicationStatus, number> = {
@@ -358,23 +281,14 @@ export function AdmissionsOnboardingPanel({
     }
   };
 
-  const resolveSelectedParams = (): { periodId: number; cohortId: number } | null => {
+  const resolveSelectedPeriodId = (): number | null => {
     const periodParsed = parsePositiveInteger(periodIdInput, "Kỳ tuyển sinh");
     if (!periodParsed.value) {
       setErrorMessage(periodParsed.message || "Kỳ tuyển sinh không hợp lệ.");
       return null;
     }
 
-    const cohortParsed = parsePositiveInteger(cohortIdInput, "Niên khóa");
-    if (!cohortParsed.value) {
-      setErrorMessage(cohortParsed.message || "Niên khóa không hợp lệ.");
-      return null;
-    }
-
-    return {
-      periodId: periodParsed.value,
-      cohortId: cohortParsed.value,
-    };
+    return periodParsed.value;
   };
 
   const loadOnboardingApplications = async (
@@ -434,24 +348,15 @@ export function AdmissionsOnboardingPanel({
     }
 
     void runAction(async () => {
-      const [formOptions, cohorts] = await Promise.all([
-        getAdmissionFormOptions(authorization),
-        getDynamicListByPath("/api/v1/cohorts", authorization, {
-          page: 0,
-          size: 200,
-        }),
-      ]);
+      const formOptions = await getAdmissionFormOptions(authorization);
 
       const nextPeriodOptions = toSelectionOptionItems(formOptions.periods, "Kỳ tuyển sinh");
       const nextMajorOptions = toSelectionOptionItems(formOptions.majors, "Ngành");
-      const nextCohortOptions = toCohortSelectionOptions(cohorts.rows);
       const seedPeriodId = nextPeriodOptions[0] ? String(nextPeriodOptions[0].id) : "";
 
       setPeriodOptions(nextPeriodOptions);
       setMajorOptions(nextMajorOptions);
-      setCohortOptions(nextCohortOptions);
       setPeriodIdInput((prev) => prev || seedPeriodId);
-      setCohortIdInput((prev) => prev || (nextCohortOptions[0] ? String(nextCohortOptions[0].id) : ""));
 
       if (seedPeriodId) {
         const initialRows = await getAdmissionApplications(authorization, {
@@ -475,17 +380,13 @@ export function AdmissionsOnboardingPanel({
       return;
     }
 
-    const selected = resolveSelectedParams();
-    if (!selected) {
+    const periodId = resolveSelectedPeriodId();
+    if (!periodId) {
       return;
     }
 
     await runAction(async () => {
-      const nextReadiness = await getOnboardingReadiness(
-        authorization,
-        selected.periodId,
-        selected.cohortId,
-      );
+      const nextReadiness = await getOnboardingReadiness(authorization, periodId);
       setReadiness(nextReadiness);
       setRunSummary(null);
       setShowConfirmStep(false);
@@ -503,17 +404,20 @@ export function AdmissionsOnboardingPanel({
         return;
       }
 
-      if (nextReadiness.missingMajorNames.length > 0) {
+      if (!nextReadiness.hasLecturerRole) {
         setErrorMessage(
-          `Thiếu lớp hành chính cho các ngành: ${formatMissingMajorNames(
-            nextReadiness.missingMajorNames,
-          )}.`,
+          "Thiếu role bắt buộc LECTURER. Vui lòng kiểm tra dữ liệu hệ thống.",
         );
         return;
       }
 
+      if (!nextReadiness.isPeriodClosed) {
+        setErrorMessage("Chỉ có thể chốt nhập học khi kỳ tuyển sinh đã đóng (CLOSED).");
+        return;
+      }
+
       setSuccessMessage(
-        `Đủ điều kiện chốt nhập học: ${nextReadiness.approvedCount} hồ sơ đã duyệt, ${nextReadiness.coveredMajorCount}/${nextReadiness.requiredMajorCount} ngành đã có lớp.`,
+        `Đủ điều kiện chốt nhập học: ${nextReadiness.approvedCount} hồ sơ đã duyệt, kỳ hiện tại ở trạng thái CLOSED.`,
       );
     });
   };
@@ -536,39 +440,18 @@ export function AdmissionsOnboardingPanel({
     }
 
     await runAction(async () => {
-      const [formOptions, cohorts] = await Promise.all([
-        getAdmissionFormOptions(authorization),
-        getDynamicListByPath("/api/v1/cohorts", authorization, {
-          page: 0,
-          size: 200,
-        }),
-      ]);
+      const formOptions = await getAdmissionFormOptions(authorization);
 
       const nextPeriodOptions = toSelectionOptionItems(formOptions.periods, "Kỳ tuyển sinh");
       const nextMajorOptions = toSelectionOptionItems(formOptions.majors, "Ngành");
-      const nextCohortOptions = toCohortSelectionOptions(cohorts.rows);
 
       setPeriodOptions(nextPeriodOptions);
       setMajorOptions(nextMajorOptions);
-      setCohortOptions(nextCohortOptions);
 
       const selectedPeriodId = Number(periodIdInput);
-      const selectedCohortId = Number(cohortIdInput);
-      if (
-        Number.isInteger(selectedPeriodId) &&
-        selectedPeriodId > 0 &&
-        Number.isInteger(selectedCohortId) &&
-        selectedCohortId > 0
-      ) {
-        const latestReadiness = await getOnboardingReadiness(
-          authorization,
-          selectedPeriodId,
-          selectedCohortId,
-        );
-        setReadiness(latestReadiness);
-      }
-
       if (Number.isInteger(selectedPeriodId) && selectedPeriodId > 0) {
+        const latestReadiness = await getOnboardingReadiness(authorization, selectedPeriodId);
+        setReadiness(latestReadiness);
         await loadOnboardingApplications();
       }
 
@@ -618,17 +501,13 @@ export function AdmissionsOnboardingPanel({
       return;
     }
 
-    const selected = resolveSelectedParams();
-    if (!selected) {
+    const periodId = resolveSelectedPeriodId();
+    if (!periodId) {
       return;
     }
 
     await runAction(async () => {
-      const latestReadiness = await getOnboardingReadiness(
-        authorization,
-        selected.periodId,
-        selected.cohortId,
-      );
+      const latestReadiness = await getOnboardingReadiness(authorization, periodId);
       setReadiness(latestReadiness);
 
       if (!latestReadiness.canOnboard) {
@@ -644,36 +523,23 @@ export function AdmissionsOnboardingPanel({
           return;
         }
 
-        if (latestReadiness.missingMajorNames.length > 0) {
+        if (!latestReadiness.hasLecturerRole) {
           setErrorMessage(
-            `Chưa thể chốt nhập học vì thiếu lớp hành chính cho các ngành: ${formatMissingMajorNames(
-              latestReadiness.missingMajorNames,
-            )}.`,
+            "Thiếu role bắt buộc LECTURER. Vui lòng kiểm tra dữ liệu hệ thống.",
           );
+          return;
+        }
+
+        if (!latestReadiness.isPeriodClosed) {
+          setErrorMessage("Chỉ có thể chốt nhập học khi kỳ tuyển sinh đã đóng (CLOSED).");
           return;
         }
       }
 
-      await processAdmissionOnboarding(
-        {
-          periodId: selected.periodId,
-          cohortId: selected.cohortId,
-        },
-        authorization,
-      ).catch((error: unknown) => {
+      await processAdmissionOnboarding(periodId, authorization).catch((error: unknown) => {
         const message = toErrorMessage(error);
         const rawMessage = error instanceof Error ? error.message.toLowerCase() : "";
         const normalizedMessage = message.toLowerCase();
-
-        if (
-          rawMessage.includes("class_id") ||
-          rawMessage.includes("fk_students_on_class") ||
-          rawMessage.includes("administrative_classes")
-        ) {
-          throw new Error(
-            "Chưa thể chốt nhập học do hệ thống chưa gán lớp hành chính cho sinh viên khi tạo hồ sơ. Vui lòng kiểm tra backend onboarding.",
-          );
-        }
 
         if (
           rawMessage.includes("[api 500]") ||
@@ -681,7 +547,7 @@ export function AdmissionsOnboardingPanel({
           normalizedMessage.includes("500")
         ) {
           throw new Error(
-            "Hệ thống đang lỗi khi chốt nhập học (500). Vui lòng thử lại sau, hoặc kiểm tra dữ liệu lớp/role và log backend.",
+            "Hệ thống đang lỗi khi chốt nhập học (500). Vui lòng kiểm tra điều kiện kỳ CLOSED, role và log backend.",
           );
         }
         throw error;
@@ -689,13 +555,13 @@ export function AdmissionsOnboardingPanel({
 
       const [enrolledRows, approvedRows] = await Promise.all([
         getAdmissionApplications(authorization, {
-          periodId: selected.periodId,
+          periodId,
           status: "ENROLLED",
           page: 0,
           size: 500,
         }),
         getAdmissionApplications(authorization, {
-          periodId: selected.periodId,
+          periodId,
           status: "APPROVED",
           page: 0,
           size: 500,
@@ -703,20 +569,17 @@ export function AdmissionsOnboardingPanel({
       ]);
 
       setRunSummary({
-        periodId: selected.periodId,
-        cohortId: selected.cohortId,
+        periodId,
         enrolledCount: resolvePagedCount(enrolledRows),
         approvedRemaining: resolvePagedCount(approvedRows),
         executedAt: new Date().toISOString(),
       });
       await loadOnboardingApplications({
-        periodId: String(selected.periodId),
+        periodId: String(periodId),
       });
       setShowConfirmStep(false);
       setConfirmChecked(false);
-      setSuccessMessage(
-        `Đã chốt nhập học kỳ #${selected.periodId}, niên khóa #${selected.cohortId}.`,
-      );
+      setSuccessMessage(`Đã chốt nhập học kỳ #${periodId}.`);
     });
   };
 
@@ -747,7 +610,7 @@ export function AdmissionsOnboardingPanel({
             <p className="text-xs font-semibold uppercase tracking-wide text-[#1a4f75]">
               Thông Tin Chốt
             </p>
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid gap-2 sm:grid-cols-1">
               <select
                 className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
                 value={periodIdInput}
@@ -776,24 +639,6 @@ export function AdmissionsOnboardingPanel({
                 <option value="">Chọn kỳ tuyển sinh</option>
                 {periodOptions.map((option) => (
                   <option key={`onboard-period-${option.id}`} value={option.id}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <select
-                className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-                value={cohortIdInput}
-                onChange={(event) => {
-                  setCohortIdInput(event.target.value);
-                  setReadiness(null);
-                  setRunSummary(null);
-                  setShowConfirmStep(false);
-                  setConfirmChecked(false);
-                }}
-              >
-                <option value="">Chọn niên khóa</option>
-                {cohortOptions.map((option) => (
-                  <option key={`onboard-cohort-${option.id}`} value={option.id}>
                     {option.label}
                   </option>
                 ))}
@@ -985,22 +830,18 @@ export function AdmissionsOnboardingPanel({
                 Sẵn Sàng Chốt
               </p>
               <p>Kỳ tuyển sinh: {selectedPeriodLabel}</p>
-              <p>Niên khóa: {selectedCohortLabel}</p>
+              <p>Trạng thái kỳ: {readiness.periodStatus}</p>
               <p>Hồ sơ đã duyệt: {readiness.approvedCount}</p>
               <p>
-                Ngành có lớp phù hợp: {readiness.coveredMajorCount}/{readiness.requiredMajorCount}
-              </p>
-              <p>
                 Role bắt buộc: STUDENT {readiness.hasStudentRole ? "OK" : "Thiếu"} - GUARDIAN{" "}
-                {readiness.hasGuardianRole ? "OK" : "Thiếu"}
+                {readiness.hasGuardianRole ? "OK" : "Thiếu"} - LECTURER{" "}
+                {readiness.hasLecturerRole ? "OK" : "Thiếu"}
               </p>
-              {readiness.missingMajorNames.length > 0 ? (
-                <p className="text-[#9f2f2f]">
-                  Thiếu lớp hành chính cho: {formatMissingMajorNames(readiness.missingMajorNames)}
-                </p>
-              ) : (
-                <p className="text-[#2f7b4f]">Đủ điều kiện dữ liệu để chốt nhập học.</p>
-              )}
+              <p className={readiness.isPeriodClosed ? "text-[#2f7b4f]" : "text-[#9f2f2f]"}>
+                {readiness.isPeriodClosed
+                  ? "Kỳ tuyển sinh đã CLOSED, có thể chốt nhập học."
+                  : "Kỳ tuyển sinh chưa CLOSED, chưa thể chốt nhập học."}
+              </p>
               <p className="text-xs text-[#5a7589]">
                 Thời điểm kiểm tra: {formatDateTime(readiness.checkedAt)}
               </p>
@@ -1012,9 +853,7 @@ export function AdmissionsOnboardingPanel({
               <p className="text-xs font-semibold uppercase tracking-wide text-[#1a4f75]">
                 Kết Quả Sau Chốt
               </p>
-              <p>
-                Đã chạy cho kỳ #{runSummary.periodId}, niên khóa #{runSummary.cohortId}
-              </p>
+              <p>Đã chạy cho kỳ #{runSummary.periodId}</p>
               <p>Hồ sơ ENROLLED hiện tại: {runSummary.enrolledCount}</p>
               <p>Hồ sơ APPROVED còn lại: {runSummary.approvedRemaining}</p>
               <p className="text-[#9f2f2f]">
@@ -1084,20 +923,17 @@ export function AdmissionsOnboardingPanel({
 
             <div className="space-y-3 px-5 py-4 text-sm text-[#284a60]">
               <p>
-                Bạn sắp chạy chốt nhập học cho <span className="font-semibold">{selectedPeriodLabel}</span>{" "}
-                và <span className="font-semibold">{selectedCohortLabel}</span>.
+                Bạn sắp chạy chốt nhập học cho <span className="font-semibold">{selectedPeriodLabel}</span>.
               </p>
               <div className="grid gap-2 sm:grid-cols-3">
                 <p className="rounded-[6px] border border-[#d7e7f3] bg-[#f8fcff] px-3 py-2 text-xs">
                   APPROVED hiện tại: <span className="font-semibold">{readiness?.approvedCount ?? 0}</span>
                 </p>
                 <p className="rounded-[6px] border border-[#d7e7f3] bg-[#f8fcff] px-3 py-2 text-xs">
-                  Ngành cần lớp:{" "}
-                  <span className="font-semibold">{readiness?.requiredMajorCount ?? 0}</span>
+                  Trạng thái kỳ: <span className="font-semibold">{readiness?.periodStatus ?? "-"}</span>
                 </p>
                 <p className="rounded-[6px] border border-[#d7e7f3] bg-[#f8fcff] px-3 py-2 text-xs">
-                  Ngành đã có lớp:{" "}
-                  <span className="font-semibold">{readiness?.coveredMajorCount ?? 0}</span>
+                  Sẵn sàng chốt: <span className="font-semibold">{readiness?.canOnboard ? "Có" : "Không"}</span>
                 </p>
               </div>
               <label className="inline-flex items-center gap-2">
@@ -1107,7 +943,7 @@ export function AdmissionsOnboardingPanel({
                   onChange={(event) => setConfirmChecked(event.target.checked)}
                   disabled={isWorking}
                 />
-                Tôi xác nhận đã kiểm tra dữ liệu lớp và đồng ý chốt nhập học
+                Tôi xác nhận đã kiểm tra điều kiện kỳ tuyển sinh và đồng ý chốt nhập học
               </label>
             </div>
 

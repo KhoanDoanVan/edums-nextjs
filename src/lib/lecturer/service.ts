@@ -2,6 +2,7 @@ import { apiRequest } from "@/lib/api/client";
 import type { ApiResponse } from "@/lib/api/types";
 import type {
   AttendanceBatchRequest,
+  AttendanceUpdateRequest,
   AttendanceResponse,
   ClassSessionResponse,
   CourseSectionResponse,
@@ -179,4 +180,21 @@ export const saveAttendancesBySession = async (
   );
 
   return toArray<AttendanceResponse>(unwrapApiData<unknown>(response));
+};
+
+export const updateAttendance = async (
+  attendanceId: number,
+  payload: AttendanceUpdateRequest,
+  authorization: string,
+): Promise<AttendanceResponse> => {
+  const response = await apiRequest<ApiResponse<unknown> | unknown>(
+    `/api/v1/attendances/${attendanceId}`,
+    {
+      method: "PUT",
+      body: payload,
+      accessToken: authorization,
+    },
+  );
+
+  return unwrapApiData<AttendanceResponse>(response);
 };

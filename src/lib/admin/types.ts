@@ -185,6 +185,13 @@ export interface AdmissionOnboardingPayload {
   cohortId: number;
 }
 
+export interface AdmissionCampaignCreatePayload {
+  periodName: string;
+  startTime: string;
+  endTime: string;
+  benchmarks: AdmissionBenchmarkItem[];
+}
+
 export interface AdmissionPeriodUpsertPayload {
   periodName: string;
   startTime: string;

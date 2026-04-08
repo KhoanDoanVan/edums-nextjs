@@ -137,12 +137,11 @@ export const getStudentById = async (
 };
 
 export const getGuardianStudentAttendances = async (
-  guardianId: number,
   studentId: number,
   authorization: string,
 ): Promise<AttendanceResponse[]> => {
   const response = await apiRequest<ApiResponse<unknown> | unknown>(
-    `/api/v1/guardians/${guardianId}/students/${studentId}/attendances`,
+    `/api/v1/guardians/me/students/${studentId}/attendances`,
     {
       method: "GET",
       accessToken: authorization,

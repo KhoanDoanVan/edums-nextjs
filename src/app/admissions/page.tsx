@@ -103,8 +103,10 @@ const parseLookupApiErrorMessage = (error: unknown): string | null => {
 const emptyApplyForm = {
   fullName: "",
   dateOfBirth: "",
+  gender: true,
   email: "",
   phone: "",
+  guardianPhone: "",
   nationalId: "",
   address: "",
   totalScore: "",
@@ -180,9 +182,21 @@ export default function PublicAdmissionsPage() {
           }
           return periods[0] ? String(periods[0].id) : "";
         });
+        if (periods.length === 0) {
+          setErrorMessage(
+            "Hiện chưa có kỳ tuyển sinh đang mở hoặc sắp mở. Vui lòng liên hệ quản trị để cấu hình kỳ tuyển sinh.",
+          );
+        }
       } catch (error) {
         if (!cancelled) {
-          setErrorMessage(toErrorMessage(error));
+          const message = toErrorMessage(error);
+          if (message.includes("[API 404]")) {
+            setErrorMessage(
+              "Hệ thống chưa cấu hình API kỳ tuyển sinh công khai. Vui lòng liên hệ quản trị.",
+            );
+            return;
+          }
+          setErrorMessage(message);
         }
       } finally {
         if (!cancelled) {
@@ -309,11 +323,17 @@ export default function PublicAdmissionsPage() {
     if (Number.isNaN(birthDate.getTime()) || birthDate >= now) {
       return "Ngày sinh phải là ngày trong quá khứ.";
     }
+    if (typeof payload.gender !== "boolean") {
+      return "Vui lòng chọn giới tính.";
+    }
     if (!emailRegex.test(payload.email)) {
       return "Email không hợp lệ.";
     }
     if (!phoneRegex.test(payload.phone)) {
       return "Số điện thoại không hợp lệ (đúng định dạng 03/05/07/08/09 + 8 số).";
+    }
+    if (!phoneRegex.test(payload.guardianPhone)) {
+      return "Số điện thoại phụ huynh không hợp lệ (đúng định dạng 03/05/07/08/09 + 8 số).";
     }
     if (!nationalIdRegex.test(payload.nationalId)) {
       return "CCCD phải gồm đúng 12 chữ số.";
@@ -334,8 +354,10 @@ export default function PublicAdmissionsPage() {
         selectedBlockId &&
         applyForm.fullName.trim() &&
         applyForm.dateOfBirth &&
+        typeof applyForm.gender === "boolean" &&
         applyForm.email.trim() &&
         applyForm.phone.trim() &&
+        applyForm.guardianPhone.trim() &&
         applyForm.nationalId.trim() &&
         applyForm.address.trim() &&
         applyForm.totalScore.trim(),
@@ -364,6 +386,9 @@ export default function PublicAdmissionsPage() {
     }
     if (!applyForm.phone.trim()) {
       missing.push("số điện thoại");
+    }
+    if (!applyForm.guardianPhone.trim()) {
+      missing.push("số điện thoại phụ huynh");
     }
     if (!applyForm.nationalId.trim()) {
       missing.push("CCCD");
@@ -402,8 +427,10 @@ export default function PublicAdmissionsPage() {
     const payload: PublicAdmissionApplyPayload = {
       fullName: applyForm.fullName.trim(),
       dateOfBirth: applyForm.dateOfBirth,
+      gender: applyForm.gender,
       email: applyForm.email.trim(),
       phone: applyForm.phone.trim(),
+      guardianPhone: applyForm.guardianPhone.trim(),
       nationalId: applyForm.nationalId.trim(),
       address: applyForm.address.trim(),
       periodId,
@@ -572,6 +599,32 @@ export default function PublicAdmissionsPage() {
                     onChange={(event) =>
                       setApplyForm((prev) => ({ ...prev, dateOfBirth: event.target.value }))
                     }
+                  />
+                </div>
+
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <select
+                    className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                    value={applyForm.gender ? "male" : "female"}
+                    onChange={(event) =>
+                      setApplyForm((prev) => ({
+                        ...prev,
+                        gender: event.target.value === "male",
+                      }))
+                    }
+                  >
+                    <option value="male">Nam</option>
+                    <option value="female">Nữ</option>
+                  </select>
+                  <input
+                    className="h-10 rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                    placeholder="Số điện thoại phụ huynh"
+                    value={applyForm.guardianPhone}
+                    onChange={(event) =>
+                      setApplyForm((prev) => ({ ...prev, guardianPhone: event.target.value }))
+                    }
+                    inputMode="numeric"
+                    maxLength={10}
                   />
                 </div>
 

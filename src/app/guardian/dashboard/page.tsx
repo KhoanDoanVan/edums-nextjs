@@ -718,10 +718,9 @@ export default function GuardianDashboardPage() {
     }
 
     const authorization = session?.authorization;
-    const guardianId = guardianProfile?.id;
     const studentId = selectedStudentIdValue;
 
-    if (!authorization || !guardianId || !studentId) {
+    if (!authorization || !studentId) {
       setAttendanceItems([]);
       return;
     }
@@ -731,11 +730,7 @@ export default function GuardianDashboardPage() {
 
     const loadAttendances = async () => {
       try {
-        const data = await getGuardianStudentAttendances(
-          guardianId,
-          studentId,
-          authorization,
-        );
+        const data = await getGuardianStudentAttendances(studentId, authorization);
 
         if (cancelled) {
           return;
@@ -765,7 +760,6 @@ export default function GuardianDashboardPage() {
     };
   }, [
     activeTabKey,
-    guardianProfile?.id,
     selectedStudentIdValue,
     session?.authorization,
   ]);

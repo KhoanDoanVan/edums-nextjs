@@ -105,3 +105,8 @@ export interface AttendanceItemRequest {
 export interface AttendanceBatchRequest {
   items: AttendanceItemRequest[];
 }
+
+export interface AttendanceUpdateRequest {
+  status: AttendanceStatus;
+  note?: string;
+}

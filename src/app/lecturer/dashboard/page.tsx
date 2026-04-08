@@ -14,9 +14,8 @@ import {
   getGradeReportById,
   getGradeReportsBySection,
   getMyLecturerSchedule,
-  getRecurringSchedulesBySection,
-  getRecurringScheduleSessions,
   saveAttendancesBySession,
+  updateAttendance,
 } from "@/lib/lecturer/service";
 import { lecturerFeatureTabs } from "@/lib/lecturer/tabs";
 import type {
@@ -267,6 +266,95 @@ const getScheduleValue = (
   return "-";
 };
 
+const getNumericValueFromRow = (
+  row: LecturerScheduleRow,
+  keys: string[],
+): number | undefined => {
+  for (const key of keys) {
+    if (!(key in row)) {
+      continue;
+    }
+
+    const rawValue = row[key];
+    if (typeof rawValue === "number" && Number.isInteger(rawValue)) {
+      return rawValue;
+    }
+
+    if (typeof rawValue === "string") {
+      const parsed = Number(rawValue);
+      if (Number.isInteger(parsed)) {
+        return parsed;
+      }
+    }
+  }
+
+  return undefined;
+};
+
+const getStringValueFromRow = (
+  row: LecturerScheduleRow,
+  keys: string[],
+): string | undefined => {
+  for (const key of keys) {
+    if (!(key in row)) {
+      continue;
+    }
+
+    const normalized = normalizeTextValue(toDisplayValue(row[key]));
+    if (normalized && normalized !== "-") {
+      return normalized;
+    }
+  }
+
+  return undefined;
+};
+
+const toAttendanceSessionsFromSchedule = (
+  rows: LecturerScheduleRow[],
+): ClassSessionResponse[] => {
+  const sessions = rows
+    .map((row) => {
+      const sessionId = getNumericValueFromRow(row, ["sessionId", "classSessionId", "id"]);
+      if (!sessionId || sessionId <= 0) {
+        return null;
+      }
+
+      return {
+        id: sessionId,
+        sectionId: getNumericValueFromRow(row, ["sectionId", "courseSectionId"]),
+        sectionCode: getStringValueFromRow(row, ["sectionCode", "sectionName"]),
+        classroomName: getStringValueFromRow(row, ["classroomName", "roomName"]),
+        sessionDate: getStringValueFromRow(row, ["sessionDate", "date", "lessonDate"]),
+        startPeriod: getNumericValueFromRow(row, ["startPeriod", "fromPeriod"]),
+        endPeriod: getNumericValueFromRow(row, ["endPeriod", "toPeriod"]),
+        status:
+          (getStringValueFromRow(row, ["status", "sessionStatus"]) as
+            | "NORMAL"
+            | "CANCELLED"
+            | "RESCHEDULED"
+            | undefined) || undefined,
+      } as ClassSessionResponse;
+    })
+    .filter((item): item is ClassSessionResponse => item !== null);
+
+  const deduped = Array.from(
+    new Map(sessions.map((session) => [session.id, session])).values(),
+  );
+
+  deduped.sort((first, second) => {
+    const firstDate = first.sessionDate || "";
+    const secondDate = second.sessionDate || "";
+
+    if (firstDate === secondDate) {
+      return (first.startPeriod || 0) - (second.startPeriod || 0);
+    }
+
+    return firstDate.localeCompare(secondDate);
+  });
+
+  return deduped;
+};
+
 export default function LecturerDashboardPage() {
   const { session, logout } = useAuth();
 
@@ -300,8 +388,10 @@ export default function LecturerDashboardPage() {
   );
   const [isGradeLoading, setIsGradeLoading] = useState(false);
 
-  const [selectedAttendanceSectionId, setSelectedAttendanceSectionId] =
-    useState("");
+  const [attendanceStartDate, setAttendanceStartDate] = useState(
+    formatDateInput(-3),
+  );
+  const [attendanceEndDate, setAttendanceEndDate] = useState(formatDateInput(7));
   const [attendanceSessions, setAttendanceSessions] = useState<ClassSessionResponse[]>(
     [],
   );
@@ -501,6 +591,11 @@ export default function LecturerDashboardPage() {
     return summary;
   }, [attendanceItems]);
 
+  const attendanceDateRangeInvalid =
+    attendanceStartDate &&
+    attendanceEndDate &&
+    attendanceStartDate > attendanceEndDate;
+
   useEffect(() => {
     const authorization = session?.authorization;
 
@@ -558,21 +653,6 @@ export default function LecturerDashboardPage() {
       lecturerSections.length > 0 ? String(lecturerSections[0].id) : "",
     );
   }, [lecturerSections, selectedGradeSectionId]);
-
-  useEffect(() => {
-    if (selectedAttendanceSectionId) {
-      const stillValid = lecturerSections.some(
-        (section) => String(section.id) === selectedAttendanceSectionId,
-      );
-      if (stillValid) {
-        return;
-      }
-    }
-
-    setSelectedAttendanceSectionId(
-      lecturerSections.length > 0 ? String(lecturerSections[0].id) : "",
-    );
-  }, [lecturerSections, selectedAttendanceSectionId]);
 
   useEffect(() => {
     if (activeTabKey !== "grades") {
@@ -695,9 +775,14 @@ export default function LecturerDashboardPage() {
     }
 
     const authorization = session?.authorization;
-    const sectionId = parsePositiveInteger(selectedAttendanceSectionId);
 
-    if (!authorization || !sectionId) {
+    if (!authorization) {
+      setAttendanceSessions([]);
+      setSelectedAttendanceSessionId("");
+      return;
+    }
+
+    if (!attendanceStartDate || !attendanceEndDate || attendanceDateRangeInvalid) {
       setAttendanceSessions([]);
       setSelectedAttendanceSessionId("");
       return;
@@ -706,46 +791,27 @@ export default function LecturerDashboardPage() {
     let cancelled = false;
     setIsAttendanceSessionLoading(true);
 
-    const loadSessionsBySection = async () => {
+    const loadSessionsByDateRange = async () => {
       try {
-        const recurringSchedules = await getRecurringSchedulesBySection(
-          sectionId,
+        const rows = await getMyLecturerSchedule(
+          attendanceStartDate,
+          attendanceEndDate,
           authorization,
-        );
-
-        const sessionsNested = await Promise.all(
-          recurringSchedules
-            .map((schedule) => schedule.id)
-            .filter((id): id is number => Number.isInteger(id) && id > 0)
-            .map((scheduleId) =>
-              getRecurringScheduleSessions(scheduleId, authorization).catch(() => []),
-            ),
         );
 
         if (cancelled) {
           return;
         }
 
-        const mergedSessions = sessionsNested.flat();
-        const deduped = Array.from(
-          new Map(mergedSessions.map((session) => [session.id, session])).values(),
-        );
+        const mappedSessions = toAttendanceSessionsFromSchedule(rows);
 
-        deduped.sort((first, second) => {
-          const firstDate = first.sessionDate || "";
-          const secondDate = second.sessionDate || "";
-
-          if (firstDate === secondDate) {
-            return (first.startPeriod || 0) - (second.startPeriod || 0);
+        setAttendanceSessions(mappedSessions);
+        setSelectedAttendanceSessionId((current) => {
+          if (current && mappedSessions.some((sessionItem) => String(sessionItem.id) === current)) {
+            return current;
           }
-
-          return firstDate.localeCompare(secondDate);
+          return mappedSessions.length > 0 ? String(mappedSessions[0].id) : "";
         });
-
-        setAttendanceSessions(deduped);
-        setSelectedAttendanceSessionId(
-          deduped.length > 0 ? String(deduped[0].id) : "",
-        );
         setAttendanceItems([]);
         setAttendanceDraftByRegistrationId({});
       } catch (error) {
@@ -758,7 +824,7 @@ export default function LecturerDashboardPage() {
         setAttendanceItems([]);
         setAttendanceDraftByRegistrationId({});
         setTabError(
-          toErrorMessage(error, "Không thể tải danh sách buổi học của lớp đã chọn."),
+          toErrorMessage(error, "Không thể tải danh sách buổi dạy theo khoảng ngày đã chọn."),
         );
       } finally {
         if (!cancelled) {
@@ -767,12 +833,18 @@ export default function LecturerDashboardPage() {
       }
     };
 
-    void loadSessionsBySection();
+    void loadSessionsByDateRange();
 
     return () => {
       cancelled = true;
     };
-  }, [activeTabKey, selectedAttendanceSectionId, session?.authorization]);
+  }, [
+    activeTabKey,
+    attendanceEndDate,
+    attendanceDateRangeInvalid,
+    attendanceStartDate,
+    session?.authorization,
+  ]);
 
   useEffect(() => {
     if (activeTabKey !== "attendance") {
@@ -813,8 +885,7 @@ export default function LecturerDashboardPage() {
           );
         });
 
-        const nextDraft: Record<number, { status: AttendanceStatus; note: string }> =
-          {};
+        const nextDraft: Record<number, { status: AttendanceStatus; note: string }> = {};
 
         sortedItems.forEach((item) => {
           if (!item.courseRegistrationId || item.courseRegistrationId <= 0) {
@@ -827,8 +898,84 @@ export default function LecturerDashboardPage() {
           };
         });
 
-        setAttendanceItems(sortedItems);
-        setAttendanceDraftByRegistrationId(nextDraft);
+        if (sortedItems.length > 0) {
+          setAttendanceItems(sortedItems);
+          setAttendanceDraftByRegistrationId(nextDraft);
+          return;
+        }
+
+        const selectedSession = attendanceSessions.find(
+          (sessionItem) => sessionItem.id === sessionId,
+        );
+        const sectionId = selectedSession?.sectionId;
+
+        if (!sectionId || sectionId <= 0) {
+          setAttendanceItems([]);
+          setAttendanceDraftByRegistrationId({});
+          setTabMessage(
+            "Buổi học chưa có điểm danh và chưa xác định được lớp để dựng danh sách chấm lần đầu.",
+          );
+          return;
+        }
+
+        const fallbackReports = await getGradeReportsBySection(sectionId, authorization);
+        if (cancelled) {
+          return;
+        }
+
+        const fallbackItems = fallbackReports
+          .map((report, index) => {
+            const registrationId = report.registrationId;
+            if (!registrationId || registrationId <= 0) {
+              return null;
+            }
+
+            return {
+              id: -(registrationId + index + 1),
+              sessionId,
+              sessionDate: selectedSession?.sessionDate,
+              courseRegistrationId: registrationId,
+              studentId: report.studentId,
+              studentName: report.studentName,
+              studentCode: report.studentCode,
+              status: "PRESENT" as AttendanceStatus,
+              note: "",
+            } as AttendanceResponse;
+          })
+          .filter((item): item is AttendanceResponse => item !== null)
+          .sort((first, second) => {
+            const firstCode = normalizeTextValue(first.studentCode).toLowerCase();
+            const secondCode = normalizeTextValue(second.studentCode).toLowerCase();
+
+            if (firstCode && secondCode && firstCode !== secondCode) {
+              return firstCode.localeCompare(secondCode);
+            }
+
+            return normalizeTextValue(first.studentName).localeCompare(
+              normalizeTextValue(second.studentName),
+              "vi",
+            );
+          });
+
+        const fallbackDraft: Record<number, { status: AttendanceStatus; note: string }> = {};
+        fallbackItems.forEach((item) => {
+          if (!item.courseRegistrationId || item.courseRegistrationId <= 0) {
+            return;
+          }
+
+          fallbackDraft[item.courseRegistrationId] = {
+            status: "PRESENT",
+            note: "",
+          };
+        });
+
+        setAttendanceItems(fallbackItems);
+        setAttendanceDraftByRegistrationId(fallbackDraft);
+        setTabMessage(
+          fallbackItems.length > 0
+            ? "Buổi này chưa có dữ liệu điểm danh, hệ thống đã dựng sẵn danh sách để chấm lần đầu."
+            : "Buổi này chưa có dữ liệu điểm danh và chưa có danh sách đăng ký hợp lệ để chấm lần đầu.",
+        );
       } catch (error) {
         if (cancelled) {
           return;
@@ -851,7 +998,12 @@ export default function LecturerDashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [activeTabKey, selectedAttendanceSessionId, session?.authorization]);
+  }, [
+    activeTabKey,
+    attendanceSessions,
+    selectedAttendanceSessionId,
+    session?.authorization,
+  ]);
 
   const handleLoadSchedule = async () => {
     const authorization = session?.authorization;
@@ -930,35 +1082,54 @@ export default function LecturerDashboardPage() {
       return;
     }
 
-    const payloadItems = attendanceItems
-      .map((item) => {
-        const registrationId = item.courseRegistrationId;
-        if (!registrationId || registrationId <= 0) {
-          return null;
+    const creationPayload: Array<{
+      courseRegistrationId: number;
+      status: AttendanceStatus;
+      note: string;
+    }> = [];
+    const updatePayload: Array<{
+      attendanceId: number;
+      status: AttendanceStatus;
+      note: string;
+    }> = [];
+
+    attendanceItems.forEach((item) => {
+      const registrationId = item.courseRegistrationId;
+      if (!registrationId || registrationId <= 0) {
+        return;
+      }
+
+      const draft = attendanceDraftByRegistrationId[registrationId];
+      const status = draft?.status || item.status || "PRESENT";
+      const note = normalizeTextValue(draft?.note ?? item.note ?? "");
+      const attendanceId = typeof item.id === "number" ? item.id : Number(item.id || 0);
+
+      if (Number.isInteger(attendanceId) && attendanceId > 0) {
+        const currentStatus = item.status || "PRESENT";
+        const currentNote = normalizeTextValue(item.note || "");
+        const hasChanged = currentStatus !== status || currentNote !== note;
+
+        if (!hasChanged) {
+          return;
         }
 
-        const draft = attendanceDraftByRegistrationId[registrationId];
-        const status = draft?.status || item.status || "PRESENT";
-        const note = draft?.note ?? item.note ?? "";
-
-        return {
-          courseRegistrationId: registrationId,
+        updatePayload.push({
+          attendanceId,
           status,
-          note: normalizeTextValue(note),
-        };
-      })
-      .filter(
-        (
-          item,
-        ): item is {
-          courseRegistrationId: number;
-          status: AttendanceStatus;
-          note: string;
-        } => item !== null,
-      );
+          note,
+        });
+        return;
+      }
 
-    if (payloadItems.length === 0) {
-      setTabError("Không có dữ liệu điểm danh hợp lệ để lưu.");
+      creationPayload.push({
+        courseRegistrationId: registrationId,
+        status,
+        note,
+      });
+    });
+
+    if (creationPayload.length === 0 && updatePayload.length === 0) {
+      setTabError("Không có thay đổi điểm danh để lưu.");
       return;
     }
 
@@ -966,11 +1137,30 @@ export default function LecturerDashboardPage() {
       setIsSavingAttendance(true);
       setTabError("");
 
-      const saved = await saveAttendancesBySession(
-        sessionId,
-        { items: payloadItems },
-        authorization,
-      );
+      if (creationPayload.length > 0) {
+        await saveAttendancesBySession(
+          sessionId,
+          { items: creationPayload },
+          authorization,
+        );
+      }
+
+      if (updatePayload.length > 0) {
+        await Promise.all(
+          updatePayload.map((payload) =>
+            updateAttendance(
+              payload.attendanceId,
+              {
+                status: payload.status,
+                note: payload.note,
+              },
+              authorization,
+            ),
+          ),
+        );
+      }
+
+      const saved = await getAttendancesBySession(sessionId, authorization);
 
       const nextDraft: Record<number, { status: AttendanceStatus; note: string }> =
         {};
@@ -988,7 +1178,9 @@ export default function LecturerDashboardPage() {
 
       setAttendanceItems(saved);
       setAttendanceDraftByRegistrationId(nextDraft);
-      setTabMessage(`Đã lưu điểm danh cho ${payloadItems.length} sinh viên.`);
+      setTabMessage(
+        `Đã lưu điểm danh: tạo mới ${creationPayload.length}, cập nhật ${updatePayload.length}.`,
+      );
     } catch (error) {
       setTabError(toErrorMessage(error, "Lưu điểm danh thất bại."));
     } finally {
@@ -1409,23 +1601,25 @@ export default function LecturerDashboardPage() {
           {activeTab.key === "attendance" ? (
             <section className={contentCardClass}>
               <div className="border-b border-[#c5dced] px-4 py-3">
-                <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
-                  <select
-                    value={selectedAttendanceSectionId}
-                    onChange={(event) => setSelectedAttendanceSectionId(event.target.value)}
-                    className="h-10 rounded-[6px] border border-[#c8d3dd] bg-white px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
-                    disabled={isSectionCatalogLoading || lecturerSections.length === 0}
-                  >
-                    {lecturerSections.length === 0 ? (
-                      <option value="">Chưa có lớp học phần</option>
-                    ) : null}
-                    {lecturerSections.map((section) => (
-                      <option key={section.id} value={section.id}>
-                        {getSectionLabel(section)}
-                      </option>
-                    ))}
-                  </select>
+                <div className="grid gap-3 lg:grid-cols-[200px_200px_auto]">
+                  <input
+                    type="date"
+                    value={attendanceStartDate}
+                    onChange={(event) => setAttendanceStartDate(event.target.value)}
+                    className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                  />
+                  <input
+                    type="date"
+                    value={attendanceEndDate}
+                    onChange={(event) => setAttendanceEndDate(event.target.value)}
+                    className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                  />
+                  <div className="text-xs text-[#5f7e93] lg:place-self-center">
+                    Chọn khoảng ngày để hệ thống tự lấy các buổi dạy từ lịch cá nhân.
+                  </div>
+                </div>
 
+                <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
                   <select
                     value={selectedAttendanceSessionId}
                     onChange={(event) => setSelectedAttendanceSessionId(event.target.value)}
@@ -1433,7 +1627,7 @@ export default function LecturerDashboardPage() {
                     disabled={isAttendanceSessionLoading || attendanceSessions.length === 0}
                   >
                     {attendanceSessions.length === 0 ? (
-                      <option value="">Chưa có buổi học</option>
+                      <option value="">Chưa có buổi học trong khoảng ngày đã chọn</option>
                     ) : null}
                     {attendanceSessions.map((sessionItem) => (
                       <option key={sessionItem.id} value={sessionItem.id}>
@@ -1464,6 +1658,11 @@ export default function LecturerDashboardPage() {
                     {isSavingAttendance ? "Đang lưu..." : "Lưu điểm danh"}
                   </button>
                 </div>
+                {attendanceDateRangeInvalid ? (
+                  <p className="mt-3 rounded-[6px] border border-[#e8b2b2] bg-[#fff4f4] px-3 py-2 text-sm text-[#b03d3d]">
+                    Khoảng ngày không hợp lệ: ngày bắt đầu lớn hơn ngày kết thúc.
+                  </p>
+                ) : null}
               </div>
 
               <div className="space-y-4 px-4 py-4">

@@ -5,11 +5,11 @@ import type {
   AttendanceBatchPayload,
   AttendanceItem,
   AttendanceUpdatePayload,
+  AdmissionCampaignCreatePayload,
   AdmissionBenchmarkBulkPayload,
   AdmissionBenchmarkUpsertPayload,
   AdmissionBlockUpsertPayload,
   AdmissionBulkReviewPayload,
-  AdmissionOnboardingPayload,
   AdmissionApplicationSearchFilter,
   AdmissionPeriodUpsertPayload,
   AdmissionReviewPayload,
@@ -209,6 +209,69 @@ const isObject = (value: unknown): value is Record<string, unknown> => {
 
 const toDynamicRow = (value: unknown): DynamicRow => {
   return isObject(value) ? (value as DynamicRow) : {};
+};
+
+const normalizePeriodStatusText = (value: unknown): string | undefined => {
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return String(value);
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+
+  return undefined;
+};
+
+const normalizePeriodListItem = (value: unknown): PeriodListItem => {
+  const row = isObject(value) ? value : {};
+  const idCandidate = Number(row.id ?? row.periodId ?? row.value ?? 0);
+  const id = Number.isInteger(idCandidate) && idCandidate > 0 ? idCandidate : 0;
+
+  const periodName =
+    (typeof row.periodName === "string" && row.periodName.trim()) ||
+    (typeof row.period_name === "string" && row.period_name.trim()) ||
+    (typeof row.name === "string" && row.name.trim()) ||
+    undefined;
+
+  const startTime =
+    (typeof row.startTime === "string" && row.startTime.trim()) ||
+    (typeof row.start_time === "string" && row.start_time.trim()) ||
+    (typeof row.startDate === "string" && row.startDate.trim()) ||
+    (typeof row.start_date === "string" && row.start_date.trim()) ||
+    undefined;
+
+  const endTime =
+    (typeof row.endTime === "string" && row.endTime.trim()) ||
+    (typeof row.end_time === "string" && row.end_time.trim()) ||
+    (typeof row.endDate === "string" && row.endDate.trim()) ||
+    (typeof row.end_date === "string" && row.end_date.trim()) ||
+    undefined;
+
+  const status = normalizePeriodStatusText(
+    row.status ?? row.periodStatus ?? row.period_status ?? row.state,
+  );
+
+  const totalApplicationsCandidate = Number(
+    row.totalApplications ?? row.total_applications ?? row.total,
+  );
+  const approvedApplicationsCandidate = Number(
+    row.approvedApplications ?? row.approved_applications ?? row.approved,
+  );
+
+  return {
+    id,
+    periodName,
+    startTime,
+    endTime,
+    status,
+    totalApplications: Number.isFinite(totalApplicationsCandidate)
+      ? totalApplicationsCandidate
+      : undefined,
+    approvedApplications: Number.isFinite(approvedApplicationsCandidate)
+      ? approvedApplicationsCandidate
+      : undefined,
+  };
 };
 
 export const getAccounts = async (
@@ -645,7 +708,11 @@ export const getAdmissionPeriods = async (
     authorization,
   );
 
-  return toPagedRows<PeriodListItem>(data);
+  const paged = toPagedRows<PeriodListItem>(data);
+  return {
+    ...paged,
+    rows: paged.rows.map((row) => normalizePeriodListItem(row)),
+  };
 };
 
 export const getAdmissionPeriodById = async (
@@ -656,7 +723,7 @@ export const getAdmissionPeriodById = async (
     `/api/v1/admin/admissions/config/periods/${periodId}`,
     authorization,
   );
-  return (data || {}) as PeriodListItem;
+  return normalizePeriodListItem(data);
 };
 
 export const getAdmissionBlocks = async (
@@ -758,14 +825,13 @@ export const autoScreenAdmissionApplications = async (
 };
 
 export const processAdmissionOnboarding = async (
-  payload: AdmissionOnboardingPayload,
+  periodId: number,
   authorization: string,
 ): Promise<void> => {
   await apiRequest<ApiResponse<unknown>>(
-    "/api/v1/admin/admissions/applications/onboard",
+    `/api/v1/admin/admissions/applications/onboard/${periodId}`,
     {
       method: "POST",
-      body: payload,
       accessToken: authorization,
     },
   );
@@ -774,10 +840,40 @@ export const processAdmissionOnboarding = async (
 export const getAdmissionFormOptions = async (
   authorization: string,
 ): Promise<AdmissionSelectionOptions> => {
-  const data = await getRequest<unknown>(
+  const optionPaths = [
     "/api/v1/admin/admissions/config/form-options",
-    authorization,
-  );
+    "/api/v1/admin/admissions/config/periods/form-options",
+  ];
+
+  let data: unknown = null;
+  let lastError: unknown;
+
+  for (const optionPath of optionPaths) {
+    try {
+      data = await getRequest<unknown>(optionPath, authorization);
+      lastError = null;
+      break;
+    } catch (error) {
+      lastError = error;
+      if (error instanceof Error) {
+        const normalizedMessage = error.message.toLowerCase();
+        const isUnsupportedEndpoint =
+          normalizedMessage.includes("[api 404]") ||
+          normalizedMessage.includes("[api 400]") ||
+          normalizedMessage.includes("for input string: \"form-options\"") ||
+          normalizedMessage.includes("methodargumenttypemismatchexception");
+
+        if (isUnsupportedEndpoint) {
+          continue;
+        }
+      }
+      throw error;
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
 
   const payload = (isObject(data) ? data : {}) as {
     majors?: unknown;
@@ -804,7 +900,33 @@ export const createAdmissionPeriod = async (
       accessToken: authorization,
     },
   );
-  return (response.data || {}) as PeriodListItem;
+  return normalizePeriodListItem(response.data || {});
+};
+
+export const createAdmissionCampaign = async (
+  payload: AdmissionCampaignCreatePayload,
+  authorization: string,
+): Promise<PeriodListItem | null> => {
+  const response = await apiRequest<ApiResponse<unknown>>(
+    "/api/v1/admin/admissions/config/periods/campaign",
+    {
+      method: "POST",
+      body: payload,
+      accessToken: authorization,
+    },
+  );
+
+  const data = response?.data;
+  if (!isObject(data)) {
+    return null;
+  }
+
+  const periodId = Number(data.id);
+  if (!Number.isInteger(periodId) || periodId <= 0) {
+    return null;
+  }
+
+  return normalizePeriodListItem(data);
 };
 
 export const updateAdmissionPeriod = async (
@@ -812,15 +934,94 @@ export const updateAdmissionPeriod = async (
   payload: AdmissionPeriodUpsertPayload,
   authorization: string,
 ): Promise<PeriodListItem> => {
-  const response = await apiRequest<ApiResponse<unknown>>(
-    `/api/v1/admin/admissions/config/periods/${periodId}`,
+  const periodStatusOrdinalMap: Record<string, number> = {
+    UPCOMING: 0,
+    PAUSED: 1,
+    OPEN: 2,
+    CLOSED: 3,
+  };
+  const statusToken =
+    typeof payload.status === "string" ? payload.status.trim().toUpperCase() : "";
+  const statusOrdinal = periodStatusOrdinalMap[statusToken];
+
+  const bodyVariants: Array<Record<string, unknown>> = [
     {
-      method: "PUT",
-      body: payload,
-      accessToken: authorization,
+      ...payload,
+      periodStatus: payload.status,
     },
-  );
-  return (response.data || {}) as PeriodListItem;
+    {
+      ...payload,
+    },
+  ];
+  if (Number.isInteger(statusOrdinal)) {
+    bodyVariants.push({
+      ...payload,
+      status: statusOrdinal,
+      periodStatus: statusOrdinal,
+    });
+    bodyVariants.push({
+      ...payload,
+      status: statusOrdinal,
+    });
+  }
+
+  const requestOptions = [
+    {
+      method: "PUT" as const,
+      path: `/api/v1/admin/admissions/config/periods/${periodId}`,
+    },
+    {
+      method: "PATCH" as const,
+      path: `/api/v1/admin/admissions/config/periods/${periodId}`,
+    },
+  ];
+
+  let lastError: unknown;
+
+  for (const option of requestOptions) {
+    for (const body of bodyVariants) {
+      try {
+        const response = await apiRequest<ApiResponse<unknown>>(option.path, {
+          method: option.method,
+          body,
+          accessToken: authorization,
+        });
+
+        return normalizePeriodListItem(response.data || {});
+      } catch (error) {
+        lastError = error;
+
+        if (error instanceof Error) {
+          const normalizedMessage = error.message.toLowerCase();
+          const isUnsupportedEndpoint =
+            normalizedMessage.includes("[api 404]") ||
+            normalizedMessage.includes("[api 405]") ||
+            normalizedMessage.includes("method not allowed") ||
+            normalizedMessage.includes("request method 'put' is not supported") ||
+            normalizedMessage.includes("request method 'patch' is not supported");
+          const isPayloadShapeMismatch =
+            normalizedMessage.includes("unrecognized field") ||
+            normalizedMessage.includes("cannot deserialize value") ||
+            normalizedMessage.includes("failed to read request") ||
+            normalizedMessage.includes("json parse error");
+
+          if (isUnsupportedEndpoint) {
+            break;
+          }
+
+          if (isPayloadShapeMismatch) {
+            continue;
+          }
+        }
+
+        throw error;
+      }
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Không thể cập nhật kỳ tuyển sinh do endpoint backend không tương thích.");
 };
 
 export const deleteAdmissionPeriod = async (

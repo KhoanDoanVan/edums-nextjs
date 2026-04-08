@@ -3,8 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   autoScreenAdmissionApplications,
+  createAdmissionCampaign,
   createAdmissionBlock,
-  createAdmissionPeriod,
   deleteAdmissionBenchmark,
   deleteAdmissionBlock,
   deleteAdmissionPeriod,
@@ -49,7 +49,7 @@ const sectionTitleClass =
   "flex items-center justify-between border-b border-[#c5dced] px-4 py-2 text-[18px] font-semibold text-[#1a4f75]";
 
 const SHOW_ADVANCED_ADMISSION_INSIGHTS = false;
-const SHOW_ADMISSION_CONFIGURATION_PANELS = false;
+const SHOW_ADMISSION_CONFIGURATION_PANELS = true;
 const SHOW_ADMISSION_POST_REVIEW_ACTIONS = false;
 
 const admissionApplicationStatusOptions: AdmissionApplicationStatus[] = [
@@ -129,11 +129,54 @@ const toDateTimeLocalInputValue = (value?: string): string => {
   return `${year}-${month}-${day}T${hours}:${minutes}`;
 };
 
-const toAdmissionPeriodStatus = (value?: string): AdmissionPeriodStatus => {
-  const normalized = value as AdmissionPeriodStatus | undefined;
-  return normalized && admissionPeriodStatusOptions.includes(normalized)
-    ? normalized
-    : "UPCOMING";
+const admissionPeriodStatusByOrdinal: Record<number, AdmissionPeriodStatus> = {
+  0: "UPCOMING",
+  1: "PAUSED",
+  2: "OPEN",
+  3: "CLOSED",
+};
+
+const normalizePeriodStatusToken = (value: string): string => {
+  return value
+    .trim()
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, "_");
+};
+
+const toAdmissionPeriodStatus = (value: unknown): AdmissionPeriodStatus => {
+  if (typeof value === "number" && Number.isInteger(value)) {
+    return admissionPeriodStatusByOrdinal[value] || "UPCOMING";
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toUpperCase();
+    if (admissionPeriodStatusOptions.includes(normalized as AdmissionPeriodStatus)) {
+      return normalized as AdmissionPeriodStatus;
+    }
+
+    const parsedOrdinal = Number(normalized);
+    if (Number.isInteger(parsedOrdinal)) {
+      return admissionPeriodStatusByOrdinal[parsedOrdinal] || "UPCOMING";
+    }
+
+    const token = normalizePeriodStatusToken(value);
+    if (token === "OPEN" || token === "DANG_MO" || token === "MO") {
+      return "OPEN";
+    }
+    if (token === "UPCOMING" || token === "SAP_MO") {
+      return "UPCOMING";
+    }
+    if (token === "PAUSED" || token === "TAM_DUNG") {
+      return "PAUSED";
+    }
+    if (token === "CLOSED" || token === "DA_DONG") {
+      return "CLOSED";
+    }
+  }
+
+  return "UPCOMING";
 };
 
 const toAdmissionApplicationStatusLabel = (value?: string): string => {
@@ -146,11 +189,111 @@ const toAdmissionApplicationStatusLabel = (value?: string): string => {
   );
 };
 
-const toAdmissionPeriodStatusLabel = (value?: string): string => {
-  if (!value) {
-    return "-";
+const toAdmissionPeriodStatusLabel = (value: unknown): string => {
+  const status = toAdmissionPeriodStatus(value);
+  return admissionPeriodStatusLabels[status] || "-";
+};
+
+const dateTimeLocalPattern = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/;
+const localizedDateTimePattern =
+  /^(\d{2})\/(\d{2})\/(\d{4})(?:,)?\s+(\d{2}):(\d{2})(?::(\d{2}))?$/;
+
+const toLocalDateTimePayload = (
+  year: string,
+  month: string,
+  day: string,
+  hours: string,
+  minutes: string,
+  seconds?: string,
+): { value: string; timestamp: number } | null => {
+  const normalizedSeconds = seconds || "00";
+  const yearNumber = Number(year);
+  const monthNumber = Number(month);
+  const dayNumber = Number(day);
+  const hourNumber = Number(hours);
+  const minuteNumber = Number(minutes);
+  const secondNumber = Number(normalizedSeconds);
+
+  const parsedDate = new Date(
+    yearNumber,
+    monthNumber - 1,
+    dayNumber,
+    hourNumber,
+    minuteNumber,
+    secondNumber,
+    0,
+  );
+
+  if (
+    Number.isNaN(parsedDate.getTime()) ||
+    parsedDate.getFullYear() !== yearNumber ||
+    parsedDate.getMonth() + 1 !== monthNumber ||
+    parsedDate.getDate() !== dayNumber ||
+    parsedDate.getHours() !== hourNumber ||
+    parsedDate.getMinutes() !== minuteNumber ||
+    parsedDate.getSeconds() !== secondNumber
+  ) {
+    return null;
   }
-  return admissionPeriodStatusLabels[value as AdmissionPeriodStatus] || value;
+
+  return {
+    value: `${year}-${month}-${day}T${hours}:${minutes}:${normalizedSeconds}`,
+    timestamp: parsedDate.getTime(),
+  };
+};
+
+const parseDateTimeLocalValue = (
+  rawValue: string,
+): { value: string; timestamp: number } | null => {
+  const trimmedValue = rawValue.trim();
+  if (!trimmedValue) {
+    return null;
+  }
+
+  const directMatch = trimmedValue.match(dateTimeLocalPattern);
+  if (directMatch) {
+    const [, year, month, day, hours, minutes, seconds] = directMatch;
+    return toLocalDateTimePayload(year, month, day, hours, minutes, seconds);
+  }
+
+  const localizedMatch = trimmedValue.match(localizedDateTimePattern);
+  if (localizedMatch) {
+    const [, day, month, year, hours, minutes, seconds] = localizedMatch;
+    return toLocalDateTimePayload(year, month, day, hours, minutes, seconds);
+  }
+
+  const parsed = new Date(trimmedValue);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  const year = String(parsed.getFullYear()).padStart(4, "0");
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  const hours = String(parsed.getHours()).padStart(2, "0");
+  const minutes = String(parsed.getMinutes()).padStart(2, "0");
+  const seconds = String(parsed.getSeconds()).padStart(2, "0");
+
+  return {
+    value: `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`,
+    timestamp: parsed.getTime(),
+  };
+};
+
+const addMonthsToDateTimeLocalValue = (rawValue: string, months: number): string | null => {
+  const parsed = parseDateTimeLocalValue(rawValue);
+  if (!parsed) {
+    return null;
+  }
+
+  const date = new Date(parsed.timestamp);
+  const expectedDay = date.getDate();
+  date.setMonth(date.getMonth() + months);
+  if (date.getDate() !== expectedDay) {
+    date.setDate(0);
+  }
+
+  return toDateTimeLocalInputValue(date.toISOString());
 };
 
 type AdmissionOnboardingReadiness = {
@@ -209,6 +352,10 @@ type SelectionOptionItem = {
   label: string;
 };
 
+const toNonEmptyText = (value: unknown): string => {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
+};
+
 const toSelectionOptionItems = (
   rows: AdmissionSelectionOption[],
   fallbackLabel: string,
@@ -221,14 +368,34 @@ const toSelectionOptionItems = (
         return null;
       }
 
-      const labelParts = [
-        typeof item.name === "string" ? item.name.trim() : "",
-        typeof item.code === "string" ? item.code.trim() : "",
-      ].filter(Boolean);
+      const explicitLabel = toNonEmptyText(item.label);
 
-      const explicitLabel =
-        typeof item.label === "string" && item.label.trim() ? item.label.trim() : "";
-      const label = explicitLabel || labelParts.join(" - ") || `${fallbackLabel} #${id}`;
+      const nameCandidate =
+        toNonEmptyText(item.name) ||
+        toNonEmptyText(record.periodName) ||
+        toNonEmptyText(record.majorName) ||
+        toNonEmptyText(record.blockName) ||
+        toNonEmptyText(record.displayName) ||
+        toNonEmptyText(record.title) ||
+        toNonEmptyText(record.period_name) ||
+        toNonEmptyText(record.major_name) ||
+        toNonEmptyText(record.block_name);
+
+      const codeCandidate =
+        toNonEmptyText(item.code) ||
+        toNonEmptyText(record.majorCode) ||
+        toNonEmptyText(record.blockCode) ||
+        toNonEmptyText(record.periodCode) ||
+        toNonEmptyText(record.code) ||
+        toNonEmptyText(record.major_code) ||
+        toNonEmptyText(record.block_code) ||
+        toNonEmptyText(record.period_code);
+
+      const label = explicitLabel
+        ? explicitLabel
+        : nameCandidate && codeCandidate
+          ? `${nameCandidate} - ${codeCandidate}`
+          : nameCandidate || codeCandidate || `${fallbackLabel} #${id}`;
 
       return {
         id,
@@ -352,7 +519,7 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
   const [periodStartInput, setPeriodStartInput] = useState("");
   const [periodEndInput, setPeriodEndInput] = useState("");
   const [periodStatusInput, setPeriodStatusInput] =
-    useState<AdmissionPeriodStatus>("UPCOMING");
+    useState<AdmissionPeriodStatus>("OPEN");
   const [blockActionIdInput, setBlockActionIdInput] = useState("");
   const [blockNameInput, setBlockNameInput] = useState("");
   const [blockDescriptionInput, setBlockDescriptionInput] = useState("");
@@ -540,19 +707,45 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
     return parsed;
   };
 
-  const parseDateTimeLocalToIso = (value: string, fieldLabel: string): string | null => {
+  const parseDateTimeLocalForPayload = (
+    value: string,
+    fieldLabel: string,
+  ): { value: string; timestamp: number } | null => {
     if (!value.trim()) {
-      setErrorMessage(`${fieldLabel} không duoc de trong.`);
+      setErrorMessage(`${fieldLabel} không được để trống.`);
       return null;
     }
 
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
-      setErrorMessage(`${fieldLabel} không hop le.`);
+    const normalized = parseDateTimeLocalValue(value);
+    if (!normalized) {
+      setErrorMessage(`${fieldLabel} không hợp lệ.`);
       return null;
     }
 
-    return parsed.toISOString();
+    return normalized;
+  };
+
+  const handlePeriodStartInputChange = (nextValue: string) => {
+    setPeriodStartInput(nextValue);
+
+    const startDateTime = parseDateTimeLocalValue(nextValue);
+    if (!startDateTime) {
+      return;
+    }
+
+    const suggestedEndInput = addMonthsToDateTimeLocalValue(nextValue, 6);
+    if (!suggestedEndInput) {
+      return;
+    }
+
+    const currentEndDateTime = parseDateTimeLocalValue(periodEndInput);
+    if (
+      !periodEndInput.trim() ||
+      !currentEndDateTime ||
+      currentEndDateTime.timestamp <= startDateTime.timestamp
+    ) {
+      setPeriodEndInput(suggestedEndInput);
+    }
   };
 
   const parseOptionalPositiveInteger = (rawValue: string): number | undefined => {
@@ -709,17 +902,10 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
     );
 
     const activeOpenPeriodCount = periodRows.rows.filter((row) => {
-      const statusCandidate = row.status;
-      const status =
-        typeof statusCandidate === "number"
-          ? statusCandidate === 2
-            ? "OPEN"
-            : ""
-          : toNormalizedUpperText(statusCandidate);
       const startTime = toSafeDate(row.startTime ?? row.startDate);
       const endTime = toSafeDate(row.endTime ?? row.endDate);
 
-      if (status !== "OPEN" || !startTime || !endTime) {
+      if (toAdmissionPeriodStatus(row.status) !== "OPEN" || !startTime || !endTime) {
         return false;
       }
 
@@ -785,14 +971,7 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
     ]);
 
     const openPeriods = periodRows.rows.filter((row) => {
-      const statusCandidate = row.status;
-      const status =
-        typeof statusCandidate === "number"
-          ? statusCandidate === 2
-            ? "OPEN"
-            : ""
-          : toNormalizedUpperText(statusCandidate);
-      return status === "OPEN";
+      return toAdmissionPeriodStatus(row.status) === "OPEN";
     });
 
     const activeOpenPeriodCount = openPeriods.filter((row) => {
@@ -912,7 +1091,7 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
       setPeriodNameInput("");
       setPeriodStartInput("");
       setPeriodEndInput("");
-      setPeriodStatusInput("UPCOMING");
+      setPeriodStatusInput("OPEN");
       return;
     }
 
@@ -1720,10 +1899,7 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
         return;
       }
 
-      await processAdmissionOnboarding(
-        { periodId, cohortId },
-        authorization,
-      ).catch((error: unknown) => {
+      await processAdmissionOnboarding(periodId, authorization).catch((error: unknown) => {
         const message = toErrorMessage(error);
         if (message.includes("500")) {
           throw new Error(
@@ -1774,19 +1950,33 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
       return;
     }
 
-    const startTime = parseDateTimeLocalToIso(periodStartInput, "Thoi gian bat dau");
-    const endTime = parseDateTimeLocalToIso(periodEndInput, "Thoi gian ket thuc");
-    if (!startTime || !endTime) {
+    const startDateTime = parseDateTimeLocalForPayload(periodStartInput, "Thời gian bắt đầu");
+    if (!startDateTime) {
+      return;
+    }
+
+    let nextEndInput = periodEndInput;
+    if (!nextEndInput.trim()) {
+      const suggestedEndInput = addMonthsToDateTimeLocalValue(periodStartInput, 6);
+      if (suggestedEndInput) {
+        nextEndInput = suggestedEndInput;
+        setPeriodEndInput(suggestedEndInput);
+      }
+    }
+
+    const endDateTime = parseDateTimeLocalForPayload(nextEndInput, "Thời gian kết thúc");
+    if (!endDateTime) {
+      return;
+    }
+
+    if (endDateTime.timestamp <= startDateTime.timestamp) {
+      setErrorMessage("Thời gian kết thúc phải sau thời gian bắt đầu.");
       return;
     }
 
     await runAction(async () => {
-      const payload = {
-        periodName,
-        startTime,
-        endTime,
-        status: periodStatusInput,
-      };
+      const startTime = startDateTime.value;
+      const endTime = endDateTime.value;
       const periodId = periodActionIdInput.trim()
         ? parsePositiveInteger(periodActionIdInput, "Mã kỳ tuyển sinh")
         : null;
@@ -1795,12 +1985,106 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
       }
 
       if (periodId) {
-        await updateAdmissionPeriod(periodId, payload, authorization);
+        await updateAdmissionPeriod(
+          periodId,
+          {
+            periodName,
+            startTime,
+            endTime,
+            status: periodStatusInput,
+          },
+          authorization,
+        );
       } else {
-        await createAdmissionPeriod(payload, authorization);
+        let createdPeriodId: number | null = null;
+        const campaignBenchmarks = benchmarkBulkRows
+          .map((row) => {
+            const majorId = Number(row.majorId);
+            const blockId = Number(row.blockId);
+            const score = Number(row.score);
+
+            if (!Number.isInteger(majorId) || majorId <= 0) {
+              return null;
+            }
+            if (!Number.isInteger(blockId) || blockId <= 0) {
+              return null;
+            }
+            if (!Number.isFinite(score) || score < 0 || score > 30) {
+              return null;
+            }
+
+            return {
+              majorId,
+              blockId,
+              score,
+            };
+          })
+          .filter(
+            (row): row is { majorId: number; blockId: number; score: number } =>
+              row !== null,
+          );
+
+        if (campaignBenchmarks.length === 0) {
+          setErrorMessage(
+            "Khi tạo kỳ tuyển sinh mới, vui lòng nhập ít nhất 1 benchmark hợp lệ trong bảng benchmark bulk.",
+          );
+          return;
+        }
+
+        const createdPeriod = await createAdmissionCampaign(
+          {
+            periodName,
+            startTime,
+            endTime,
+            benchmarks: campaignBenchmarks,
+          },
+          authorization,
+        );
+
+        const createdPeriodIdCandidate = Number(createdPeriod?.id);
+        if (Number.isInteger(createdPeriodIdCandidate) && createdPeriodIdCandidate > 0) {
+          createdPeriodId = createdPeriodIdCandidate;
+        }
+
+        if (!createdPeriodId) {
+          const latestPeriods = await getAdmissionPeriods(authorization);
+          const matchedPeriod = latestPeriods.rows.find((item) => {
+            if ((item.periodName || "").trim() !== periodName) {
+              return false;
+            }
+
+            const matchedStartTime = toDateTimeLocalInputValue(item.startTime);
+            const matchedEndTime = toDateTimeLocalInputValue(item.endTime);
+            const expectedStartTime = toDateTimeLocalInputValue(startTime);
+            const expectedEndTime = toDateTimeLocalInputValue(endTime);
+
+            return matchedStartTime === expectedStartTime && matchedEndTime === expectedEndTime;
+          });
+
+          if (matchedPeriod?.id) {
+            createdPeriodId = matchedPeriod.id;
+          }
+        }
+
+        if (createdPeriodId) {
+          await updateAdmissionPeriod(
+            createdPeriodId,
+            {
+              periodName,
+              startTime,
+              endTime,
+              status: periodStatusInput,
+            },
+            authorization,
+          );
+        }
       }
       await loadAdmissionsData(authorization);
-      setSuccessMessage(periodId ? `Đã cập nhật kỳ #${periodId}.` : "Đã tạo kỳ tuyển sinh mới.");
+      setSuccessMessage(
+        periodId
+          ? `Đã cập nhật kỳ #${periodId}.`
+          : "Đã tạo kỳ tuyển sinh mới kèm danh sách benchmark.",
+      );
     });
   };
 
@@ -2702,35 +2986,96 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
                 </option>
               ))}
             </select>
-            <input
-              className="h-10 w-full rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-              placeholder="Tên kỳ"
-              value={periodNameInput}
-              onChange={(event) => setPeriodNameInput(event.target.value)}
-            />
-            <input
-              type="datetime-local"
-              className="h-10 w-full rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-              value={periodStartInput}
-              onChange={(event) => setPeriodStartInput(event.target.value)}
-            />
-            <input
-              type="datetime-local"
-              className="h-10 w-full rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-              value={periodEndInput}
-              onChange={(event) => setPeriodEndInput(event.target.value)}
-            />
-            <select
-              className="h-10 w-full rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
-              value={periodStatusInput}
-              onChange={(event) => setPeriodStatusInput(event.target.value as AdmissionPeriodStatus)}
-            >
-              {admissionPeriodStatusOptions.map((status) => (
-                <option key={status} value={status}>
-                  {toAdmissionPeriodStatusLabel(status)}
-                </option>
-              ))}
-            </select>
+            <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#4f6d82]">
+              <p className="font-semibold text-[#2d607f]">
+                {periodActionIdInput.trim()
+                  ? `Đang chỉnh sửa kỳ #${periodActionIdInput}.`
+                  : "Đang tạo kỳ tuyển sinh mới."}
+              </p>
+              <p className="mt-1">
+                Vui lòng nhập đủ ngày và giờ. Thời gian kết thúc phải lớn hơn thời gian bắt
+                đầu.
+              </p>
+              {!periodActionIdInput.trim() ? (
+                <p className="mt-1 text-[#8a5a1f]">
+                  Muốn cập nhật kỳ đã có: chọn kỳ ở danh sách ngay phía trên (không để "Tạo kỳ
+                  mới").
+                </p>
+              ) : null}
+            </div>
+            <div className="space-y-1">
+              <label
+                htmlFor="admission-period-name-input"
+                className="text-xs font-semibold text-[#2d607f]"
+              >
+                Tên kỳ tuyển sinh
+              </label>
+              <input
+                id="admission-period-name-input"
+                className="h-10 w-full rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                placeholder="Ví dụ: Tuyển sinh Đại học chính quy Đợt 1 - Năm 2026"
+                value={periodNameInput}
+                onChange={(event) => setPeriodNameInput(event.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <label
+                htmlFor="admission-period-start-input"
+                className="text-xs font-semibold text-[#2d607f]"
+              >
+                Thời gian bắt đầu
+              </label>
+              <input
+                id="admission-period-start-input"
+                type="datetime-local"
+                step={60}
+                className="h-10 w-full rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                value={periodStartInput}
+                onChange={(event) => handlePeriodStartInputChange(event.target.value)}
+              />
+              <p className="text-xs text-[#4f6d82]">Hệ thống lưu theo giờ địa phương (UTC+7).</p>
+            </div>
+            <div className="space-y-1">
+              <label
+                htmlFor="admission-period-end-input"
+                className="text-xs font-semibold text-[#2d607f]"
+              >
+                Thời gian kết thúc
+              </label>
+              <input
+                id="admission-period-end-input"
+                type="datetime-local"
+                step={60}
+                className="h-10 w-full rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                value={periodEndInput}
+                onChange={(event) => setPeriodEndInput(event.target.value)}
+              />
+              <p className="text-xs text-[#4f6d82]">
+                Nếu để trống, hệ thống tự gán = thời gian bắt đầu + 6 tháng.
+              </p>
+            </div>
+            <div className="space-y-1">
+              <label
+                htmlFor="admission-period-status-input"
+                className="text-xs font-semibold text-[#2d607f]"
+              >
+                Trạng thái kỳ
+              </label>
+              <select
+                id="admission-period-status-input"
+                className="h-10 w-full rounded-[4px] border border-[#c8d3dd] px-3 text-sm outline-none focus:border-[#6aa8cf]"
+                value={periodStatusInput}
+                onChange={(event) =>
+                  setPeriodStatusInput(event.target.value as AdmissionPeriodStatus)
+                }
+              >
+                {admissionPeriodStatusOptions.map((status) => (
+                  <option key={status} value={status}>
+                    {toAdmissionPeriodStatusLabel(status)}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div className="flex gap-2">
               <button
                 type="button"
@@ -2740,7 +3085,7 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
                 disabled={isWorking}
                 className="h-10 flex-1 rounded-[4px] bg-[#0d6ea6] px-3 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
               >
-                Lưu
+                {periodActionIdInput.trim() ? "Cập nhật kỳ" : "Tạo kỳ"}
               </button>
               <button
                 type="button"

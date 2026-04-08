@@ -17,8 +17,10 @@ export interface PublicLookupResult {
 export interface PublicAdmissionApplyPayload {
   fullName: string;
   dateOfBirth: string;
+  gender: boolean;
   email: string;
   phone: string;
+  guardianPhone: string;
   nationalId: string;
   address: string;
   periodId: number;
