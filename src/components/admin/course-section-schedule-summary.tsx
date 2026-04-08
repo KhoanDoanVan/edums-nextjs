@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
   shouldHideFeedbackMessage,
   useToastFeedback,
@@ -9,7 +9,9 @@ import {
   createDynamicByPath,
   getDynamicListByPath,
 } from "@/lib/admin/service";
+import { TablePaginationControls } from "@/components/admin/table-pagination-controls";
 import { toErrorMessage } from "@/components/admin/format-utils";
+import { useTablePagination } from "@/hooks/use-table-pagination";
 import type { DynamicRow } from "@/lib/admin/types";
 
 type CourseSectionScheduleSummaryProps = {
@@ -117,7 +119,9 @@ export function CourseSectionScheduleSummary({
     successTitle: "Lịch học định kỳ thành công",
   });
 
-  const previewRows = useMemo(() => rows.slice(0, 6), [rows]);
+  const schedulePreviewPagination = useTablePagination(rows, {
+    initialPageSize: 6,
+  });
 
   const loadData = useCallback(async () => {
     if (!authorization) {
@@ -251,7 +255,7 @@ export function CourseSectionScheduleSummary({
               </tr>
             </thead>
             <tbody>
-              {previewRows.map((row) => (
+              {schedulePreviewPagination.paginatedRows.map((row) => (
                 <tr key={row.id} className="border-t border-[#e0ebf4] text-[#365f7b]">
                   <td className="px-3 py-2">
                     {row.dayOfWeekName ||
@@ -270,7 +274,7 @@ export function CourseSectionScheduleSummary({
                   </td>
                 </tr>
               ))}
-              {previewRows.length === 0 ? (
+              {rows.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="px-3 py-4 text-center text-xs text-[#688296]">
                     Chưa có lịch học định kỳ cho lớp học phần này.
@@ -280,6 +284,18 @@ export function CourseSectionScheduleSummary({
             </tbody>
           </table>
         </div>
+
+        <TablePaginationControls
+          pageIndex={schedulePreviewPagination.pageIndex}
+          pageSize={schedulePreviewPagination.pageSize}
+          totalItems={schedulePreviewPagination.totalItems}
+          totalPages={schedulePreviewPagination.totalPages}
+          startItem={schedulePreviewPagination.startItem}
+          endItem={schedulePreviewPagination.endItem}
+          onPageChange={schedulePreviewPagination.setPageIndex}
+          onPageSizeChange={schedulePreviewPagination.setPageSize}
+          pageSizeOptions={[6, 10, 20, 50]}
+        />
 
         <form className="grid gap-2 md:grid-cols-6" onSubmit={handleQuickCreate}>
           <label className="space-y-1 md:col-span-2">

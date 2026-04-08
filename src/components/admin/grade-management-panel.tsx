@@ -10,8 +10,10 @@ import {
   getStudentGradeReports,
   updateGradeReport,
 } from "@/lib/admin/service";
+import { TablePaginationControls } from "@/components/admin/table-pagination-controls";
 import { toErrorMessage } from "@/components/admin/format-utils";
 import { buildColumns, toColumnLabel, toDisplayValue } from "@/components/admin/table-utils";
+import { useTablePagination } from "@/hooks/use-table-pagination";
 import type {
   DynamicRow,
   GradeReportItem,
@@ -110,6 +112,8 @@ export function GradeManagementPanel({
       ]),
     [gradeRows],
   );
+
+  const gradePagination = useTablePagination(gradeRows);
 
   const requireAuthorization = (): string | null => {
     if (!authorization) {
@@ -643,9 +647,11 @@ export function GradeManagementPanel({
               </tr>
             </thead>
             <tbody>
-              {gradeRows.map((row, index) => (
+              {gradePagination.paginatedRows.map((row, index) => (
                 <tr key={`dynamic-row-${index}`} className="border-b border-[#e0ebf4] text-[#3f6178]">
-                  <td className="px-2 py-2 font-medium text-[#355970]">{index + 1}</td>
+                  <td className="px-2 py-2 font-medium text-[#355970]">
+                    {gradePagination.startItem + index}
+                  </td>
                   {gradeColumns.map((column) => (
                     <td key={`${index}-${column}`} className="max-w-[260px] px-2 py-2">
                       <span className="line-clamp-2">{toDisplayValue(row[column])}</span>
@@ -663,6 +669,17 @@ export function GradeManagementPanel({
             </tbody>
           </table>
         </div>
+
+        <TablePaginationControls
+          pageIndex={gradePagination.pageIndex}
+          pageSize={gradePagination.pageSize}
+          totalItems={gradePagination.totalItems}
+          totalPages={gradePagination.totalPages}
+          startItem={gradePagination.startItem}
+          endItem={gradePagination.endItem}
+          onPageChange={gradePagination.setPageIndex}
+          onPageSizeChange={gradePagination.setPageSize}
+        />
       </section>
     </div>
   );

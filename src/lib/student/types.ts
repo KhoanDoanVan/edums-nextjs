@@ -101,6 +101,25 @@ export interface SemesterResponse {
   startDate?: string;
   endDate?: string;
   totalWeeks?: number;
+  status?: "PLANNING" | "REGISTRATION_OPEN" | "ONGOING" | "FINISHED";
+}
+
+export interface ScheduleSemesterOptionResponse {
+  semesterId: number;
+  semesterNumber?: number;
+  academicYear?: string;
+  displayName?: string;
+  startDate?: string;
+  endDate?: string;
+  totalWeeks?: number;
+  semesterStatus?: "PLANNING" | "REGISTRATION_OPEN" | "ONGOING" | "FINISHED";
+  selectableForSchedule?: boolean;
+  registrationOpen?: boolean;
+  registrationPeriodId?: number | null;
+  registrationPeriodName?: string | null;
+  registrationPeriodStatus?: "UPCOMING" | "PAUSED" | "OPEN" | "CLOSED" | null;
+  registrationStartTime?: string | null;
+  registrationEndTime?: string | null;
 }
 
 export interface CourseSectionResponse {
@@ -134,6 +153,8 @@ export interface AvailableSectionScheduleResponse {
   endPeriod?: number;
   startWeek?: number;
   endWeek?: number;
+  startDate?: string;
+  endDate?: string;
   effectiveStartDate?: string;
   effectiveEndDate?: string;
 }
@@ -242,6 +263,8 @@ export interface RecurringScheduleResponse {
   startPeriodTime?: string;
   endPeriod?: number;
   endPeriodTime?: string;
+  startDate?: string;
+  endDate?: string;
   createdAt?: string;
 }
 

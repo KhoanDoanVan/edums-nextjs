@@ -44,8 +44,8 @@
 26. `GET /api/v1/classrooms`
 27. `GET /api/v1/classrooms/{id}`
 28. `POST /api/v1/course-registrations`
-29. `GET /api/v1/students/{studentId}/grade-reports`
-30. `GET /api/v1/grade-reports/{id}`
+29. `GET /api/v1/students/me/grade-reports`
+30. `GET /api/v1/students/me/grade-reports/{id}`
 31. `GET /api/v1/courses/{courseId}/grade-components`
 32. `GET /api/v1/students/{studentId}/attendances`
 33. `GET /api/v1/lecturers/{id}`

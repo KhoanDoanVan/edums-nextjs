@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
+import { TablePaginationControls } from "@/components/admin/table-pagination-controls";
 import { toErrorMessage } from "@/components/admin/format-utils";
 import { shouldHideFeedbackMessage } from "@/hooks/use-toast-feedback";
+import { useTablePagination } from "@/hooks/use-table-pagination";
 import {
   createDynamicByPath,
   deleteDynamicByPath,
@@ -166,6 +168,8 @@ export function CohortManagementPanel({
       return matchesKeyword && matchesStatus;
     });
   }, [currentYear, keyword, rows, statusFilter]);
+
+  const cohortPagination = useTablePagination(filteredRows);
 
   const resetForm = () => {
     setEditingId(null);
@@ -345,7 +349,7 @@ export function CohortManagementPanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRows.map((row) => {
+                  {cohortPagination.paginatedRows.map((row) => {
                     const progressLabel = getCohortProgressLabel(row, currentYear);
 
                     return (
@@ -410,6 +414,17 @@ export function CohortManagementPanel({
                 </tbody>
               </table>
             </div>
+
+            <TablePaginationControls
+              pageIndex={cohortPagination.pageIndex}
+              pageSize={cohortPagination.pageSize}
+              totalItems={cohortPagination.totalItems}
+              totalPages={cohortPagination.totalPages}
+              startItem={cohortPagination.startItem}
+              endItem={cohortPagination.endItem}
+              onPageChange={cohortPagination.setPageIndex}
+              onPageSizeChange={cohortPagination.setPageSize}
+            />
           </section>
 
           <section className="rounded-[10px] border border-[#c7dceb] bg-[#f8fcff]">

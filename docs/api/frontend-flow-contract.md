@@ -20,7 +20,7 @@ Moi tab frontend khi tich hop API deu tuan thu:
 1. Public:
   - `/api/v1/auth/**`, `/api/v1/public/**`.
 2. Student:
-  - `GET /api/v1/students/{studentId}/grade-reports`
+  - `GET /api/v1/students/me/grade-reports`
   - `GET /api/v1/students/{studentId}/attendances`
 3. Guardian:
   - `GET /api/v1/guardians/{guardianId}/students/{studentId}/attendances`
@@ -51,8 +51,8 @@ Moi tab frontend khi tich hop API deu tuan thu:
   - `GET /api/v1/recurring-schedules/section/{sectionId}`
   - `GET /api/v1/recurring-schedules/{id}/sessions`
 4. Diem va diem danh:
-  - `GET /api/v1/students/{studentId}/grade-reports`
-  - `GET /api/v1/grade-reports/{id}`
+  - `GET /api/v1/students/me/grade-reports`
+  - `GET /api/v1/students/me/grade-reports/{id}`
   - `GET /api/v1/students/{studentId}/attendances`
 
 ### 3.2 Lecturer Dashboard

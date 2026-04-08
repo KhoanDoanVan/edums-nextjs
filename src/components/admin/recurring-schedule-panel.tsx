@@ -13,7 +13,9 @@ import {
   updateDynamicByPath,
 } from "@/lib/admin/service";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
+import { TablePaginationControls } from "@/components/admin/table-pagination-controls";
 import { formatDateTime, toErrorMessage } from "@/components/admin/format-utils";
+import { useTablePagination } from "@/hooks/use-table-pagination";
 import type { DynamicRow } from "@/lib/admin/types";
 
 interface RecurringSchedulePanelProps {
@@ -288,6 +290,9 @@ export const RecurringSchedulePanel = ({
   const selectedSchedule = useMemo(() => {
     return rows.find((row) => row.id === selectedScheduleId) || null;
   }, [rows, selectedScheduleId]);
+
+  const schedulePagination = useTablePagination(rows);
+  const sessionPagination = useTablePagination(sessionRows);
 
   const editModeRule = useMemo<"default" | "draft" | "open" | "locked">(() => {
     if (!editingRowId) {
@@ -825,14 +830,16 @@ export const RecurringSchedulePanel = ({
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, index) => (
+                {schedulePagination.paginatedRows.map((row, index) => (
                   <tr
                     key={row.id}
                     className={`border-b border-[#e0ebf4] text-[#3f6178] ${
                       selectedScheduleId === row.id ? "bg-[#eef6fd]" : ""
                     }`}
                   >
-                    <td className="px-3 py-3 font-semibold text-[#244f6f]">{index + 1}</td>
+                    <td className="px-3 py-3 font-semibold text-[#244f6f]">
+                      {schedulePagination.startItem + index}
+                    </td>
                     <td className="px-3 py-3">
                       <p className="font-semibold text-[#1f567b]">
                         {row.sectionDisplayName || row.sectionCode || row.sectionId}
@@ -901,6 +908,17 @@ export const RecurringSchedulePanel = ({
               </tbody>
             </table>
           </div>
+
+          <TablePaginationControls
+            pageIndex={schedulePagination.pageIndex}
+            pageSize={schedulePagination.pageSize}
+            totalItems={schedulePagination.totalItems}
+            totalPages={schedulePagination.totalPages}
+            startItem={schedulePagination.startItem}
+            endItem={schedulePagination.endItem}
+            onPageChange={schedulePagination.setPageIndex}
+            onPageSizeChange={schedulePagination.setPageSize}
+          />
         </section>
 
         <section className="rounded-[10px] border border-[#c7dceb] bg-white">
@@ -926,7 +944,7 @@ export const RecurringSchedulePanel = ({
                 </tr>
               </thead>
               <tbody>
-                {sessionRows.map((row) => (
+                {sessionPagination.paginatedRows.map((row) => (
                   <tr key={row.id} className="border-b border-[#e0ebf4] text-[#3f6178]">
                     <td className="px-3 py-3">{formatDate(row.sessionDate)}</td>
                     <td className="px-3 py-3">{row.classroomName || "-"}</td>
@@ -946,6 +964,17 @@ export const RecurringSchedulePanel = ({
               </tbody>
             </table>
           </div>
+
+          <TablePaginationControls
+            pageIndex={sessionPagination.pageIndex}
+            pageSize={sessionPagination.pageSize}
+            totalItems={sessionPagination.totalItems}
+            totalPages={sessionPagination.totalPages}
+            startItem={sessionPagination.startItem}
+            endItem={sessionPagination.endItem}
+            onPageChange={sessionPagination.setPageIndex}
+            onPageSizeChange={sessionPagination.setPageSize}
+          />
         </section>
 
         {isFormModalOpen ? (

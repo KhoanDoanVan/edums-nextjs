@@ -15,7 +15,9 @@ import {
   updateAccount,
   updateAccountStatus,
 } from "@/lib/admin/service";
+import { TablePaginationControls } from "@/components/admin/table-pagination-controls";
 import { formatDateTime, toErrorMessage } from "@/components/admin/format-utils";
+import { useTablePagination } from "@/hooks/use-table-pagination";
 import type {
   AccountListItem,
   AccountStatus,
@@ -282,6 +284,8 @@ export const AccountManagementPanel = ({
       name: role.roleName || `Vai trò ${role.id}`,
     }));
   }, [roles]);
+
+  const accountPagination = useTablePagination(accounts.rows);
 
   const guardianRoleIds = useMemo(() => {
     return new Set(
@@ -716,7 +720,7 @@ export const AccountManagementPanel = ({
               </tr>
             </thead>
             <tbody>
-              {accounts.rows.map((item, index) => {
+              {accountPagination.paginatedRows.map((item, index) => {
                 const currentStatus = isAccountStatus(item.status)
                   ? item.status
                   : "ACTIVE";
@@ -724,7 +728,7 @@ export const AccountManagementPanel = ({
 
                 return (
                   <tr key={item.id} className="border-b border-[#e0ebf4] text-[#1f3344]">
-                    <td className="px-2 py-2">{index + 1}</td>
+                    <td className="px-2 py-2">{accountPagination.startItem + index}</td>
                     <td className="px-2 py-2">
                       <div>
                         <p className="font-semibold text-[#1f567b]">
@@ -813,6 +817,17 @@ export const AccountManagementPanel = ({
             </tbody>
           </table>
         </div>
+
+        <TablePaginationControls
+          pageIndex={accountPagination.pageIndex}
+          pageSize={accountPagination.pageSize}
+          totalItems={accountPagination.totalItems}
+          totalPages={accountPagination.totalPages}
+          startItem={accountPagination.startItem}
+          endItem={accountPagination.endItem}
+          onPageChange={accountPagination.setPageIndex}
+          onPageSizeChange={accountPagination.setPageSize}
+        />
       </div>
 
       {isAccountModalOpen ? (

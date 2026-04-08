@@ -9,13 +9,27 @@ import {
   getStudentAttendances,
   updateAttendance,
 } from "@/lib/admin/service";
+import { TablePaginationControls } from "@/components/admin/table-pagination-controls";
 import { toErrorMessage } from "@/components/admin/format-utils";
 import { buildColumns, toColumnLabel, toDisplayValue } from "@/components/admin/table-utils";
+import { useTablePagination } from "@/hooks/use-table-pagination";
 import type {
   AttendanceItem,
   AttendanceStatus,
   DynamicRow,
 } from "@/lib/admin/types";
+
+type TablePaginationState = {
+  pageIndex: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+  startItem: number;
+  endItem: number;
+  paginatedRows: DynamicRow[];
+  setPageIndex: (nextPageIndex: number) => void;
+  setPageSize: (nextPageSize: number) => void;
+};
 
 const contentCardClass =
   "rounded-[8px] border border-[#8ab3d1] bg-white shadow-[0_1px_2px_rgba(7,51,84,0.16)]";
@@ -94,6 +108,14 @@ export function AttendanceManagementPanel({
         "note",
       ]),
     [attendanceSessionRows],
+  );
+
+  const attendancePagination = useTablePagination(attendanceRows);
+  const guardianAttendancePagination = useTablePagination(
+    guardianAttendanceRows as unknown as DynamicRow[],
+  );
+  const sessionAttendancePagination = useTablePagination(
+    attendanceSessionRows as unknown as DynamicRow[],
   );
 
   const requireAuthorization = (): string | null => {
@@ -314,6 +336,7 @@ export function AttendanceManagementPanel({
     title: string,
     rows: DynamicRow[],
     columns: string[],
+    pagination: TablePaginationState,
   ) => {
     return (
       <section className={contentCardClass}>
@@ -334,9 +357,11 @@ export function AttendanceManagementPanel({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row, index) => (
+              {pagination.paginatedRows.map((row, index) => (
                 <tr key={`dynamic-row-${index}`} className="border-b border-[#e0ebf4] text-[#3f6178]">
-                  <td className="px-2 py-2 font-medium text-[#355970]">{index + 1}</td>
+                  <td className="px-2 py-2 font-medium text-[#355970]">
+                    {pagination.startItem + index}
+                  </td>
                   {columns.map((column) => (
                     <td key={`${index}-${column}`} className="max-w-[260px] px-2 py-2">
                       <span className="line-clamp-2">{toDisplayValue(row[column])}</span>
@@ -354,6 +379,17 @@ export function AttendanceManagementPanel({
             </tbody>
           </table>
         </div>
+
+        <TablePaginationControls
+          pageIndex={pagination.pageIndex}
+          pageSize={pagination.pageSize}
+          totalItems={pagination.totalItems}
+          totalPages={pagination.totalPages}
+          startItem={pagination.startItem}
+          endItem={pagination.endItem}
+          onPageChange={pagination.setPageIndex}
+          onPageSizeChange={pagination.setPageSize}
+        />
       </section>
     );
   };
@@ -572,16 +608,23 @@ export function AttendanceManagementPanel({
         </div>
       </section>
 
-      {renderDynamicTable("Bạng điểm danh theo sinh viên", attendanceRows, attendanceColumns)}
+      {renderDynamicTable(
+        "Bạng điểm danh theo sinh viên",
+        attendanceRows,
+        attendanceColumns,
+        attendancePagination,
+      )}
       {renderDynamicTable(
         "Bảng điểm danh theo phụ huynh - sinh viên",
         guardianAttendanceRows as unknown as DynamicRow[],
         guardianAttendanceColumns,
+        guardianAttendancePagination,
       )}
       {renderDynamicTable(
         "Bạng điểm danh theo buổi học (session)",
         attendanceSessionRows as unknown as DynamicRow[],
         sessionAttendanceColumns,
+        sessionAttendancePagination,
       )}
     </div>
   );

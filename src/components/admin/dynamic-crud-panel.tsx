@@ -12,7 +12,9 @@ import {
 } from "@/lib/admin/service";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import { toErrorMessage } from "@/components/admin/format-utils";
+import { TablePaginationControls } from "@/components/admin/table-pagination-controls";
 import { buildColumns, toColumnLabel, toDisplayValue } from "@/components/admin/table-utils";
+import { useTablePagination } from "@/hooks/use-table-pagination";
 import type { DynamicRow, PagedRows } from "@/lib/admin/types";
 
 interface StatusPatchConfig {
@@ -24,7 +26,10 @@ interface StatusPatchConfig {
 interface FieldLookupConfig {
   path: string;
   query?: Record<string, string | number | undefined>;
-  filterBy?: Record<string, string | number | boolean>;
+  filterBy?: Record<
+    string,
+    string | number | boolean | Array<string | number | boolean>
+  >;
   valueKey?: string;
   labelKeys?: string[];
   dependsOn?: string;
@@ -194,6 +199,90 @@ const toInputText = (value: unknown): string => {
   }
 };
 
+type TemporalInputKind = "text" | "date" | "datetime-local";
+
+const dateOnlyPattern = /^\d{4}-\d{2}-\d{2}/;
+const dateTimePattern =
+  /^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})(?::(\d{2}))?/;
+
+const resolveTemporalInputKind = (fieldPath: string, value: unknown): TemporalInputKind => {
+  const fieldName = fieldPath.split(".").at(-1)?.toLowerCase() || "";
+
+  if (fieldName.endsWith("date")) {
+    return "date";
+  }
+
+  if (fieldName.endsWith("time")) {
+    return "datetime-local";
+  }
+
+  if (typeof value !== "string") {
+    return "text";
+  }
+
+  const text = value.trim();
+  if (!text) {
+    return "text";
+  }
+
+  if (dateTimePattern.test(text)) {
+    return "datetime-local";
+  }
+
+  if (dateOnlyPattern.test(text)) {
+    return "date";
+  }
+
+  return "text";
+};
+
+const formatTemporalInputValue = (kind: TemporalInputKind, value: unknown): string => {
+  if (kind === "text") {
+    return toInputText(value);
+  }
+
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const text = value.trim();
+  if (!text) {
+    return "";
+  }
+
+  if (kind === "date") {
+    const match = text.match(dateOnlyPattern);
+    return match ? match[0] : text;
+  }
+
+  const match = text.match(dateTimePattern);
+  if (!match) {
+    return text;
+  }
+
+  const [, datePart, minutePart, secondPart] = match;
+  return `${datePart}T${minutePart}:${secondPart || "00"}`;
+};
+
+const coerceTemporalInputValue = (kind: TemporalInputKind, rawValue: string): string => {
+  if (kind === "date") {
+    const match = rawValue.match(dateOnlyPattern);
+    return match ? match[0] : rawValue;
+  }
+
+  if (kind === "datetime-local") {
+    const match = rawValue.match(
+      /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(?::(\d{2}))?$/,
+    );
+    if (match) {
+      const [, base, secondPart] = match;
+      return `${base}:${secondPart || "00"}`;
+    }
+  }
+
+  return rawValue;
+};
+
 const hasLookupDependencyValue = (value: unknown): boolean => {
   if (value === undefined || value === null) {
     return false;
@@ -206,9 +295,27 @@ const hasLookupDependencyValue = (value: unknown): boolean => {
   return true;
 };
 
+const matchesLookupValue = (
+  actualValue: unknown,
+  expectedValue: string | number | boolean,
+): boolean => {
+  if (typeof expectedValue === "string") {
+    return String(actualValue || "").trim().toUpperCase() === expectedValue.trim().toUpperCase();
+  }
+
+  if (typeof expectedValue === "number") {
+    return Number(actualValue) === expectedValue;
+  }
+
+  return Boolean(actualValue) === expectedValue;
+};
+
 const matchesLookupFilter = (
   row: DynamicRow,
-  filterBy?: Record<string, string | number | boolean>,
+  filterBy?: Record<
+    string,
+    string | number | boolean | Array<string | number | boolean>
+  >,
 ): boolean => {
   if (!filterBy) {
     return true;
@@ -216,15 +323,12 @@ const matchesLookupFilter = (
 
   return Object.entries(filterBy).every(([key, expectedValue]) => {
     const actualValue = row[key];
-    if (typeof expectedValue === "string") {
-      return String(actualValue || "").trim().toUpperCase() === expectedValue.trim().toUpperCase();
+
+    if (Array.isArray(expectedValue)) {
+      return expectedValue.some((value) => matchesLookupValue(actualValue, value));
     }
 
-    if (typeof expectedValue === "number") {
-      return Number(actualValue) === expectedValue;
-    }
-
-    return Boolean(actualValue) === expectedValue;
+    return matchesLookupValue(actualValue, expectedValue);
   });
 };
 
@@ -569,6 +673,8 @@ export const DynamicCrudPanel = ({
       }),
     );
   }, [dataRows.rows, keyword, tableColumns]);
+
+  const tablePagination = useTablePagination(filteredRows);
 
   const fieldRuleContext = useMemo<FieldRuleContext>(
     () => ({
@@ -967,16 +1073,32 @@ export const DynamicCrudPanel = ({
         );
       }
 
+      const temporalInputKind = resolveTemporalInputKind(
+        path,
+        currentValue ?? templateValue,
+      );
+      const inputValue = formatTemporalInputValue(
+        temporalInputKind,
+        currentValue ?? templateValue,
+      );
+
       return (
         <label key={path} className="space-y-1">
           <span className="text-sm font-semibold text-[#2c5877]">
             {toColumnLabel(key)}
           </span>
           <input
-            type="text"
-            value={toInputText(currentValue ?? templateValue)}
+            type={temporalInputKind}
+            step={temporalInputKind === "datetime-local" ? "1" : undefined}
+            value={inputValue}
             onChange={(event) =>
-              setFormPayload((prev) => setValueByPath(prev, path, event.target.value))
+              setFormPayload((prev) =>
+                setValueByPath(
+                  prev,
+                  path,
+                  coerceTemporalInputValue(temporalInputKind, event.target.value),
+                ),
+              )
             }
             disabled={isFieldDisabled}
             className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
@@ -1044,13 +1166,14 @@ export const DynamicCrudPanel = ({
               </tr>
             </thead>
             <tbody>
-              {filteredRows.map((row, index) => {
+              {tablePagination.paginatedRows.map((row, index) => {
+                const rowNumber = tablePagination.startItem + index;
                 const rowId = resolveRowId(row, idFieldCandidates);
                 return (
-                  <tr key={`row-${rowId || index}`} className="border-b border-[#e0ebf4] text-[#1f3344]">
-                    <td className="px-2 py-2 font-medium text-[#355970]">{index + 1}</td>
+                  <tr key={`row-${rowId || rowNumber}`} className="border-b border-[#e0ebf4] text-[#1f3344]">
+                    <td className="px-2 py-2 font-medium text-[#355970]">{rowNumber}</td>
                     {tableColumns.map((column) => (
-                      <td key={`${index}-${column}`} className="max-w-[260px] px-2 py-2">
+                      <td key={`${rowNumber}-${column}`} className="max-w-[260px] px-2 py-2">
                         <span className="line-clamp-2">{toDisplayValue(row[column])}</span>
                       </td>
                     ))}
@@ -1151,6 +1274,17 @@ export const DynamicCrudPanel = ({
             </tbody>
           </table>
         </div>
+
+        <TablePaginationControls
+          pageIndex={tablePagination.pageIndex}
+          pageSize={tablePagination.pageSize}
+          totalItems={tablePagination.totalItems}
+          totalPages={tablePagination.totalPages}
+          startItem={tablePagination.startItem}
+          endItem={tablePagination.endItem}
+          onPageChange={tablePagination.setPageIndex}
+          onPageSizeChange={tablePagination.setPageSize}
+        />
       </div>
 
       {isEditorOpen ? (

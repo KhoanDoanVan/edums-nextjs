@@ -25,7 +25,9 @@ import {
   updateAdmissionBlock,
   updateAdmissionPeriod,
 } from "@/lib/admin/service";
+import { TablePaginationControls } from "@/components/admin/table-pagination-controls";
 import { formatDateTime, toErrorMessage } from "@/components/admin/format-utils";
+import { useTablePagination } from "@/hooks/use-table-pagination";
 import { loginRequest } from "@/lib/auth/service";
 import type {
   AdmissionApplicationStatus,
@@ -435,6 +437,9 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
       })
       .filter((item): item is SelectionOptionItem => item !== null);
   }, [admissionBenchmarks.rows]);
+  const periodTablePagination = useTablePagination(admissionPeriods.rows);
+  const blockTablePagination = useTablePagination(admissionBlocks);
+  const benchmarkTablePagination = useTablePagination(admissionBenchmarks.rows);
   const visibleAdmissionIds = useMemo(() => {
     return admissionApplicationOptions.map((item) => item.id);
   }, [admissionApplicationOptions]);
@@ -3003,9 +3008,9 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {admissionPeriods.rows.map((item, index) => (
+                  {periodTablePagination.paginatedRows.map((item, index) => (
                     <tr key={item.id} className="border-b border-[#e0ebf4] text-[#3f6178]">
-                      <td className="px-2 py-2">{index + 1}</td>
+                      <td className="px-2 py-2">{periodTablePagination.startItem + index}</td>
                       <td className="px-2 py-2">{item.periodName || "-"}</td>
                       <td className="px-2 py-2">{formatDateTime(item.startTime)}</td>
                       <td className="px-2 py-2">{formatDateTime(item.endTime)}</td>
@@ -3033,6 +3038,17 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
                 </tbody>
               </table>
             </div>
+
+            <TablePaginationControls
+              pageIndex={periodTablePagination.pageIndex}
+              pageSize={periodTablePagination.pageSize}
+              totalItems={periodTablePagination.totalItems}
+              totalPages={periodTablePagination.totalPages}
+              startItem={periodTablePagination.startItem}
+              endItem={periodTablePagination.endItem}
+              onPageChange={periodTablePagination.setPageIndex}
+              onPageSizeChange={periodTablePagination.setPageSize}
+            />
           </section>
 
           <section className={contentCardClass}>
@@ -3050,9 +3066,9 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {admissionBlocks.map((item, index) => (
+                  {blockTablePagination.paginatedRows.map((item, index) => (
                     <tr key={item.id} className="border-b border-[#e0ebf4] text-[#3f6178]">
-                      <td className="px-2 py-2">{index + 1}</td>
+                      <td className="px-2 py-2">{blockTablePagination.startItem + index}</td>
                       <td className="px-2 py-2">{item.blockName || "-"}</td>
                       <td className="px-2 py-2">{item.description || "-"}</td>
                       <td className="px-2 py-2">
@@ -3076,6 +3092,17 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
                 </tbody>
               </table>
             </div>
+
+            <TablePaginationControls
+              pageIndex={blockTablePagination.pageIndex}
+              pageSize={blockTablePagination.pageSize}
+              totalItems={blockTablePagination.totalItems}
+              totalPages={blockTablePagination.totalPages}
+              startItem={blockTablePagination.startItem}
+              endItem={blockTablePagination.endItem}
+              onPageChange={blockTablePagination.setPageIndex}
+              onPageSizeChange={blockTablePagination.setPageSize}
+            />
           </section>
 
           <section className={contentCardClass}>
@@ -3095,9 +3122,9 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {admissionBenchmarks.rows.map((item, index) => (
+                  {benchmarkTablePagination.paginatedRows.map((item, index) => (
                     <tr key={item.id} className="border-b border-[#e0ebf4] text-[#3f6178]">
-                      <td className="px-2 py-2">{index + 1}</td>
+                      <td className="px-2 py-2">{benchmarkTablePagination.startItem + index}</td>
                       <td className="px-2 py-2">{item.majorName || "-"}</td>
                       <td className="px-2 py-2">{item.blockName || "-"}</td>
                       <td className="px-2 py-2">{item.periodName || "-"}</td>
@@ -3123,6 +3150,17 @@ export function AdmissionsPanel({ authorization }: { authorization?: string }) {
                 </tbody>
               </table>
             </div>
+
+            <TablePaginationControls
+              pageIndex={benchmarkTablePagination.pageIndex}
+              pageSize={benchmarkTablePagination.pageSize}
+              totalItems={benchmarkTablePagination.totalItems}
+              totalPages={benchmarkTablePagination.totalPages}
+              startItem={benchmarkTablePagination.startItem}
+              endItem={benchmarkTablePagination.endItem}
+              onPageChange={benchmarkTablePagination.setPageIndex}
+              onPageSizeChange={benchmarkTablePagination.setPageSize}
+            />
           </section>
         </>
       ) : null}

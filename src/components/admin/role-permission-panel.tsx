@@ -5,6 +5,7 @@ import {
   shouldHideFeedbackMessage,
   useToastFeedback,
 } from "@/hooks/use-toast-feedback";
+import { TablePaginationControls } from "@/components/admin/table-pagination-controls";
 import {
   createRole,
   deleteRole,
@@ -15,6 +16,7 @@ import {
 } from "@/lib/admin/service";
 import { ConfirmDialog } from "@/components/admin/confirm-dialog";
 import { toErrorMessage } from "@/components/admin/format-utils";
+import { useTablePagination } from "@/hooks/use-table-pagination";
 import type { RoleListItem } from "@/lib/admin/types";
 
 interface RolePermissionPanelProps {
@@ -137,6 +139,8 @@ export const RolePermissionPanel = ({
       permission.toLowerCase().includes(keyword),
     );
   }, [permissionKeyword, permissions]);
+
+  const rolePagination = useTablePagination(filteredRoles);
 
 
   const openCreateRoleModal = () => {
@@ -338,9 +342,9 @@ export const RolePermissionPanel = ({
                 </tr>
               </thead>
               <tbody>
-                {filteredRoles.map((role, index) => (
+                {rolePagination.paginatedRows.map((role, index) => (
                   <tr key={role.id} className="border-b border-[#e0ebf4] text-[#1f3344]">
-                    <td className="px-2 py-2">{index + 1}</td>
+                    <td className="px-2 py-2">{rolePagination.startItem + index}</td>
                     <td className="px-2 py-2">
                       <p className="font-semibold text-[#1f567b]">
                         {role.roleName || "-"}
@@ -396,6 +400,17 @@ export const RolePermissionPanel = ({
               </tbody>
             </table>
           </div>
+
+          <TablePaginationControls
+            pageIndex={rolePagination.pageIndex}
+            pageSize={rolePagination.pageSize}
+            totalItems={rolePagination.totalItems}
+            totalPages={rolePagination.totalPages}
+            startItem={rolePagination.startItem}
+            endItem={rolePagination.endItem}
+            onPageChange={rolePagination.setPageIndex}
+            onPageSizeChange={rolePagination.setPageSize}
+          />
         </div>
       </section>
 
