@@ -68,6 +68,20 @@ export const getMyProfile = async (
   return toProfile(unwrapApiData<unknown>(response));
 };
 
+export const getMyStudentProfile = async (
+  authorization: string,
+): Promise<ProfileResponse> => {
+  const response = await apiRequest<ApiResponse<unknown> | unknown>(
+    "/api/v1/students/me",
+    {
+      method: "GET",
+      accessToken: authorization,
+    },
+  );
+
+  return toProfile(unwrapApiData<unknown>(response));
+};
+
 export const getStudentById = async (
   studentId: number,
   authorization: string,
