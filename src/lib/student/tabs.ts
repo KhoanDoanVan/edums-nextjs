@@ -14,7 +14,7 @@ export const studentFeatureTabs: StudentFeatureTab[] = [
     description: "Xem và cập nhật thông tin cá nhân sinh viên.",
     endpoints: [
       { method: "GET", path: "/api/v1/profile/me" },
-      { method: "GET", path: "/api/v1/students/{id}" },
+      { method: "GET", path: "/api/v1/students/me" },
       { method: "GET", path: "/api/v1/faculties/{id}" },
       { method: "GET", path: "/api/v1/majors" },
       { method: "GET", path: "/api/v1/majors/{id}" },

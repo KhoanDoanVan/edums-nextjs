@@ -34,13 +34,12 @@ import {
   getMyCourseRegistrations,
   getMyGradeReports,
   getMyScheduleSemesterOptions,
-  getMyProfile,
+  getMyStudentProfile,
   getRecurringScheduleById,
   getRecurringScheduleSessions,
   getRecurringSchedulesBySection,
   getSpecializations,
   getSpecializationsByMajor,
-  getStudentById,
   registerCourseSection,
   switchCourseRegistration,
   updateMyProfile,
@@ -1190,7 +1189,7 @@ export default function DashboardPage() {
 
     const preloadStudentProfile = async () => {
       try {
-        const myProfile = await getMyProfile(session.authorization);
+        const myProfile = await getMyStudentProfile(session.authorization);
 
         if (cancelled) {
           return;
@@ -3043,78 +3042,6 @@ export default function DashboardPage() {
     };
   };
 
-  const mergeProfileData = (
-    preferred: ProfileResponse,
-    fallback: ProfileResponse,
-  ): ProfileResponse => {
-    const pickValue = (first?: string, second?: string): string | undefined => {
-      if (normalizeTextValue(first)) {
-        return first;
-      }
-
-      if (normalizeTextValue(second)) {
-        return second;
-      }
-
-      return undefined;
-    };
-
-    return {
-      id:
-        preferred.id && Number.isInteger(preferred.id)
-          ? preferred.id
-          : fallback.id,
-      username: pickValue(preferred.username, fallback.username),
-      role: pickValue(preferred.role, fallback.role),
-      fullName: pickValue(preferred.fullName, fallback.fullName),
-      email: pickValue(preferred.email, fallback.email),
-      phone: pickValue(preferred.phone, fallback.phone),
-      nationalId: pickValue(preferred.nationalId, fallback.nationalId),
-      address: pickValue(preferred.address, fallback.address),
-      dateOfBirth: pickValue(preferred.dateOfBirth, fallback.dateOfBirth),
-      studentCode: pickValue(preferred.studentCode, fallback.studentCode),
-      classId:
-        preferred.classId && Number.isInteger(preferred.classId)
-          ? preferred.classId
-          : fallback.classId,
-      className: pickValue(preferred.className, fallback.className),
-      facultyId:
-        preferred.facultyId && Number.isInteger(preferred.facultyId)
-          ? preferred.facultyId
-          : fallback.facultyId,
-      facultyName: pickValue(preferred.facultyName, fallback.facultyName),
-      majorId:
-        preferred.majorId && Number.isInteger(preferred.majorId)
-          ? preferred.majorId
-          : fallback.majorId,
-      majorName: pickValue(preferred.majorName, fallback.majorName),
-      specializationId:
-        preferred.specializationId && Number.isInteger(preferred.specializationId)
-          ? preferred.specializationId
-          : fallback.specializationId,
-      specializationName: pickValue(
-        preferred.specializationName,
-        fallback.specializationName,
-      ),
-    };
-  };
-
-  const hasProfileDataGap = (data: ProfileResponse): boolean => {
-    const requiredFields = [
-      data.fullName,
-      data.email,
-      data.phone,
-      data.address,
-      data.dateOfBirth,
-      data.studentCode,
-      data.className,
-      data.majorName,
-      data.specializationName,
-    ];
-
-    return requiredFields.some((value) => !normalizeTextValue(value));
-  };
-
   const syncProfileMajorReferenceContext = async (
     profileData: ProfileResponse,
     authorization: string,
@@ -3445,86 +3372,28 @@ export default function DashboardPage() {
       return;
     }
 
-    const studentId = parsePositiveInteger(studentIdInput);
-
     setIsWorking(true);
     setTabError("");
     setTabMessage("");
     setProfileFormError("");
 
     try {
-      const profileFromMe = await getMyProfile(authorization);
-      let resolvedProfile = profileFromMe;
-      let usedStudentFallback = false;
-      const hasGapFromProfileMe = hasProfileDataGap(profileFromMe);
+      const profileData = await getMyStudentProfile(authorization);
 
-      if (studentId && hasGapFromProfileMe) {
-        try {
-          const profileFromStudent = await getStudentById(studentId, authorization);
-          resolvedProfile = mergeProfileData(profileFromMe, profileFromStudent);
-          usedStudentFallback = true;
-        } catch {
-          usedStudentFallback = false;
-        }
-      }
-
-      setProfile(resolvedProfile);
+      setProfile(profileData);
       if (
-        typeof resolvedProfile.id === "number" &&
-        Number.isInteger(resolvedProfile.id) &&
-        resolvedProfile.id > 0
+        typeof profileData.id === "number" &&
+        Number.isInteger(profileData.id) &&
+        profileData.id > 0
       ) {
-        setStudentIdInput(String(resolvedProfile.id));
+        setStudentIdInput(String(profileData.id));
       }
-      hydrateProfileForm(resolvedProfile);
-      await syncProfileMajorReferenceContext(resolvedProfile, authorization);
+      hydrateProfileForm(profileData);
+      await syncProfileMajorReferenceContext(profileData, authorization);
       setProfileLastLoadedAt(new Date().toISOString());
-      setTabMessage(
-        usedStudentFallback
-          ? "Đã tải hồ sơ và bổ sung thêm dữ liệu từ hồ sơ sinh viên."
-          : hasGapFromProfileMe
-            ? "Đã tải hồ sơ. Một số trường vẫn chưa có dữ liệu trên hệ thống."
-            : "Đã tải thông tin hồ sơ.",
-      );
+      setTabMessage("Đã tải thông tin hồ sơ.");
     } catch (error) {
       const errorMessage = toErrorMessage(error);
-
-      if (studentId) {
-        try {
-          const profileFromStudent = await getStudentById(studentId, authorization);
-          const resolvedProfile = mergeProfileData(
-            profileFromStudent,
-            buildFallbackProfile(),
-          );
-          setProfile(resolvedProfile);
-          if (
-            typeof resolvedProfile.id === "number" &&
-            Number.isInteger(resolvedProfile.id) &&
-            resolvedProfile.id > 0
-          ) {
-            setStudentIdInput(String(resolvedProfile.id));
-          }
-          hydrateProfileForm(resolvedProfile);
-          await syncProfileMajorReferenceContext(resolvedProfile, authorization);
-          setProfileLastLoadedAt(new Date().toISOString());
-          setTabMessage(
-            isForbiddenOrNotFoundError(errorMessage)
-              ? "Không tải được hồ sơ đầy đủ. Đã dùng dữ liệu hồ sơ sinh viên để hiển thị."
-              : "Đã dùng nguồn dữ liệu dự phòng để hiển thị hồ sơ.",
-          );
-          return;
-        } catch (fallbackError) {
-          const fallbackErrorMessage = toErrorMessage(fallbackError);
-          const bothErrorsAreForbiddenOrNotFound =
-            isForbiddenOrNotFoundError(errorMessage) &&
-            isForbiddenOrNotFoundError(fallbackErrorMessage);
-
-          if (!bothErrorsAreForbiddenOrNotFound) {
-            setTabError(fallbackErrorMessage);
-            return;
-          }
-        }
-      }
 
       if (isForbiddenOrNotFoundError(errorMessage)) {
         const fallbackProfile = buildFallbackProfile();
@@ -4592,19 +4461,13 @@ export default function DashboardPage() {
                 <section className={contentCardClass}>
                   <div className={sectionTitleClass}>
                     <h2>Thông báo</h2>
-                    <button
-                      type="button"
-                      className="text-sm font-semibold text-[#0a6aa1] hover:underline"
-                    >
-                      Xem tiep
-                    </button>
                   </div>
                   <div className="grid gap-3 px-4 py-4 md:grid-cols-3">
                     {[
-                      "Đăng ký môn học học kỳ moi",
-                      "Lich cong bo ket qua hoc tap",
+                      "Đăng ký môn học học kỳ mới",
+                      "Lịch công bố kết quả học tập",
                       "Hướng dẫn cập nhật hồ sơ",
-                    ].map((item, index) => (
+                    ].map((item) => (
                       <article
                         key={item}
                         className="rounded-[8px] border border-[#c0d8ea] bg-[#f4fbff] p-3"
@@ -4613,9 +4476,6 @@ export default function DashboardPage() {
                         <p className="mt-2 text-sm text-[#4b6a7f]">
                           Cập nhật {formatDateTime(new Date().toISOString())}
                         </p>
-                        <p className="mt-2 text-sm text-[#4b6a7f]">
-                          Danh muc #{index + 1}
-                        </p>
                       </article>
                     ))}
                   </div>
@@ -4623,14 +4483,14 @@ export default function DashboardPage() {
 
                 <section className={contentCardClass}>
                   <div className={sectionTitleClass}>
-                    <h2>Chuc nang sinh viên</h2>
+                    <h2>Chức năng sinh viên</h2>
                   </div>
                   <div className="overflow-x-auto px-4 py-3">
                     <table className="min-w-full text-left text-sm">
                       <thead>
                         <tr className="border-b border-[#cfdfec] text-[#305970]">
                           <th className="px-2 py-2">Tab</th>
-                          <th className="px-2 py-2">Mo ta</th>
+                          <th className="px-2 py-2">Mô tả</th>
                         </tr>
                       </thead>
                       <tbody>
