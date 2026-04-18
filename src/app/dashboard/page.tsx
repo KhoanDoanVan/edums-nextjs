@@ -1,7 +1,6 @@
 ﻿"use client";
 
 import { FormEvent, Fragment, useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import { AuthGuard } from "@/components/auth/auth-guard";
 import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/context/toast-context";
@@ -25,6 +24,7 @@ import {
   getFacultyById,
   getGradeReportById,
   getGradeComponentsByCourse,
+  getMyGradeOverview,
   getLecturerById,
   getMajorById,
   getMajors,
@@ -46,7 +46,6 @@ import {
 } from "@/lib/student/service";
 import {
   studentFeatureTabs,
-  studentTopHeaderTabs,
 } from "@/lib/student/tabs";
 import { toErrorMessage as toSharedErrorMessage } from "@/components/admin/format-utils";
 import type {
@@ -61,6 +60,7 @@ import type {
   FacultyResponse,
   GradeComponentResponse,
   GradeDetailResponse,
+  GradeOverviewResponse,
   GradeReportResponse,
   LecturerResponse,
   MajorResponse,
@@ -185,7 +185,17 @@ const pickReportText = (
   return null;
 };
 
+const isVisibleGradeReportStatus = (
+  report: Pick<GradeReportResponse, "status"> | null | undefined,
+): boolean => {
+  return report?.status === "PUBLISHED" || report?.status === "LOCKED";
+};
+
 const getGradeScore10FromReport = (report: GradeReportResponse): number | null => {
+  if (!isVisibleGradeReportStatus(report)) {
+    return null;
+  }
+
   if (typeof report.finalScore === "number" && Number.isFinite(report.finalScore)) {
     return report.finalScore;
   }
@@ -197,17 +207,11 @@ const getGradeScore10FromReport = (report: GradeReportResponse): number | null =
   ]);
 };
 
-const getGradeScore4FromReport = (report: GradeReportResponse): number | null => {
-  return pickReportNumber(report as unknown as Record<string, unknown>, [
-    "finalScore4",
-    "score4",
-    "totalScore4",
-    "gpa4",
-    "gradePoint",
-  ]);
-};
-
 const getGradeLetterFromReport = (report: GradeReportResponse): string => {
+  if (!isVisibleGradeReportStatus(report)) {
+    return "-";
+  }
+
   if (typeof report.letterGrade === "string" && report.letterGrade.trim()) {
     return report.letterGrade.trim();
   }
@@ -224,6 +228,15 @@ const getGradeLetterFromReport = (report: GradeReportResponse): string => {
 const getGradeResultMetaFromReport = (
   report: GradeReportResponse,
 ): { label: string; passed: boolean | null } => {
+  if (!isVisibleGradeReportStatus(report)) {
+    return {
+      label: "Chưa công bố",
+      passed: null,
+    };
+  }
+
+  const label = report.status === "LOCKED" ? "Chính thức" : "Dự kiến";
+
   const rawReport = report as unknown as Record<string, unknown>;
 
   const passFlag = ["passed", "isPassed", "pass", "resultPassed"]
@@ -232,7 +245,7 @@ const getGradeResultMetaFromReport = (
 
   if (typeof passFlag === "boolean") {
     return {
-      label: passFlag ? "Đạt" : "Không đạt",
+      label,
       passed: passFlag,
     };
   }
@@ -247,7 +260,7 @@ const getGradeResultMetaFromReport = (
   if (resultLabel) {
     const normalized = resultLabel.toLowerCase();
     if (normalized.includes("đạt") || normalized.includes("pass")) {
-      return { label: resultLabel, passed: true };
+      return { label, passed: true };
     }
 
     if (
@@ -255,17 +268,17 @@ const getGradeResultMetaFromReport = (
       normalized.includes("khong dat") ||
       normalized.includes("fail")
     ) {
-      return { label: resultLabel, passed: false };
+      return { label, passed: false };
     }
 
     return {
-      label: resultLabel,
+      label,
       passed: null,
     };
   }
 
   return {
-    label: "-",
+    label,
     passed: null,
   };
 };
@@ -343,6 +356,13 @@ const formatDateShort = (value: string): string => {
   ).padStart(2, "0")}`;
 };
 
+const formatDateShortWithYear = (value: string): string => {
+  const date = parseIsoDateLocal(value);
+  return `${String(date.getDate()).padStart(2, "0")}/${String(
+    date.getMonth() + 1,
+  ).padStart(2, "0")}/${date.getFullYear()}`;
+};
+
 const buildScheduleWeekOption = (startDate: string): ScheduleWeekOption => {
   const start = parseIsoDateLocal(startDate);
   const end = addDays(start, 6);
@@ -354,9 +374,9 @@ const buildScheduleWeekOption = (startDate: string): ScheduleWeekOption => {
     weekNumber,
     startDate,
     endDate,
-    label: `Tuần ${weekNumber} [từ ngày ${formatDateShort(
+    label: `Tuần ${weekNumber} [từ ngày ${formatDateShortWithYear(
       startDate,
-    )} đến ngày ${formatDateShort(endDate)}]`,
+    )} đến ngày ${formatDateShortWithYear(endDate)}]`,
   };
 };
 
@@ -424,6 +444,7 @@ interface SemesterFilterOption {
 
 interface WeeklyScheduleBlock {
   key: string;
+  sessionId?: number;
   sectionId: number;
   recurringScheduleId?: number;
   classroomId?: number;
@@ -449,6 +470,20 @@ interface ScheduleWeekOption {
   startDate: string;
   endDate: string;
   label: string;
+}
+
+interface AttendanceSectionFilterOption {
+  value: string;
+  label: string;
+  count: number;
+}
+
+interface AttendanceItemContext {
+  sectionFilterKey: string;
+  sectionLabel: string;
+  timeLabel: string;
+  sessionLabel: string;
+  roomLabel: string;
 }
 
 type GradeDetailItem = GradeDetailResponse;
@@ -819,6 +854,58 @@ const isRegistrationWindowOpen = (
   );
 };
 
+const pickCurrentOpenSemesterId = (
+  semesters: ScheduleSemesterOptionResponse[],
+): number | null => {
+  const openSemesters = semesters
+    .filter(isRegistrationWindowOpen)
+    .filter(
+      (semester) =>
+        Number.isInteger(semester.semesterId) && semester.semesterId > 0,
+    );
+
+  if (openSemesters.length === 0) {
+    return null;
+  }
+
+  const parseTime = (value?: string | null): number => {
+    if (!value) {
+      return 0;
+    }
+
+    const parsed = new Date(value).getTime();
+    return Number.isFinite(parsed) ? parsed : 0;
+  };
+
+  openSemesters.sort((first, second) => {
+    const firstPriority = first.registrationPeriodStatus === "OPEN" ? 1 : 0;
+    const secondPriority = second.registrationPeriodStatus === "OPEN" ? 1 : 0;
+    if (firstPriority !== secondPriority) {
+      return secondPriority - firstPriority;
+    }
+
+    const firstTime = parseTime(first.registrationStartTime) || parseTime(first.startDate);
+    const secondTime = parseTime(second.registrationStartTime) || parseTime(second.startDate);
+    if (firstTime !== secondTime) {
+      return secondTime - firstTime;
+    }
+
+    if ((first.semesterNumber ?? 0) !== (second.semesterNumber ?? 0)) {
+      return (second.semesterNumber ?? 0) - (first.semesterNumber ?? 0);
+    }
+
+    return second.semesterId - first.semesterId;
+  });
+
+  return openSemesters[0]?.semesterId || null;
+};
+
+const isOngoingOrUpcomingSemesterStatus = (
+  status?: ScheduleSemesterOptionResponse["semesterStatus"],
+): boolean => {
+  return status === "ONGOING" || status === "REGISTRATION_OPEN";
+};
+
 const getGradeStatusLabel = (status?: string): string => {
   switch (status) {
     case "PUBLISHED":
@@ -855,8 +942,10 @@ const getAttendanceStatusLabel = (status?: string): string => {
       return "Có phép";
     case "ABSENT":
       return "Vắng";
+    case "NOT_MARKED":
+      return "Chưa điểm danh";
     default:
-      return status || "-";
+      return "Chưa điểm danh";
   }
 };
 
@@ -870,25 +959,11 @@ const getAttendanceStatusClass = (status?: string): string => {
       return "bg-[#eef4fb] text-[#1f4f84]";
     case "ABSENT":
       return "bg-[#fff0f0] text-[#bf4e4e]";
+    case "NOT_MARKED":
+      return "bg-[#eef4f8] text-[#47677e]";
     default:
       return "bg-[#eef4f8] text-[#47677e]";
   }
-};
-
-const getTopHeaderDisplayLabel = (label: string): string => {
-  if (label === "Thông báo") {
-    return "Thông báo";
-  }
-
-  if (label === "Quy dinh - quy che") {
-    return "Quy định - quy chế";
-  }
-
-  if (label === "Thông tin cập nhật") {
-    return "Thông tin cập nhật";
-  }
-
-  return label;
 };
 
 const getStudentTabDisplayLabel = (
@@ -906,6 +981,10 @@ const getStudentTabDescription = (
 ): string => {
   if (item.key === "course-registration") {
     return "Tra cứu lớp học phần đủ điều kiện đăng ký theo học kỳ, khoa và môn học; sau đó đăng ký, hủy hoặc đổi nhóm ngay trên trang này.";
+  }
+
+  if (item.key === "attendance") {
+    return "";
   }
 
   return item.description;
@@ -1040,7 +1119,6 @@ export default function DashboardPage() {
     dateOfBirth: "",
   });
   const [profileFormError, setProfileFormError] = useState("");
-  const [profileLastLoadedAt, setProfileLastLoadedAt] = useState<string>("");
   const [majorCatalog, setMajorCatalog] = useState<MajorResponse[]>([]);
   const [majorsBySelectedProfileFaculty, setMajorsBySelectedProfileFaculty] =
     useState<MajorResponse[]>([]);
@@ -1080,6 +1158,9 @@ export default function DashboardPage() {
     useState<number | null>(null);
 
   const [gradeReports, setGradeReports] = useState<GradeReportResponse[]>([]);
+  const [gradeOverview, setGradeOverview] = useState<GradeOverviewResponse | null>(
+    null,
+  );
   const [hasLoadedGrades, setHasLoadedGrades] = useState(false);
   const [gradeLastLoadedAt, setGradeLastLoadedAt] = useState("");
   const [gradeKeyword, setGradeKeyword] = useState("");
@@ -1107,9 +1188,9 @@ export default function DashboardPage() {
     useState<number | null>(null);
   const [attendanceItems, setAttendanceItems] = useState<AttendanceResponse[]>([]);
   const [hasLoadedAttendance, setHasLoadedAttendance] = useState(false);
-  const [attendanceLastLoadedAt, setAttendanceLastLoadedAt] = useState("");
   const [attendanceKeyword, setAttendanceKeyword] = useState("");
   const [attendanceStatusFilter, setAttendanceStatusFilter] = useState("");
+  const [attendanceSectionFilter, setAttendanceSectionFilter] = useState("");
   const [attendanceDateFrom, setAttendanceDateFrom] = useState("");
   const [attendanceDateTo, setAttendanceDateTo] = useState("");
   const [courseSections, setCourseSections] = useState<
@@ -1524,7 +1605,7 @@ export default function DashboardPage() {
       .filter(
         (semester) =>
           semester.selectableForSchedule !== false &&
-          semester.semesterStatus === "REGISTRATION_OPEN",
+          isOngoingOrUpcomingSemesterStatus(semester.semesterStatus),
       )
       .map((semester) => ({
         semesterId: semester.semesterId,
@@ -1964,30 +2045,31 @@ export default function DashboardPage() {
         const courseCredits =
           typeof sectionCredits === "number" && Number.isFinite(sectionCredits)
             ? sectionCredits
-            : typeof section?.courseId === "number" &&
-                typeof courseCatalogById.get(section.courseId)?.credits === "number"
-              ? courseCatalogById.get(section.courseId)?.credits || null
-              : null;
+            : typeof report.credits === "number" && Number.isFinite(report.credits)
+              ? report.credits
+              : typeof section?.courseId === "number" &&
+                  typeof courseCatalogById.get(section.courseId)?.credits === "number"
+                ? courseCatalogById.get(section.courseId)?.credits || null
+                : null;
+        const semesterId = section?.semesterId || report.semesterId;
+        const semesterNumber = section?.semesterNumber || report.semesterNumber;
+        const academicYear = section?.academicYear || report.academicYear || "";
         const score10 = getGradeScore10FromReport(report);
-        const score4 = getGradeScore4FromReport(report);
         const letterGrade = getGradeLetterFromReport(report);
         const resultMeta = getGradeResultMetaFromReport(report);
 
         return {
           report,
           section: section || null,
-          semesterNumber: section?.semesterNumber,
-          academicYear: section?.academicYear || "",
-          semesterLabel: getSemesterDisplayLabel(
-            section?.semesterNumber,
-            section?.academicYear,
-          ),
-          courseCode: section?.courseCode || "-",
-          sectionCode: section?.sectionCode || "-",
+          semesterId,
+          semesterNumber,
+          academicYear,
+          semesterLabel: getSemesterDisplayLabel(semesterNumber, academicYear),
+          courseCode: section?.courseCode || report.courseCode || "-",
+          sectionCode: section?.sectionCode || report.sectionCode || "-",
           courseName: report.courseName || section?.courseName || "-",
           credits: courseCredits,
           score10,
-          score4,
           letterGrade,
           resultLabel: resultMeta.label,
           passed: resultMeta.passed,
@@ -2016,27 +2098,52 @@ export default function DashboardPage() {
       });
 
     const allScoreRows = rows.filter((item) => item.score10 !== null);
-    const allScore4Rows = rows.filter((item) => item.score4 !== null);
-    const cumulativeAverage10 =
+    const fallbackCumulativeAverage10 =
       allScoreRows.length > 0
         ? allScoreRows.reduce((sum, item) => sum + (item.score10 || 0), 0) /
           allScoreRows.length
         : null;
-    const cumulativeAverage4 =
-      allScore4Rows.length > 0
-        ? allScore4Rows.reduce((sum, item) => sum + (item.score4 || 0), 0) /
-          allScore4Rows.length
-        : null;
-    const hasCumulativePassFlag = rows.some((item) => item.passed !== null);
-    const cumulativeEarnedCredits = hasCumulativePassFlag
-      ? rows.reduce((sum, item) => {
-          if (item.passed !== true || typeof item.credits !== "number") {
-            return sum;
-          }
+    const fallbackCumulativeEarnedCredits = rows.reduce((sum, item) => {
+      if (item.passed !== true || typeof item.credits !== "number") {
+        return sum;
+      }
 
-          return sum + item.credits;
-        }, 0)
-      : null;
+      return sum + item.credits;
+    }, 0);
+
+    const cumulativeAverage10 =
+      typeof gradeOverview?.cumulativeAverage10 === "number" &&
+      Number.isFinite(gradeOverview.cumulativeAverage10)
+        ? gradeOverview.cumulativeAverage10
+        : fallbackCumulativeAverage10;
+    const cumulativeEarnedCredits =
+      typeof gradeOverview?.cumulativeEarnedCredits === "number" &&
+      Number.isFinite(gradeOverview.cumulativeEarnedCredits)
+        ? gradeOverview.cumulativeEarnedCredits
+        : fallbackCumulativeEarnedCredits;
+
+    const semesterSummaries = gradeOverview?.semesterSummaries || [];
+    const semesterSummaryById = new Map<number, (typeof semesterSummaries)[number]>();
+    const semesterSummaryByLabel = new Map<string, (typeof semesterSummaries)[number]>();
+
+    semesterSummaries.forEach((summary) => {
+      if (typeof summary.semesterId === "number" && Number.isInteger(summary.semesterId)) {
+        semesterSummaryById.set(summary.semesterId, summary);
+      }
+
+      const summarySemesterNumber =
+        typeof summary.semesterNumber === "number" && Number.isFinite(summary.semesterNumber)
+          ? summary.semesterNumber
+          : undefined;
+      const summaryLabel = getSemesterDisplayLabel(
+        summarySemesterNumber,
+        summary.academicYear || undefined,
+      );
+
+      if (summaryLabel && !semesterSummaryByLabel.has(summaryLabel)) {
+        semesterSummaryByLabel.set(summaryLabel, summary);
+      }
+    });
 
     const buckets = new Map<string, typeof rows>();
 
@@ -2051,53 +2158,57 @@ export default function DashboardPage() {
 
     return Array.from(buckets.entries()).map(([semesterLabel, items]) => {
       const semesterScoreRows = items.filter((item) => item.score10 !== null);
-      const semesterScore4Rows = items.filter((item) => item.score4 !== null);
-      const semesterAverage10 =
+      const fallbackSemesterAverage10 =
         semesterScoreRows.length > 0
           ? semesterScoreRows.reduce((sum, item) => sum + (item.score10 || 0), 0) /
             semesterScoreRows.length
           : null;
-      const semesterAverage4 =
-        semesterScore4Rows.length > 0
-          ? semesterScore4Rows.reduce((sum, item) => sum + (item.score4 || 0), 0) /
-            semesterScore4Rows.length
-          : null;
-      const hasSemesterPassFlag = items.some((item) => item.passed !== null);
-      const semesterEarnedCredits = hasSemesterPassFlag
-        ? items.reduce((sum, item) => {
-            if (item.passed !== true || typeof item.credits !== "number") {
-              return sum;
-            }
+      const fallbackSemesterEarnedCredits = items.reduce((sum, item) => {
+        if (item.passed !== true || typeof item.credits !== "number") {
+          return sum;
+        }
 
-            return sum + item.credits;
-          }, 0)
-        : null;
+        return sum + item.credits;
+      }, 0);
 
       const first = items[0];
+      const semesterSummary =
+        (typeof first.semesterId === "number" && Number.isInteger(first.semesterId)
+          ? semesterSummaryById.get(first.semesterId)
+          : undefined) || semesterSummaryByLabel.get(semesterLabel);
+
+      const semesterAverage10 =
+        typeof semesterSummary?.semesterAverage10 === "number" &&
+        Number.isFinite(semesterSummary.semesterAverage10)
+          ? semesterSummary.semesterAverage10
+          : fallbackSemesterAverage10;
+      const semesterEarnedCredits =
+        typeof semesterSummary?.semesterEarnedCredits === "number" &&
+        Number.isFinite(semesterSummary.semesterEarnedCredits)
+          ? semesterSummary.semesterEarnedCredits
+          : fallbackSemesterEarnedCredits;
 
       return {
-        key: `${first.semesterNumber || 0}-${first.academicYear || "na"}`,
+        key:
+          typeof first.semesterId === "number" && Number.isInteger(first.semesterId)
+            ? `semester:${first.semesterId}`
+            : `${first.semesterNumber || 0}-${first.academicYear || "na"}`,
         semesterLabel,
         semesterNumber: first.semesterNumber,
         academicYear: first.academicYear,
         items,
         semesterAverage10,
-        semesterAverage4,
         semesterEarnedCredits,
         cumulativeAverage10,
-        cumulativeAverage4,
         cumulativeEarnedCredits,
       };
     });
-  }, [courseCatalogById, filteredGradeReports, gradeSectionsById]);
+  }, [courseCatalogById, filteredGradeReports, gradeOverview, gradeSectionsById]);
 
   const gradeSummary = useMemo(() => {
     const validScores = gradeReports
-      .map((item) => item.finalScore)
-      .filter(
-        (value): value is number =>
-          typeof value === "number" && Number.isFinite(value),
-      );
+      .map((item) => getGradeScore10FromReport(item))
+      .filter((value): value is number => value !== null);
 
     const publishedCount = gradeReports.filter(
       (item) => item.status === "PUBLISHED",
@@ -2119,6 +2230,7 @@ export default function DashboardPage() {
 
   const attendanceStatusOptions = useMemo(() => {
     const statusPriority: Record<string, number> = {
+      NOT_MARKED: 0,
       PRESENT: 1,
       LATE: 2,
       EXCUSED: 3,
@@ -2141,6 +2253,198 @@ export default function DashboardPage() {
       });
   }, [attendanceItems]);
 
+  const attendanceContextByItemId = useMemo(() => {
+    const registrationsById = new Map<number, RegisteredCourseItem>();
+    registeredSections.forEach((registration) => {
+      if (Number.isInteger(registration.registrationId) && registration.registrationId > 0) {
+        registrationsById.set(registration.registrationId, registration);
+      }
+    });
+
+    const scheduleBySessionId = new Map<number, WeeklyScheduleBlock>();
+    const schedulesBySectionDate = new Map<string, WeeklyScheduleBlock[]>();
+
+    myScheduleBlocks.forEach((block) => {
+      if (Number.isInteger(block.sessionId) && block.sessionId && !scheduleBySessionId.has(block.sessionId)) {
+        scheduleBySessionId.set(block.sessionId, block);
+      }
+
+      if (!Number.isInteger(block.sectionId) || block.sectionId <= 0 || !block.sessionDate) {
+        return;
+      }
+
+      const normalizedDate = toLocalIsoDate(parseIsoDateLocal(block.sessionDate));
+      const sectionDateKey = `${block.sectionId}-${normalizedDate}`;
+      const existing = schedulesBySectionDate.get(sectionDateKey) || [];
+      existing.push(block);
+      schedulesBySectionDate.set(sectionDateKey, existing);
+    });
+
+    schedulesBySectionDate.forEach((blocks, key) => {
+      const sorted = [...blocks].sort((first, second) => {
+        if (first.startPeriod === second.startPeriod) {
+          return first.endPeriod - second.endPeriod;
+        }
+        return first.startPeriod - second.startPeriod;
+      });
+      schedulesBySectionDate.set(key, sorted);
+    });
+
+    const parseNumber = (value: unknown): number | undefined => {
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return value;
+      }
+
+      if (typeof value === "string" && value.trim() !== "") {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed)) {
+          return parsed;
+        }
+      }
+
+      return undefined;
+    };
+
+    const parseText = (value: unknown): string | undefined => {
+      if (typeof value !== "string") {
+        return undefined;
+      }
+
+      const trimmed = value.trim();
+      return trimmed ? trimmed : undefined;
+    };
+
+    const buildSectionLabel = (
+      sectionCode?: string,
+      courseCode?: string,
+      courseName?: string,
+    ): string => {
+      if (sectionCode && courseName) {
+        return `${sectionCode} - ${courseName}`;
+      }
+
+      if (courseCode && courseName) {
+        return `${courseCode} - ${courseName}`;
+      }
+
+      return sectionCode || courseName || courseCode || "-";
+    };
+
+    const getDayLabel = (dayIndex?: number, sessionDate?: string): string => {
+      if (typeof dayIndex === "number" && dayIndex >= 0 && dayIndex < scheduleDayLabels.length) {
+        return scheduleDayLabels[dayIndex];
+      }
+
+      if (!sessionDate) {
+        return "";
+      }
+
+      const resolvedDay = getDayIndexFromSessionDate(sessionDate);
+      if (resolvedDay === null) {
+        return "";
+      }
+
+      return scheduleDayLabels[resolvedDay] || "";
+    };
+
+    const contextEntries = new Map<number, AttendanceItemContext>();
+
+    attendanceItems.forEach((item) => {
+      const itemRecord = item as AttendanceResponse & Record<string, unknown>;
+      const registration = item.courseRegistrationId
+        ? registrationsById.get(item.courseRegistrationId)
+        : undefined;
+
+      const rawSectionId = parseNumber(itemRecord.sectionId ?? itemRecord.courseSectionId);
+      const sectionId = rawSectionId || registration?.courseSectionId;
+
+      let matchedSchedule = item.sessionId
+        ? scheduleBySessionId.get(item.sessionId)
+        : undefined;
+
+      if (!matchedSchedule && sectionId && item.sessionDate) {
+        const normalizedDate = toLocalIsoDate(parseIsoDateLocal(item.sessionDate));
+        const sectionDateKey = `${sectionId}-${normalizedDate}`;
+        const candidates = schedulesBySectionDate.get(sectionDateKey) || [];
+        if (candidates.length > 0) {
+          matchedSchedule = candidates[0];
+        }
+      }
+
+      const sectionCode =
+        parseText(itemRecord.sectionCode) ||
+        registration?.sectionCode ||
+        matchedSchedule?.sectionCode;
+      const courseCode =
+        parseText(itemRecord.courseCode) ||
+        registration?.courseCode ||
+        matchedSchedule?.courseCode;
+      const courseName =
+        parseText(itemRecord.courseName) ||
+        registration?.courseName ||
+        matchedSchedule?.courseName;
+      const sectionLabel = buildSectionLabel(sectionCode, courseCode, courseName);
+      const sectionFilterKey = sectionId
+        ? `section:${sectionId}`
+        : sectionLabel !== "-"
+          ? `label:${sectionLabel}`
+          : "";
+
+      const startPeriod =
+        parseNumber(itemRecord.startPeriod) || matchedSchedule?.startPeriod;
+      const endPeriod = parseNumber(itemRecord.endPeriod) || matchedSchedule?.endPeriod;
+      const dayLabel = getDayLabel(matchedSchedule?.dayIndex, item.sessionDate);
+      const timeLabel =
+        startPeriod && endPeriod
+          ? `${getPeriodRangeLabel(startPeriod, endPeriod)} (${getPeriodClockRange(startPeriod, endPeriod)})`
+          : "Chưa có khung giờ";
+      const sessionParts = [dayLabel, item.sessionId ? `Session #${item.sessionId}` : ""]
+        .filter(Boolean)
+        .join(" - ");
+      const sessionLabel = sessionParts || "Buổi học chưa định danh";
+
+      const roomLabel =
+        parseText(itemRecord.classroomName) || matchedSchedule?.classroomName || "-";
+
+      contextEntries.set(item.id, {
+        sectionFilterKey,
+        sectionLabel,
+        timeLabel,
+        sessionLabel,
+        roomLabel,
+      });
+    });
+
+    return contextEntries;
+  }, [attendanceItems, myScheduleBlocks, registeredSections]);
+
+  const attendanceSectionOptions = useMemo<AttendanceSectionFilterOption[]>(() => {
+    const entries = new Map<string, AttendanceSectionFilterOption>();
+
+    attendanceItems.forEach((item) => {
+      const context = attendanceContextByItemId.get(item.id);
+      if (!context?.sectionFilterKey || context.sectionLabel === "-") {
+        return;
+      }
+
+      const existing = entries.get(context.sectionFilterKey);
+      if (existing) {
+        existing.count += 1;
+        return;
+      }
+
+      entries.set(context.sectionFilterKey, {
+        value: context.sectionFilterKey,
+        label: context.sectionLabel,
+        count: 1,
+      });
+    });
+
+    return Array.from(entries.values()).sort((first, second) =>
+      first.label.localeCompare(second.label, "vi"),
+    );
+  }, [attendanceContextByItemId, attendanceItems]);
+
   const filteredAttendanceItems = useMemo(() => {
     const normalizedKeyword = attendanceKeyword.trim().toLowerCase();
     const normalizedDateFrom = attendanceDateFrom.trim();
@@ -2155,8 +2459,12 @@ export default function DashboardPage() {
 
     return attendanceItems
       .filter((item) => {
+        const context = attendanceContextByItemId.get(item.id);
         const statusMatched =
           !attendanceStatusFilter || item.status === attendanceStatusFilter;
+        const sectionMatched =
+          !attendanceSectionFilter ||
+          context?.sectionFilterKey === attendanceSectionFilter;
         const sessionDateIso = item.sessionDate
           ? toLocalIsoDate(parseIsoDateLocal(item.sessionDate))
           : "";
@@ -2173,13 +2481,23 @@ export default function DashboardPage() {
             item.note,
             item.sessionDate ? formatDate(item.sessionDate) : undefined,
             item.sessionId ? String(item.sessionId) : undefined,
+            context?.sectionLabel,
+            context?.timeLabel,
+            context?.sessionLabel,
+            context?.roomLabel,
           ]
             .filter(Boolean)
             .some((value) =>
               String(value).toLowerCase().includes(normalizedKeyword),
             );
 
-        return statusMatched && dateFromMatched && dateToMatched && keywordMatched;
+        return (
+          statusMatched &&
+          sectionMatched &&
+          dateFromMatched &&
+          dateToMatched &&
+          keywordMatched
+        );
       })
       .sort((first, second) => {
         const firstTime = first.sessionDate
@@ -2199,12 +2517,17 @@ export default function DashboardPage() {
     attendanceDateFrom,
     attendanceDateTo,
     attendanceItems,
+    attendanceContextByItemId,
     attendanceKeyword,
+    attendanceSectionFilter,
     attendanceStatusFilter,
   ]);
 
   const attendanceSummary = useMemo(() => {
     const total = filteredAttendanceItems.length;
+    const notMarkedCount = filteredAttendanceItems.filter(
+      (item) => String(item.status || "") === "NOT_MARKED" || !item.status,
+    ).length;
     const presentCount = filteredAttendanceItems.filter(
       (item) => item.status === "PRESENT",
     ).length;
@@ -2217,18 +2540,46 @@ export default function DashboardPage() {
     const absentCount = filteredAttendanceItems.filter(
       (item) => item.status === "ABSENT",
     ).length;
+    const markedCount = total - notMarkedCount;
     const participatedCount = presentCount + lateCount + excusedCount;
 
     return {
       total,
+      notMarkedCount,
       presentCount,
       lateCount,
       excusedCount,
       absentCount,
       participationRate:
-        total > 0 ? (participatedCount / total) * 100 : null,
+        markedCount > 0 ? (participatedCount / markedCount) * 100 : null,
     };
   }, [filteredAttendanceItems]);
+
+  const attendanceStatusCountByKey = useMemo(() => {
+    const counters: Record<string, number> = {
+      NOT_MARKED: 0,
+      PRESENT: 0,
+      LATE: 0,
+      EXCUSED: 0,
+      ABSENT: 0,
+    };
+
+    attendanceItems.forEach((item) => {
+      const key = (item.status || "NOT_MARKED").toUpperCase();
+      counters[key] = (counters[key] || 0) + 1;
+    });
+
+    return counters;
+  }, [attendanceItems]);
+
+  const attendanceRows = useMemo(
+    () =>
+      filteredAttendanceItems.map((item) => ({
+        item,
+        context: attendanceContextByItemId.get(item.id) || null,
+      })),
+    [attendanceContextByItemId, filteredAttendanceItems],
+  );
 
   const isAttendanceDateRangeInvalid =
     attendanceDateFrom !== "" &&
@@ -2246,6 +2597,27 @@ export default function DashboardPage() {
       null
     );
   }, [filteredGradeReports, gradeReports, selectedGradeReportId]);
+
+  const selectedPersistedGradeReportId = useMemo(() => {
+    if (!selectedGradeReport) {
+      return null;
+    }
+
+    const directId = selectedGradeReport.gradeReportId;
+    if (typeof directId === "number" && Number.isInteger(directId) && directId > 0) {
+      return directId;
+    }
+
+    if (
+      typeof selectedGradeReport.id === "number" &&
+      Number.isInteger(selectedGradeReport.id) &&
+      selectedGradeReport.id > 0
+    ) {
+      return selectedGradeReport.id;
+    }
+
+    return null;
+  }, [selectedGradeReport]);
 
   const selectedGradeReportResolved = useMemo(() => {
     if (!selectedGradeReport) {
@@ -2292,8 +2664,19 @@ export default function DashboardPage() {
   }, [gradeComponentsByCourseId, selectedGradeCourseId]);
 
   const selectedGradeComponentRows = useMemo(() => {
+    const isSelectedGradePublished =
+      isVisibleGradeReportStatus(selectedGradeReportResolved) ||
+      isVisibleGradeReportStatus(selectedGradeReport);
+
     if (selectedGradeComponents.length === 0) {
-      return selectedGradeDetails;
+      if (isSelectedGradePublished) {
+        return selectedGradeDetails;
+      }
+
+      return selectedGradeDetails.map((detail) => ({
+        ...detail,
+        score: undefined,
+      }));
     }
 
     const detailByComponentId = new Map<number, GradeDetailItem>();
@@ -2318,7 +2701,7 @@ export default function DashboardPage() {
           typeof component.weightPercentage === "number"
             ? component.weightPercentage
             : matchedDetail?.weightPercentage,
-        score: matchedDetail?.score,
+        score: isSelectedGradePublished ? matchedDetail?.score : undefined,
       } satisfies GradeDetailItem;
     });
 
@@ -2332,8 +2715,20 @@ export default function DashboardPage() {
       );
     });
 
-    return [...mergedRows, ...extraDetails];
-  }, [selectedGradeComponents, selectedGradeDetails]);
+    if (isSelectedGradePublished) {
+      return [...mergedRows, ...extraDetails];
+    }
+
+    return [...mergedRows, ...extraDetails].map((detail) => ({
+      ...detail,
+      score: undefined,
+    }));
+  }, [
+    selectedGradeComponents,
+    selectedGradeDetails,
+    selectedGradeReport,
+    selectedGradeReportResolved,
+  ]);
 
   const selectedGradeComponentStats = useMemo(() => {
     const totalWeight = selectedGradeComponentRows.reduce((sum, item) => {
@@ -2630,27 +3025,28 @@ export default function DashboardPage() {
     }
 
     const authorization = session?.authorization;
-    const reportId = selectedGradeReport?.id;
+    const reportCacheId = selectedGradeReport?.id;
+    const persistedReportId = selectedPersistedGradeReportId;
 
-    if (!authorization || !reportId) {
+    if (!authorization || !reportCacheId || !persistedReportId) {
       return;
     }
 
     if (
       Object.prototype.hasOwnProperty.call(
         gradeReportDetailsById,
-        reportId,
+        reportCacheId,
       )
     ) {
       return;
     }
 
     let cancelled = false;
-    setLoadingGradeReportId(reportId);
+    setLoadingGradeReportId(reportCacheId);
 
     const loadSelectedGradeReportDetail = async () => {
       try {
-        const detail = await getGradeReportById(reportId, authorization);
+        const detail = await getGradeReportById(persistedReportId, authorization);
 
         if (cancelled) {
           return;
@@ -2658,7 +3054,7 @@ export default function DashboardPage() {
 
         setGradeReportDetailsById((current) => ({
           ...current,
-          [reportId]: detail,
+          [reportCacheId]: detail,
         }));
       } catch {
         if (cancelled) {
@@ -2667,12 +3063,12 @@ export default function DashboardPage() {
 
         setGradeReportDetailsById((current) => ({
           ...current,
-          [reportId]: null,
+          [reportCacheId]: null,
         }));
       } finally {
         if (!cancelled) {
           setLoadingGradeReportId((current) =>
-            current === reportId ? null : current,
+            current === reportCacheId ? null : current,
           );
         }
       }
@@ -2687,6 +3083,7 @@ export default function DashboardPage() {
     activeTabKey,
     gradeReportDetailsById,
     selectedGradeReport,
+    selectedPersistedGradeReportId,
     session?.authorization,
   ]);
 
@@ -2754,6 +3151,20 @@ export default function DashboardPage() {
       setAttendanceStatusFilter("");
     }
   }, [attendanceStatusFilter, attendanceStatusOptions]);
+
+  useEffect(() => {
+    if (!attendanceSectionFilter) {
+      return;
+    }
+
+    const sectionFilterValid = attendanceSectionOptions.some(
+      (option) => option.value === attendanceSectionFilter,
+    );
+
+    if (!sectionFilterValid) {
+      setAttendanceSectionFilter("");
+    }
+  }, [attendanceSectionFilter, attendanceSectionOptions]);
 
   useEffect(() => {
     if (activeTabKey !== "profile") {
@@ -3390,7 +3801,6 @@ export default function DashboardPage() {
       }
       hydrateProfileForm(profileData);
       await syncProfileMajorReferenceContext(profileData, authorization);
-      setProfileLastLoadedAt(new Date().toISOString());
       setTabMessage("Đã tải thông tin hồ sơ.");
     } catch (error) {
       const errorMessage = toErrorMessage(error);
@@ -3400,7 +3810,6 @@ export default function DashboardPage() {
         setProfile(fallbackProfile);
         hydrateProfileForm(fallbackProfile);
         await syncProfileMajorReferenceContext(fallbackProfile, authorization);
-        setProfileLastLoadedAt(new Date().toISOString());
         setTabMessage(
           "Tài khoản hiện tại chưa có dữ liệu hồ sơ đầy đủ. Đang hiển thị thông tin cơ bản.",
         );
@@ -3551,7 +3960,6 @@ export default function DashboardPage() {
       setProfile(data);
       hydrateProfileForm(data);
       await syncProfileMajorReferenceContext(data, authorization);
-      setProfileLastLoadedAt(new Date().toISOString());
       setTabMessage("Cập nhật hồ sơ thành công.");
       toast.success("Cập nhật hồ sơ thành công.", "Thành công");
     });
@@ -3570,11 +3978,21 @@ export default function DashboardPage() {
     }
 
     await runAction(async () => {
-      const data = await getMyGradeReports(authorization);
-      setGradeReports(data);
+      let reports: GradeReportResponse[] = [];
+      let overview: GradeOverviewResponse | null = null;
+
+      try {
+        overview = await getMyGradeOverview(authorization);
+        reports = overview.reports;
+      } catch {
+        reports = await getMyGradeReports(authorization);
+      }
+
+      setGradeOverview(overview);
+      setGradeReports(reports);
       setHasLoadedGrades(true);
       setGradeLastLoadedAt(new Date().toISOString());
-      setSelectedGradeReportId(data[0]?.id ?? null);
+      setSelectedGradeReportId(reports[0]?.id ?? null);
       setIsGradeDetailModalOpen(false);
       setGradeReportDetailsById({});
       setLoadingGradeReportId(null);
@@ -3583,7 +4001,7 @@ export default function DashboardPage() {
 
       const sectionIds = Array.from(
         new Set(
-          data
+          reports
             .map((item) => item.sectionId)
             .filter(
               (value): value is number =>
@@ -3594,7 +4012,7 @@ export default function DashboardPage() {
 
       if (sectionIds.length === 0) {
         setGradeSectionsById({});
-        setTabMessage(`Đã tải ${data.length} bản ghi điểm.`);
+        setTabMessage(`Đã tải ${reports.length} bản ghi điểm.`);
         return;
       }
 
@@ -3620,38 +4038,48 @@ export default function DashboardPage() {
         setIsGradeContextLoading(false);
       }
 
-      setTabMessage(`Đã tải ${data.length} bản ghi điểm.`);
+      setTabMessage(`Đã tải ${reports.length} bản ghi điểm.`);
     });
   };
 
   const handleRefreshSelectedGradeDetail = async () => {
     const authorization = requireSession();
-    const reportId = selectedGradeReport?.id;
+    const reportCacheId = selectedGradeReport?.id;
+    const persistedReportId = selectedPersistedGradeReportId;
 
-    if (!authorization || !reportId) {
+    if (!authorization || !reportCacheId) {
       return;
     }
 
-    setLoadingGradeReportId(reportId);
+    if (!persistedReportId) {
+      setGradeReportDetailsById((current) => ({
+        ...current,
+        [reportCacheId]: null,
+      }));
+      setTabMessage("Môn học này chưa có báo cáo điểm để tải chi tiết.");
+      return;
+    }
+
+    setLoadingGradeReportId(reportCacheId);
     setTabError("");
 
     try {
-      const detail = await getGradeReportById(reportId, authorization);
+      const detail = await getGradeReportById(persistedReportId, authorization);
 
       setGradeReportDetailsById((current) => ({
         ...current,
-        [reportId]: detail,
+        [reportCacheId]: detail,
       }));
       setTabMessage("Đã làm mới chi tiết điểm môn học.");
     } catch (error) {
       setGradeReportDetailsById((current) => ({
         ...current,
-        [reportId]: null,
+        [reportCacheId]: null,
       }));
       setTabError(toErrorMessage(error));
     } finally {
       setLoadingGradeReportId((current) =>
-        current === reportId ? null : current,
+        current === reportCacheId ? null : current,
       );
     }
   };
@@ -3667,7 +4095,6 @@ export default function DashboardPage() {
         credits:
           typeof item.credits === "number" ? String(item.credits) : "",
         score10: formatScore(item.score10 === null ? undefined : item.score10),
-        score4: formatScore(item.score4 === null ? undefined : item.score4),
         letterGrade: item.letterGrade,
         result: item.resultLabel,
       })),
@@ -3699,7 +4126,6 @@ export default function DashboardPage() {
       "Ten mon hoc",
       "So tin chi",
       "Diem TK (10)",
-      "Diem TK (4)",
       "Diem TK (C)",
       "Ket qua",
     ];
@@ -3714,7 +4140,6 @@ export default function DashboardPage() {
           row.courseName,
           row.credits,
           row.score10,
-          row.score4,
           row.letterGrade,
           row.result,
         ]
@@ -3744,15 +4169,39 @@ export default function DashboardPage() {
     }
 
     await runAction(async () => {
-      const data = await getMyAttendance(authorization);
+      const attendancePromise = getMyAttendance(authorization);
+      const contextSyncTasks: Promise<unknown>[] = [];
+
+      if (registeredSections.length === 0) {
+        contextSyncTasks.push(
+          loadMyRegisteredSections(
+            authorization,
+            new Map<number, AvailableCourseSectionResponse>(),
+          ).catch(() => []),
+        );
+      }
+
+      if (myScheduleBlocks.length === 0) {
+        contextSyncTasks.push(
+          handleLoadStudentWeeklySchedule({ silent: true }).catch(() => undefined),
+        );
+      }
+
+      const data = await attendancePromise;
+      if (contextSyncTasks.length > 0) {
+        await Promise.all(contextSyncTasks);
+      }
+
       setAttendanceItems(data);
       setHasLoadedAttendance(true);
-      setAttendanceLastLoadedAt(new Date().toISOString());
       setTabMessage(`Đã tải ${data.length} bản ghi chuyên cần.`);
     });
   };
 
-  const handleLoadStudentWeeklySchedule = async () => {
+  const handleLoadStudentWeeklySchedule = async (
+    options?: { silent?: boolean },
+  ) => {
+    const silent = options?.silent === true;
     const authorization = requireSession();
 
     if (!authorization) {
@@ -3760,8 +4209,10 @@ export default function DashboardPage() {
     }
 
     setIsScheduleLoading(true);
-    setTabError("");
-    setTabMessage("");
+    if (!silent) {
+      setTabError("");
+      setTabMessage("");
+    }
 
     try {
       const [registrations, classrooms, scheduleSemesters] = await Promise.all([
@@ -3778,9 +4229,11 @@ export default function DashboardPage() {
 
       if (registeredItems.length === 0) {
         setMyScheduleBlocks([]);
-        setTabMessage(
-          "Sinh viên chưa có lớp học phần đã đăng ký để tạo thời khóa biểu.",
-        );
+        if (!silent) {
+          setTabMessage(
+            "Sinh viên chưa có lớp học phần đã đăng ký để tạo thời khóa biểu.",
+          );
+        }
         return;
       }
 
@@ -3826,6 +4279,7 @@ export default function DashboardPage() {
 
                   nextBlocks.push({
                     key: `session-${session.id || `${section.id}-${schedule.id || "x"}-${session.sessionDate || ""}-${parsedStart}-${parsedEnd}`}`,
+                    sessionId: session.id,
                     sectionId: section.id,
                     recurringScheduleId: schedule.id,
                     classroomId: session.classroomId || schedule.classroomId,
@@ -3896,16 +4350,22 @@ export default function DashboardPage() {
       });
 
       setMyScheduleBlocks(dedupedBlocks);
-      if (dedupedBlocks.length === 0) {
-        setTabMessage(
-          "Chưa có buổi học cụ thể trong thời khóa biểu của các học phần đã đăng ký.",
-        );
-      } else {
-        setTabMessage(`Đã tải thời khóa biểu cá nhân với ${dedupedBlocks.length} ca học.`);
+      if (!silent) {
+        if (dedupedBlocks.length === 0) {
+          setTabMessage(
+            "Chưa có buổi học cụ thể trong thời khóa biểu của các học phần đã đăng ký.",
+          );
+        } else {
+          setTabMessage(
+            `Đã tải thời khóa biểu cá nhân với ${dedupedBlocks.length} ca học.`,
+          );
+        }
       }
     } catch (error) {
-      setTabError(toErrorMessage(error));
-      setMyScheduleBlocks([]);
+      if (!silent) {
+        setTabError(toErrorMessage(error));
+        setMyScheduleBlocks([]);
+      }
     } finally {
       setIsScheduleLoading(false);
     }
@@ -4069,6 +4529,9 @@ export default function DashboardPage() {
       const hasOpenRegistrationWindow = scheduleSemesters.some(
         isRegistrationWindowOpen,
       );
+      const openRegistrationSemesterId = pickCurrentOpenSemesterId(
+        scheduleSemesters,
+      );
 
       setIsRegistrationPeriodOpen(hasOpenRegistrationWindow);
       setIsRegistrationAccessChecked(true);
@@ -4139,6 +4602,7 @@ export default function DashboardPage() {
         new Map(
           sectionsForRegisteredList.map((section) => [section.courseSectionId, section]),
         ),
+        openRegistrationSemesterId || undefined,
       );
       setTabMessage(
         `Đã tải ${availableSections.length} lớp học phần đủ điều kiện đăng ký.`,
@@ -4331,6 +4795,14 @@ export default function DashboardPage() {
     });
   };
 
+  const studentDisplayName =
+    (typeof profile?.fullName === "string" && profile.fullName.trim()) ||
+    (typeof session?.username === "string" && session.username.trim()) ||
+    "-";
+  const studentAvatarText = (studentDisplayName === "-" ? "S" : studentDisplayName)
+    .slice(0, 1)
+    .toUpperCase();
+
   return (
     <AuthGuard allowedRoles={["STUDENT"]}>
       <div className="min-h-screen bg-[#e9edf2]">
@@ -4339,25 +4811,14 @@ export default function DashboardPage() {
             <div className="flex h-8 w-8 items-center justify-center rounded-[6px] border border-white/45 text-sm font-semibold">
               SG
             </div>
-            <nav className="flex items-center gap-6 text-lg font-semibold">
-              {studentTopHeaderTabs.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  className="text-base transition hover:text-[#d7f0ff]"
-                >
-                  {getTopHeaderDisplayLabel(item)}
-                </button>
-              ))}
-            </nav>
           </div>
 
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-white/20 text-base font-bold">
-              {(session?.username || "S").slice(0, 1).toUpperCase()}
+              {studentAvatarText}
             </div>
             <div className="text-right leading-tight">
-              <p className="text-sm font-semibold">{session?.username || "-"}</p>
+              <p className="text-sm font-semibold">{studentDisplayName}</p>
               <p className="text-xs opacity-90">
                 Mã sinh viên: {profile?.studentCode || studentIdInput || "-"}
               </p>
@@ -4426,14 +4887,6 @@ export default function DashboardPage() {
                 );
               })}
             </nav>
-            <div className="mt-5 border-t border-[#d0dce6] px-3 py-3 text-sm text-[#516b7f]">
-              <p className="font-semibold text-[#2d5672]">Điều hướng nhanh</p>
-              <p className="mt-2">
-                <Link className="font-semibold text-[#0a5f92] hover:underline" href="/login">
-                  Về trang đăng nhập
-                </Link>
-              </p>
-            </div>
           </aside>
 
           <main className="space-y-4 p-3 sm:p-4">
@@ -4442,7 +4895,9 @@ export default function DashboardPage() {
                 <h1>{getStudentTabDisplayLabel(activeTab)}</h1>
               </div>
               <div className="space-y-2 px-4 py-3 text-sm text-[#355970]">
-                <p>{getStudentTabDescription(activeTab)}</p>
+                {getStudentTabDescription(activeTab) ? (
+                  <p>{getStudentTabDescription(activeTab)}</p>
+                ) : null}
                 {tabError ? (
                   <p className="rounded-[4px] border border-[#e8b2b2] bg-[#fff4f4] px-3 py-2 text-[#b03d3d]">
                     {tabError}
@@ -4519,12 +4974,6 @@ export default function DashboardPage() {
                 <div className={sectionTitleClass}>
                   <h2>Hồ sơ cá nhân sinh viên</h2>
                   <div className="flex items-center gap-3">
-                    <p className="text-xs font-medium text-[#6a8599]">
-                      Đồng bộ:{" "}
-                      <span className="font-semibold text-[#2a5877]">
-                        {profileLastLoadedAt ? formatDateTime(profileLastLoadedAt) : "Chưa tải"}
-                      </span>
-                    </p>
                     <button
                       type="button"
                       onClick={() => {
@@ -4703,11 +5152,6 @@ export default function DashboardPage() {
                         </div>
                       </div>
 
-                      {!selectedProfileMajorResolved && normalizeTextValue(profile?.majorName) ? (
-                        <p className="mt-2 text-xs text-[#5f7e93]">
-                          Dữ liệu ngành đang hiển thị theo hồ sơ hiện có.
-                        </p>
-                      ) : null}
                     </div>
                   </div>
 
@@ -4778,9 +5222,6 @@ export default function DashboardPage() {
                           }));
                         }}
                       />
-                      <p className="text-xs text-[#5f7e93]">
-                        Hệ thống yêu cầu ngày sinh không vượt quá ngày hiện tại.
-                      </p>
                     </div>
 
                     {profileFormError ? (
@@ -4823,10 +5264,6 @@ export default function DashboardPage() {
                         <h2 className="text-[24px] font-semibold tracking-[0.01em]">
                           Đăng ký môn học
                         </h2>
-                        <p className="mt-1 text-sm text-[#5f7e93]">
-                          Chọn đúng học kỳ, khoa và môn học để xem các lớp học phần
-                          đủ điều kiện đăng ký theo backend.
-                        </p>
                       </div>
                     </div>
 
@@ -5326,11 +5763,11 @@ export default function DashboardPage() {
                     </p>
                   </div>
 
-                  <div className="overflow-x-auto rounded-[8px] border border-[#88aed4]">
-                    <table className="min-w-[1180px] border-collapse text-left text-xs">
+                  <div className="overflow-hidden rounded-[8px] border border-[#88aed4]">
+                    <table className="w-full table-fixed border-collapse text-left text-xs">
                       <thead>
                         <tr className="bg-[#f3f7fb] text-[#2f4f67]">
-                          <th className="w-[70px] border border-[#cfdbe7] px-2 py-2 text-center">
+                          <th className="w-[70px] min-w-[70px] border border-[#cfdbe7] px-2 py-2 text-center">
                             <button
                               type="button"
                               onClick={() => handleShiftScheduleWeek(-1)}
@@ -5342,7 +5779,7 @@ export default function DashboardPage() {
                           {scheduleDayLabels.map((dayLabel, dayIndex) => (
                             <th
                               key={`schedule-header-${dayLabel}`}
-                              className="w-[155px] border border-[#cfdbe7] px-2 py-2 text-center"
+                              className="border border-[#cfdbe7] px-2 py-2 text-center"
                             >
                               <p className="font-semibold text-[#1f4562]">{dayLabel}</p>
                               <p className="mt-0.5 text-[#5a768b]">
@@ -5352,7 +5789,7 @@ export default function DashboardPage() {
                               </p>
                             </th>
                           ))}
-                          <th className="w-[72px] border border-[#cfdbe7] px-2 py-2 text-center">
+                          <th className="w-[72px] min-w-[72px] border border-[#cfdbe7] px-2 py-2 text-center">
                             <button
                               type="button"
                               onClick={() => handleShiftScheduleWeek(1)}
@@ -5367,7 +5804,7 @@ export default function DashboardPage() {
                       <tbody>
                         {Array.from({ length: 14 }, (_, index) => index + 1).map((period) => (
                           <tr key={`period-${period}`} className="h-[58px]">
-                            <th className="border border-[#d4e0ea] bg-[#2f5f92] px-2 py-2 text-left text-sm font-semibold text-white">
+                            <th className="w-[70px] min-w-[70px] border border-[#d4e0ea] bg-[#2f5f92] px-2 py-2 text-left text-sm font-semibold text-white">
                               Tiết {period}
                             </th>
 
@@ -5437,7 +5874,7 @@ export default function DashboardPage() {
                               );
                             })}
 
-                            <td className="border border-[#d4e0ea] bg-[#2f5f92] px-2 py-2 text-center text-sm font-semibold text-white">
+                            <td className="w-[72px] min-w-[72px] border border-[#d4e0ea] bg-[#2f5f92] px-2 py-2 text-center text-sm font-semibold text-white">
                               {periodStartTimeMap[period] || "-"}
                             </td>
                           </tr>
@@ -5446,7 +5883,7 @@ export default function DashboardPage() {
 
                       <tfoot>
                         <tr className="bg-[#f3f7fb] text-[#2f4f67]">
-                          <th className="border border-[#cfdbe7] px-2 py-2 text-center">
+                          <th className="w-[70px] min-w-[70px] border border-[#cfdbe7] px-2 py-2 text-center">
                             <button
                               type="button"
                               onClick={() => handleShiftScheduleWeek(-1)}
@@ -5466,7 +5903,7 @@ export default function DashboardPage() {
                                 : ""}
                             </th>
                           ))}
-                          <th className="border border-[#cfdbe7] px-2 py-2 text-center">
+                          <th className="w-[72px] min-w-[72px] border border-[#cfdbe7] px-2 py-2 text-center">
                             <button
                               type="button"
                               onClick={() => handleShiftScheduleWeek(1)}
@@ -5678,7 +6115,6 @@ export default function DashboardPage() {
                           <th className="min-w-[320px] px-3 py-3">Tên môn học</th>
                           <th className="w-[90px] px-3 py-3">Số tín chỉ</th>
                           <th className="w-[110px] px-3 py-3">Điểm TK (10)</th>
-                          <th className="w-[110px] px-3 py-3">Điểm TK (4)</th>
                           <th className="w-[100px] px-3 py-3">Điểm TK (C)</th>
                           <th className="w-[100px] px-3 py-3">Kết quả</th>
                           <th className="w-[90px] px-3 py-3">Chi tiết</th>
@@ -5687,7 +6123,7 @@ export default function DashboardPage() {
                       <tbody>
                         {gradeGroupedRows.length === 0 ? (
                           <tr>
-                            <td colSpan={10} className="px-3 py-8 text-center text-[#5f7e93]">
+                            <td colSpan={9} className="px-3 py-8 text-center text-[#5f7e93]">
                               Chưa có dữ liệu bảng điểm.
                             </td>
                           </tr>
@@ -5702,7 +6138,7 @@ export default function DashboardPage() {
                           return (
                             <Fragment key={group.key}>
                               <tr className="border-y border-[#7aafd0] bg-[#eef6fc] text-[#1e4f72]">
-                                <td colSpan={10} className="px-3 py-2 font-semibold">
+                                <td colSpan={9} className="px-3 py-2 font-semibold">
                                   {semesterTitle}
                                 </td>
                               </tr>
@@ -5724,20 +6160,9 @@ export default function DashboardPage() {
                                       item.score10 === null ? undefined : item.score10,
                                     )}
                                   </td>
-                                  <td className="px-3 py-2">
-                                    {formatScore(
-                                      item.score4 === null ? undefined : item.score4,
-                                    )}
-                                  </td>
                                   <td className="px-3 py-2">{item.letterGrade}</td>
                                   <td className="px-3 py-2">
-                                    {item.passed === true ? (
-                                      <span className="font-semibold text-[#1f7a47]">✓</span>
-                                    ) : item.passed === false ? (
-                                      <span className="font-semibold text-[#bc4a4a]">✕</span>
-                                    ) : (
-                                      <span className="text-[#5f7e93]">{item.resultLabel}</span>
-                                    )}
+                                    <span className="text-[#5f7e93]">{item.resultLabel}</span>
                                   </td>
                                   <td className="px-3 py-2">
                                     <button
@@ -5758,14 +6183,6 @@ export default function DashboardPage() {
                               <tr className="border-b border-[#7aafd0] bg-[#d8ebf8] text-[#1f567b]">
                                 <td colSpan={5} className="px-3 py-2 text-xs leading-6">
                                   <p>
-                                    - Điểm trung bình học kỳ hệ 4: {" "}
-                                    {formatScore(
-                                      group.semesterAverage4 === null
-                                        ? undefined
-                                        : group.semesterAverage4,
-                                    )}
-                                  </p>
-                                  <p>
                                     - Điểm trung bình học kỳ hệ 10: {" "}
                                     {formatScore(
                                       group.semesterAverage10 === null
@@ -5775,20 +6192,10 @@ export default function DashboardPage() {
                                   </p>
                                   <p>
                                     - Số tín chỉ đạt học kỳ: {" "}
-                                    {group.semesterEarnedCredits === null
-                                      ? "-"
-                                      : group.semesterEarnedCredits}
+                                    {group.semesterEarnedCredits ?? 0}
                                   </p>
                                 </td>
-                                <td colSpan={5} className="px-3 py-2 text-xs leading-6">
-                                  <p>
-                                    - Điểm trung bình tích lũy hệ 4: {" "}
-                                    {formatScore(
-                                      group.cumulativeAverage4 === null
-                                        ? undefined
-                                        : group.cumulativeAverage4,
-                                    )}
-                                  </p>
+                                <td colSpan={4} className="px-3 py-2 text-xs leading-6">
                                   <p>
                                     - Điểm trung bình tích lũy hệ 10: {" "}
                                     {formatScore(
@@ -5799,9 +6206,7 @@ export default function DashboardPage() {
                                   </p>
                                   <p>
                                     - Số tín chỉ tích lũy: {" "}
-                                    {group.cumulativeEarnedCredits === null
-                                      ? "-"
-                                      : group.cumulativeEarnedCredits}
+                                    {group.cumulativeEarnedCredits ?? 0}
                                   </p>
                                 </td>
                               </tr>
@@ -5831,7 +6236,11 @@ export default function DashboardPage() {
                               onClick={() => {
                                 void handleRefreshSelectedGradeDetail();
                               }}
-                              disabled={!selectedGradeReport || isLoadingSelectedGradeReportDetail}
+                              disabled={
+                                !selectedGradeReport ||
+                                !selectedPersistedGradeReportId ||
+                                isLoadingSelectedGradeReportDetail
+                              }
                               className="rounded-[6px] border border-[#6da8c9] bg-white px-3 py-1.5 text-xs font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff] disabled:opacity-60"
                             >
                               {isLoadingSelectedGradeReportDetail
@@ -5921,16 +6330,10 @@ export default function DashboardPage() {
             {activeTab.key === "attendance" ? (
               <section className={contentCardClass}>
                 <div className={sectionTitleClass}>
-                  <h2>Chuyên cần của tôi</h2>
+                  <div>
+                    <h2>Chuyên cần của tôi</h2>
+                  </div>
                   <div className="flex items-center gap-2">
-                    <span className="rounded-[4px] border border-[#c8d3dd] bg-[#f6fbff] px-3 py-1.5 text-xs text-[#47677e]">
-                      Dữ liệu cá nhân theo tài khoản đang đăng nhập
-                    </span>
-                    {attendanceLastLoadedAt ? (
-                      <span className="text-xs text-[#5f7e93]">
-                        Cập nhật: {formatDateTime(attendanceLastLoadedAt)}
-                      </span>
-                    ) : null}
                     <button
                       type="button"
                       onClick={() => {
@@ -5944,51 +6347,98 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <div className="space-y-4 px-4 py-4">
-                  <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_220px_170px_170px_auto]">
-                    <input
-                      className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
-                      placeholder="Tìm theo trạng thái, ghi chú, ngày học, session..."
-                      value={attendanceKeyword}
-                      onChange={(event) => setAttendanceKeyword(event.target.value)}
-                    />
-                    <select
-                      className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
-                      value={attendanceStatusFilter}
-                      onChange={(event) =>
-                        setAttendanceStatusFilter(event.target.value)
-                      }
-                    >
-                      <option value="">Tất cả trạng thái</option>
-                      {attendanceStatusOptions.map((status) => (
-                        <option key={status} value={status}>
-                          {getAttendanceStatusLabel(status)}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      type="date"
-                      className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
-                      value={attendanceDateFrom}
-                      onChange={(event) => setAttendanceDateFrom(event.target.value)}
-                    />
-                    <input
-                      type="date"
-                      className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
-                      value={attendanceDateTo}
-                      onChange={(event) => setAttendanceDateTo(event.target.value)}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAttendanceKeyword("");
-                        setAttendanceStatusFilter("");
-                        setAttendanceDateFrom("");
-                        setAttendanceDateTo("");
-                      }}
-                      className="h-10 rounded-[6px] border border-[#6da8c9] bg-white px-3 text-sm font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff]"
-                    >
-                      Xóa lọc
-                    </button>
+                  <div className="rounded-[8px] border border-[#d5e4ef] bg-[#f7fbff] px-3 py-3">
+                    <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_220px_240px_170px_170px_auto]">
+                      <input
+                        className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                        placeholder="Tìm theo lớp, phòng, trạng thái, ghi chú hoặc ngày học..."
+                        value={attendanceKeyword}
+                        onChange={(event) => setAttendanceKeyword(event.target.value)}
+                      />
+                      <select
+                        className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                        value={attendanceStatusFilter}
+                        onChange={(event) =>
+                          setAttendanceStatusFilter(event.target.value)
+                        }
+                      >
+                        <option value="">Tất cả trạng thái</option>
+                        {attendanceStatusOptions.map((status) => (
+                          <option key={status} value={status}>
+                            {getAttendanceStatusLabel(status)}
+                          </option>
+                        ))}
+                      </select>
+                      <select
+                        className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                        value={attendanceSectionFilter}
+                        onChange={(event) =>
+                          setAttendanceSectionFilter(event.target.value)
+                        }
+                      >
+                        <option value="">Tất cả lớp học phần</option>
+                        {attendanceSectionOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {`${option.label} (${option.count})`}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="date"
+                        className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                        value={attendanceDateFrom}
+                        onChange={(event) => setAttendanceDateFrom(event.target.value)}
+                      />
+                      <input
+                        type="date"
+                        className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#244d67] outline-none focus:border-[#6aa8cf]"
+                        value={attendanceDateTo}
+                        onChange={(event) => setAttendanceDateTo(event.target.value)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAttendanceKeyword("");
+                          setAttendanceStatusFilter("");
+                          setAttendanceSectionFilter("");
+                          setAttendanceDateFrom("");
+                          setAttendanceDateTo("");
+                        }}
+                        className="h-10 rounded-[6px] border border-[#6da8c9] bg-white px-3 text-sm font-semibold text-[#0d6ea6] transition hover:bg-[#f4fbff]"
+                      >
+                        Xóa lọc
+                      </button>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setAttendanceStatusFilter("")}
+                        className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                          attendanceStatusFilter === ""
+                            ? "border-[#0d6ea6] bg-[#eaf6ff] text-[#0d6ea6]"
+                            : "border-[#c8d3dd] bg-white text-[#4a6a82] hover:bg-[#f4fbff]"
+                        }`}
+                      >
+                        Tất cả ({attendanceItems.length})
+                      </button>
+                      {(["NOT_MARKED", "PRESENT", "LATE", "EXCUSED", "ABSENT"] as const).map(
+                        (statusKey) => (
+                          <button
+                            key={statusKey}
+                            type="button"
+                            onClick={() => setAttendanceStatusFilter(statusKey)}
+                            className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                              attendanceStatusFilter === statusKey
+                                ? "border-[#0d6ea6] bg-[#eaf6ff] text-[#0d6ea6]"
+                                : "border-[#c8d3dd] bg-white text-[#4a6a82] hover:bg-[#f4fbff]"
+                            }`}
+                          >
+                            {getAttendanceStatusLabel(statusKey)} ({attendanceStatusCountByKey[statusKey] || 0})
+                          </button>
+                        ),
+                      )}
+                    </div>
                   </div>
 
                   {isAttendanceDateRangeInvalid ? (
@@ -5997,11 +6447,17 @@ export default function DashboardPage() {
                     </p>
                   ) : null}
 
-                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
                     <div className="rounded-[8px] border border-[#d5e4ef] bg-[#f6fbff] px-3 py-2">
                       <p className="text-xs text-[#648095]">Buổi đã điểm danh</p>
                       <p className="mt-1 text-xl font-semibold text-[#1e4d6f]">
                         {attendanceSummary.total}
+                      </p>
+                    </div>
+                    <div className="rounded-[8px] border border-[#d5e4ef] bg-[#f6fbff] px-3 py-2">
+                      <p className="text-xs text-[#648095]">Chưa điểm danh</p>
+                      <p className="mt-1 text-xl font-semibold text-[#1e4d6f]">
+                        {attendanceSummary.notMarkedCount}
                       </p>
                     </div>
                     <div className="rounded-[8px] border border-[#d5e4ef] bg-[#f6fbff] px-3 py-2">
@@ -6042,21 +6498,31 @@ export default function DashboardPage() {
                     <table className="min-w-full text-left text-sm">
                       <thead className="bg-[#f7fbff]">
                         <tr className="border-b border-[#cfdfec] text-[#305970]">
-                          <th className="px-2 py-2">Ngày học</th>
-                          <th className="px-2 py-2">Session ID</th>
-                          <th className="px-2 py-2">Trạng thái</th>
-                          <th className="px-2 py-2">Ghi chú</th>
+                          <th className="px-3 py-2">Ngày học</th>
+                          <th className="px-3 py-2">Lớp học phần</th>
+                          <th className="px-3 py-2">Thời gian</th>
+                          <th className="px-3 py-2">Phòng học</th>
+                          <th className="px-3 py-2">Trạng thái</th>
+                          <th className="px-3 py-2">Ghi chú</th>
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredAttendanceItems.map((item) => (
+                        {attendanceRows.map(({ item, context }) => (
                           <tr
                             key={item.id}
                             className="border-b border-[#e0ebf4] text-[#3f6178]"
                           >
-                            <td className="px-2 py-2">{formatDate(item.sessionDate)}</td>
-                            <td className="px-2 py-2">{item.sessionId || "-"}</td>
-                            <td className="px-2 py-2">
+                            <td className="px-3 py-2">{formatDate(item.sessionDate)}</td>
+                            <td className="px-3 py-2">
+                              {context?.sectionLabel || "-"}
+                            </td>
+                            <td className="px-3 py-2">
+                              <p>{context?.timeLabel || "Chưa có khung giờ"}</p>
+                            </td>
+                            <td className="px-3 py-2">
+                              {context?.roomLabel || "-"}
+                            </td>
+                            <td className="px-3 py-2">
                               <span
                                 className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getAttendanceStatusClass(
                                   item.status,
@@ -6065,15 +6531,15 @@ export default function DashboardPage() {
                                 {getAttendanceStatusLabel(item.status)}
                               </span>
                             </td>
-                            <td className="px-2 py-2">{item.note || "-"}</td>
+                            <td className="px-3 py-2">{item.note || "-"}</td>
                           </tr>
                         ))}
-                        {filteredAttendanceItems.length === 0 ? (
+                        {attendanceRows.length === 0 ? (
                           <tr>
-                            <td colSpan={4} className="px-2 py-4 text-center text-[#577086]">
+                            <td colSpan={6} className="px-3 py-4 text-center text-[#577086]">
                               {hasLoadedAttendance
                                 ? "Chưa có dữ liệu điểm danh phù hợp với bộ lọc."
-                                : "Nhấn 'Làm mới chuyên cần' để tải dữ liệu mới nhất."}
+                                : "Nhấn Làm mới chuyên cần để tải dữ liệu mới nhất."}
                             </td>
                           </tr>
                         ) : null}

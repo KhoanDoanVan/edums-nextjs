@@ -29,6 +29,17 @@ export interface CourseSectionResponse {
   createdAt?: string;
 }
 
+export interface LecturerSemesterOptionResponse {
+  semesterId: number;
+  semesterNumber?: number;
+  academicYear?: string;
+  displayName?: string;
+  startDate?: string;
+  endDate?: string;
+  totalWeeks?: number;
+  semesterStatus?: "PLANNING" | "REGISTRATION_OPEN" | "ONGOING" | "FINISHED";
+}
+
 export interface GradeDetailResponse {
   id?: number;
   componentId?: number;
@@ -36,6 +47,8 @@ export interface GradeDetailResponse {
   weightPercentage?: number;
   score?: number;
 }
+
+export type GradeReportStatus = "DRAFT" | "PUBLISHED" | "LOCKED";
 
 export interface GradeReportResponse {
   id: number;
@@ -47,9 +60,48 @@ export interface GradeReportResponse {
   courseName?: string;
   finalScore?: number;
   letterGrade?: string;
-  status?: "DRAFT" | "PUBLISHED" | "LOCKED";
+  status?: GradeReportStatus;
   createdAt?: string;
   gradeDetails?: GradeDetailResponse[];
+}
+
+export interface GradeEntryComponentResponse {
+  componentId: number;
+  componentName?: string;
+  weightPercentage?: number;
+}
+
+export interface GradeEntryRosterRowResponse {
+  registrationId: number;
+  studentId?: number;
+  studentCode?: string;
+  studentName?: string;
+  gradeReportId?: number | null;
+  finalScore?: number | null;
+  letterGrade?: string | null;
+  status?: GradeReportStatus | null;
+  gradeDetails?: GradeDetailResponse[];
+}
+
+export interface GradeEntryRosterResponse {
+  sectionId?: number;
+  sectionCode?: string;
+  courseId?: number;
+  courseCode?: string;
+  courseName?: string;
+  components: GradeEntryComponentResponse[];
+  rows: GradeEntryRosterRowResponse[];
+}
+
+export interface GradeDetailUpsertRequest {
+  componentId: number;
+  score: number;
+}
+
+export interface GradeReportUpsertRequest {
+  registrationId: number;
+  status: GradeReportStatus;
+  gradeDetails: GradeDetailUpsertRequest[];
 }
 
 export interface RecurringScheduleResponse {
@@ -72,6 +124,8 @@ export interface ClassSessionResponse {
   id: number;
   sectionId?: number;
   sectionCode?: string;
+  courseCode?: string;
+  courseName?: string;
   classroomId?: number;
   classroomName?: string;
   recurringScheduleId?: number;
@@ -79,10 +133,40 @@ export interface ClassSessionResponse {
   startPeriod?: number;
   endPeriod?: number;
   lessonContent?: string;
-  status?: "NORMAL" | "CANCELLED" | "RESCHEDULED";
+  status?: "NORMAL" | "SCHEDULED" | "COMPLETED" | "CANCELLED" | "RESCHEDULED";
 }
 
 export type AttendanceStatus = "PRESENT" | "ABSENT" | "LATE" | "EXCUSED";
+export type AttendanceRosterStatus = AttendanceStatus | "NOT_MARKED";
+
+export type SectionRosterStatus = "ACTIVE" | "REMOVED";
+
+export interface SectionRosterResponse {
+  id: number;
+  sectionId: number;
+  studentId: number;
+  studentCode?: string;
+  studentName?: string;
+  courseRegistrationId?: number;
+  sourceRegistrationPeriodId?: number;
+  status?: SectionRosterStatus;
+  lockedAt?: string;
+}
+
+export interface AttendanceRosterResponse {
+  rosterId: number;
+  sectionId?: number;
+  sessionId?: number;
+  sessionDate?: string;
+  studentId?: number;
+  studentCode?: string;
+  studentName?: string;
+  courseRegistrationId?: number;
+  attendanceId?: number | null;
+  attendanceStatus?: AttendanceRosterStatus | null;
+  note?: string | null;
+  rosterStatus?: SectionRosterStatus;
+}
 
 export interface AttendanceResponse {
   id: number;
@@ -92,7 +176,7 @@ export interface AttendanceResponse {
   studentId?: number;
   studentName?: string;
   studentCode?: string;
-  status?: AttendanceStatus;
+  status?: AttendanceRosterStatus;
   note?: string;
 }
 
@@ -104,9 +188,4 @@ export interface AttendanceItemRequest {
 
 export interface AttendanceBatchRequest {
   items: AttendanceItemRequest[];
-}
-
-export interface AttendanceUpdateRequest {
-  status: AttendanceStatus;
-  note?: string;
 }

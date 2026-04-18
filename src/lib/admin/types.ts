@@ -8,7 +8,6 @@ export type AccountStatus = "ACTIVE" | "INACTIVE" | "LOCKED";
 export type AdminTabKey =
   | "home"
   | "accounts"
-  | "roles"
   | "semesters"
   | "registration-periods"
   | "faculties"

@@ -18,13 +18,17 @@ import type {
   PublicLookupResult,
   PublicSelectOption,
 } from "@/lib/public-admission/types";
+import { toErrorMessage as toSharedErrorMessage } from "@/components/admin/format-utils";
 
 const toErrorMessage = (error: unknown): string => {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
+  return toSharedErrorMessage(error);
+};
 
-  return "Thao tác thất bại. Vui lòng thử lại.";
+const hasApiStatus = (error: unknown, statusCode: number): boolean => {
+  return (
+    error instanceof Error &&
+    new RegExp(`\\[API\\s+${statusCode}\\]`, "i").test(error.message)
+  );
 };
 
 const isObject = (value: unknown): value is Record<string, unknown> => {
@@ -190,7 +194,7 @@ export default function PublicAdmissionsPage() {
       } catch (error) {
         if (!cancelled) {
           const message = toErrorMessage(error);
-          if (message.includes("[API 404]")) {
+          if (hasApiStatus(error, 404)) {
             setErrorMessage(
               "Hệ thống chưa cấu hình API kỳ tuyển sinh công khai. Vui lòng liên hệ quản trị.",
             );
@@ -537,9 +541,6 @@ export default function PublicAdmissionsPage() {
           <div className="grid gap-4 px-4 py-4 xl:grid-cols-2">
             <section className="rounded-[8px] border border-[#c7dceb] bg-[#f8fcff] p-3">
               <h2 className="text-base font-semibold text-[#1a4f75]">Nộp hồ sơ tuyển sinh</h2>
-              <p className="mt-1 text-xs text-[#4f6d82]">
-                Điều kiện đầu vào: CCCD 12 số, SĐT đúng định dạng Việt Nam, tổng điểm trong khoảng 0-30.
-              </p>
               <form className="mt-3 space-y-2" onSubmit={handleSubmitApply}>
                 <div className="grid gap-2 sm:grid-cols-3">
                   <select
@@ -697,9 +698,6 @@ export default function PublicAdmissionsPage() {
 
             <section className="rounded-[8px] border border-[#c7dceb] bg-[#f8fcff] p-3">
               <h2 className="text-base font-semibold text-[#1a4f75]">Tra cứu hồ sơ</h2>
-              <p className="mt-1 text-xs text-[#4f6d82]">
-                Hệ thống hỗ trợ trả nhiều hồ sơ nếu thí sinh đã nộp ở nhiều đợt tuyển sinh.
-              </p>
               <form className="mt-3 space-y-2" onSubmit={handleLookup}>
                 <div className="grid gap-2 sm:grid-cols-2">
                   <input

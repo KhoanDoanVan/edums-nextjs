@@ -530,7 +530,7 @@ export const AccountManagementPanel = ({
 
     const nextStatus = statusDraftByAccountId[account.id];
     if (!nextStatus || nextStatus === account.status) {
-      setSuccessMessage("Trạng thái không thay doi.");
+      setSuccessMessage("Trạng thái không thay đổi.");
       return;
     }
 
@@ -644,7 +644,7 @@ export const AccountManagementPanel = ({
         <form className="grid gap-2 md:grid-cols-4" onSubmit={handleSubmitFilters}>
           <input
             className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
-            placeholder="Tim theo username..."
+            placeholder="Tìm theo username..."
             value={keywordFilter}
             onChange={(event) => setKeywordFilter(event.target.value)}
           />
@@ -653,7 +653,7 @@ export const AccountManagementPanel = ({
             value={roleFilter}
             onChange={(event) => setRoleFilter(event.target.value as FilterRoleValue)}
           >
-            <option value="ALL">Tat ca role</option>
+            <option value="ALL">Tất cả vai trò</option>
             {roleOptions.map((role) => (
               <option key={role.id} value={String(role.id)}>
                 {role.name}
@@ -667,7 +667,7 @@ export const AccountManagementPanel = ({
               setStatusFilter(event.target.value as FilterStatusValue)
             }
           >
-            <option value="ALL">Tat ca trạng thái</option>
+            <option value="ALL">Tất cả trạng thái</option>
             {accountStatusOptions.map((status) => (
               <option key={status} value={status}>
                 {status}
@@ -680,7 +680,7 @@ export const AccountManagementPanel = ({
               disabled={isLoading}
               className="h-10 rounded-[6px] bg-[#0d6ea6] px-4 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
             >
-              Loc
+              Lọc
             </button>
             <button
               type="button"
@@ -715,8 +715,8 @@ export const AccountManagementPanel = ({
                 <th className="px-2 py-2">Username</th>
                 <th className="px-2 py-2">Vai trò</th>
                 <th className="px-2 py-2">Trạng thái</th>
-                <th className="px-2 py-2">Created at</th>
-                <th className="px-2 py-2">Thao tac</th>
+                <th className="px-2 py-2">Ngày tạo</th>
+                <th className="px-2 py-2">Thao tác</th>
               </tr>
             </thead>
             <tbody>
@@ -777,7 +777,7 @@ export const AccountManagementPanel = ({
                           disabled={isLoading}
                           className="h-9 rounded-[6px] border border-[#9ec3dd] bg-white px-2.5 text-xs font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
                         >
-                          Luu
+                          Lưu
                         </button>
                       </div>
                     </td>
@@ -800,7 +800,7 @@ export const AccountManagementPanel = ({
                           className="h-9 rounded-[6px] bg-[#0d6ea6] px-3 text-xs font-semibold text-white transition hover:bg-[#085d90]"
                           disabled={isLoading}
                         >
-                          Reset MK
+                          Đặt lại MK
                         </button>
                       </div>
                     </td>
@@ -850,7 +850,7 @@ export const AccountManagementPanel = ({
                 onClick={closeAccountModal}
                 className="rounded-full border border-[#bdd5e7] px-2 py-0.5 text-xl leading-none text-[#346180] transition hover:bg-[#edf6fd]"
                 disabled={isLoading}
-                aria-label="Dong popup"
+                aria-label="Đóng popup"
               >
                 ×
               </button>
@@ -885,7 +885,7 @@ export const AccountManagementPanel = ({
                     }))
                   }
                 >
-                  <option value="">Chon role</option>
+                  <option value="">Chọn vai trò</option>
                   {roleOptions.map((role) => (
                     <option key={role.id} value={String(role.id)}>
                       {role.name}
@@ -926,14 +926,14 @@ export const AccountManagementPanel = ({
                     ))}
                   </select>
                   <p className="text-xs text-[#4f6b7f]">
-                    Hệ thống yêu cầu chọn sinh viên để đảm bảo account phụ huynh được tạo đúng ngữ cảnh quản lý.
+                    Hệ thống yêu cầu chọn sinh viên để đảm bảo tài khoản phụ huynh được tạo đúng ngữ cảnh quản lý.
                   </p>
                 </label>
               ) : null}
 
               <label className="space-y-1">
                 <span className="text-sm font-semibold text-[#2c5877]">
-                  Avatar URL (không bat buoc)
+                  Avatar URL (không bắt buộc)
                 </span>
                 <input
                   className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] placeholder:text-[#5f6b76] outline-none focus:border-[#6aa8cf]"
@@ -955,7 +955,7 @@ export const AccountManagementPanel = ({
                     <input
                       type="password"
                       className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] placeholder:text-[#5f6b76] outline-none focus:border-[#6aa8cf]"
-                      placeholder="Toi thieu 6 ky tu"
+                      placeholder="Tối thiểu 6 ký tự"
                       value={accountForm.password}
                       onChange={(event) =>
                         setAccountForm((prev) => ({
@@ -986,7 +986,7 @@ export const AccountManagementPanel = ({
 
                   <label className="space-y-1 md:col-span-2">
                     <span className="text-sm font-semibold text-[#2c5877]">
-                      Trạng thái sau khi tao
+                      Trạng thái sau khi tạo
                     </span>
                     <select
                       className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
@@ -1015,7 +1015,7 @@ export const AccountManagementPanel = ({
                   className="h-10 rounded-[6px] border border-[#9ec3dd] bg-white px-4 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
                   disabled={isLoading}
                 >
-                  Huy
+                  Hủy
                 </button>
                 <button
                   type="submit"
@@ -1026,7 +1026,7 @@ export const AccountManagementPanel = ({
                     ? "Đang xử lý..."
                     : accountModalMode === "create"
                       ? "Tạo tài khoản"
-                      : "Luu thay doi"}
+                      : "Lưu thay đổi"}
                 </button>
               </div>
             </form>
@@ -1052,7 +1052,7 @@ export const AccountManagementPanel = ({
                 onClick={handleCloseResetPassword}
                 className="rounded-full border border-[#bdd5e7] px-2 py-0.5 text-xl leading-none text-[#346180] transition hover:bg-[#edf6fd]"
                 disabled={isLoading}
-                aria-label="Dong popup"
+                aria-label="Đóng popup"
               >
                 ×
               </button>
@@ -1064,7 +1064,7 @@ export const AccountManagementPanel = ({
                 <input
                   type="password"
                   className="h-10 w-full rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] placeholder:text-[#5f6b76] outline-none focus:border-[#6aa8cf]"
-                  placeholder="Toi thieu 6 ky tu"
+                  placeholder="Tối thiểu 6 ký tự"
                   value={resetPasswordForm.newPassword}
                   onChange={(event) =>
                     setResetPasswordForm((prev) => ({
@@ -1100,14 +1100,14 @@ export const AccountManagementPanel = ({
                   className="h-10 rounded-[6px] border border-[#9ec3dd] bg-white px-4 text-sm font-semibold text-[#245977] transition hover:bg-[#edf6fd] disabled:opacity-60"
                   disabled={isLoading}
                 >
-                  Huy
+                  Hủy
                 </button>
                 <button
                   type="submit"
                   disabled={isLoading}
                   className="h-10 rounded-[6px] bg-[#0d6ea6] px-4 text-sm font-semibold text-white transition hover:bg-[#085d90] disabled:opacity-60"
                 >
-                  {isLoading ? "Đang xử lý..." : "Xác nhận reset"}
+                  {isLoading ? "Đang xử lý..." : "Xác nhận đặt lại"}
                 </button>
               </div>
             </form>

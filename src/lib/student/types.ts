@@ -61,17 +61,39 @@ export interface GradeDetailResponse {
 
 export interface GradeReportResponse {
   id: number;
+  gradeReportId?: number | null;
   registrationId?: number;
   studentId?: number;
   studentName?: string;
   studentCode?: string;
   sectionId?: number;
+  sectionCode?: string;
+  semesterId?: number;
+  semesterNumber?: number;
+  academicYear?: string;
+  courseCode?: string;
+  credits?: number;
   courseName?: string;
   finalScore?: number;
   letterGrade?: string;
   status?: "DRAFT" | "PUBLISHED" | "LOCKED";
   createdAt?: string;
   gradeDetails?: GradeDetailResponse[];
+}
+
+export interface GradeSemesterSummaryResponse {
+  semesterId?: number;
+  semesterNumber?: number | null;
+  academicYear?: string | null;
+  semesterAverage10?: number | null;
+  semesterEarnedCredits?: number | null;
+}
+
+export interface GradeOverviewResponse {
+  reports: GradeReportResponse[];
+  semesterSummaries: GradeSemesterSummaryResponse[];
+  cumulativeAverage10?: number | null;
+  cumulativeEarnedCredits?: number | null;
 }
 
 export interface GradeComponentResponse {

@@ -4,29 +4,33 @@ export const lecturerFeatureTabs: LecturerFeatureTab[] = [
   {
     key: "schedule",
     label: "Lịch giảng dạy",
-    description: "Tra cứu lịch dạy cá nhân của giảng viên theo khoảng thời gian.",
-    endpoints: [{ method: "GET", path: "/api/v1/schedules/lecturers/me" }],
+    description: "Tra cứu thời khóa biểu cá nhân của giảng viên theo học kỳ.",
+    endpoints: [
+      { method: "GET", path: "/api/v1/semesters" },
+      { method: "GET", path: "/api/v1/schedules/lecturers/me?semesterId={semesterId}" },
+    ],
   },
   {
     key: "grades",
-    label: "Bảng điểm lớp",
-    description: "Xem bảng điểm theo lớp học phần mà giảng viên phụ trách.",
+    label: "Nhập điểm lớp",
+    description: "Nhập điểm theo luồng học kỳ, lớp học phần và grade-entry roster của section.",
     endpoints: [
-      { method: "GET", path: "/api/v1/course-sections" },
-      { method: "GET", path: "/api/v1/course-sections/{sectionId}/grade-reports" },
-      { method: "GET", path: "/api/v1/grade-reports/{id}" },
+      { method: "GET", path: "/api/v1/lecturers/me/course-sections" },
+      { method: "GET", path: "/api/v1/course-sections/{sectionId}/grade-entry-roster" },
+      { method: "POST", path: "/api/v1/grade-reports" },
+      { method: "PUT", path: "/api/v1/grade-reports/{id}" },
     ],
   },
   {
     key: "attendance",
     label: "Điểm danh buổi học",
     description:
-      "Chọn buổi dạy từ lịch cá nhân rồi chấm điểm danh theo từng sinh viên.",
+      "Điểm danh theo luồng học kỳ, lớp học phần, buổi học và đồng bộ roster trước khi chấm.",
     endpoints: [
-      { method: "GET", path: "/api/v1/schedules/lecturers/me" },
-      { method: "GET", path: "/api/v1/class-sessions/{sessionId}/attendances" },
+      { method: "GET", path: "/api/v1/lecturers/me/course-sections" },
+      { method: "GET", path: "/api/v1/schedules/lecturers/me?semesterId={semesterId}" },
+      { method: "POST", path: "/api/v1/class-sessions/{sessionId}/attendances/sync" },
       { method: "POST", path: "/api/v1/class-sessions/{sessionId}/attendances/batch" },
-      { method: "PUT", path: "/api/v1/attendances/{id}" },
     ],
   },
 ];

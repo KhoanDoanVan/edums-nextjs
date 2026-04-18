@@ -16,14 +16,11 @@ import { AuthPageShell } from "@/components/auth/auth-page-shell";
 import { useAuth } from "@/context/auth-context";
 import { useToastFeedback } from "@/hooks/use-toast-feedback";
 import { getRoles } from "@/lib/auth/service";
+import { toErrorMessage as toSharedErrorMessage } from "@/components/admin/format-utils";
 import type { RoleResponse } from "@/lib/auth/types";
 
 const toErrorMessage = (error: unknown): string => {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return "Tạo tài khoản thất bại. Vui lòng thử lại.";
+  return toSharedErrorMessage(error);
 };
 
 export default function RegisterPage() {

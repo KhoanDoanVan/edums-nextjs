@@ -80,6 +80,11 @@ interface DynamicCrudPanelProps {
   enableDetailView?: boolean;
   detailFieldOrder?: string[];
   renderDetailExtra?: (row: DynamicRow) => ReactNode;
+  rowTransform?: (row: DynamicRow) => DynamicRow;
+  columnValueRenderers?: Record<
+    string,
+    (value: unknown, row: DynamicRow) => unknown
+  >;
 }
 
 type FormMode = "create" | "edit";
@@ -424,6 +429,8 @@ export const DynamicCrudPanel = ({
   enableDetailView = false,
   detailFieldOrder,
   renderDetailExtra,
+  rowTransform,
+  columnValueRenderers,
 }: DynamicCrudPanelProps) => {
   const [dataRows, setDataRows] = useState<PagedRows<DynamicRow>>(emptyRows);
   const [isLoading, setIsLoading] = useState(false);
@@ -500,11 +507,17 @@ export const DynamicCrudPanel = ({
 
     await runAction(async () => {
       const rows = await getDynamicListByPath(effectiveListPath, authorization, listQuery);
-      setDataRows(rows);
+      const nextRows = rowTransform
+        ? {
+            ...rows,
+            rows: rows.rows.map((row) => rowTransform(row)),
+          }
+        : rows;
+      setDataRows(nextRows);
 
       if (statusPatch) {
         const draft: Record<string, string> = {};
-        for (const row of rows.rows) {
+        for (const row of nextRows.rows) {
           const rowId = resolveRowId(row, idFieldCandidates);
           const rawStatus = row[statusPatch.fieldName];
           if (!rowId || typeof rawStatus !== "string") {
@@ -517,13 +530,14 @@ export const DynamicCrudPanel = ({
         setStatusDraftByRowId(draft);
       }
 
-      setSuccessMessage(`Đã tải ${rows.rows.length} bản ghi.`);
+      setSuccessMessage(`Đã tải ${nextRows.rows.length} bản ghi.`);
     });
   }, [
     authorization,
     effectiveListPath,
     idFieldCandidates,
     listQuery,
+    rowTransform,
     runAction,
     statusPatch,
   ]);
@@ -658,21 +672,24 @@ export const DynamicCrudPanel = ({
     return dataRows.rows.filter((row) =>
       tableColumns.some((column) => {
         const rawValue = row[column];
+        const renderValue = columnValueRenderers?.[column]
+          ? columnValueRenderers[column](rawValue, row)
+          : rawValue;
         const rawText =
-          typeof rawValue === "string" ||
-          typeof rawValue === "number" ||
-          typeof rawValue === "boolean"
-            ? String(rawValue).toLowerCase()
+          typeof renderValue === "string" ||
+          typeof renderValue === "number" ||
+          typeof renderValue === "boolean"
+            ? String(renderValue).toLowerCase()
             : "";
 
-        const displayText = toDisplayValue(rawValue).toLowerCase();
+        const displayText = toDisplayValue(renderValue).toLowerCase();
         return (
           displayText.includes(normalizedKeyword) ||
           rawText.includes(normalizedKeyword)
         );
       }),
     );
-  }, [dataRows.rows, keyword, tableColumns]);
+  }, [columnValueRenderers, dataRows.rows, keyword, tableColumns]);
 
   const tablePagination = useTablePagination(filteredRows);
 
@@ -1174,7 +1191,13 @@ export const DynamicCrudPanel = ({
                     <td className="px-2 py-2 font-medium text-[#355970]">{rowNumber}</td>
                     {tableColumns.map((column) => (
                       <td key={`${rowNumber}-${column}`} className="max-w-[260px] px-2 py-2">
-                        <span className="line-clamp-2">{toDisplayValue(row[column])}</span>
+                        <span className="line-clamp-2">
+                          {toDisplayValue(
+                            columnValueRenderers?.[column]
+                              ? columnValueRenderers[column](row[column], row)
+                              : row[column],
+                          )}
+                        </span>
                       </td>
                     ))}
 

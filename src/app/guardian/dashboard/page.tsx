@@ -16,6 +16,7 @@ import {
   getStudentGradeReports,
 } from "@/lib/guardian/service";
 import { guardianFeatureTabs } from "@/lib/guardian/tabs";
+import { toErrorMessage as toSharedErrorMessage } from "@/components/admin/format-utils";
 import type {
   AttendanceResponse,
   AttendanceStatus,
@@ -30,11 +31,8 @@ const isObject = (value: unknown): value is Record<string, unknown> => {
 };
 
 const toErrorMessage = (error: unknown, fallback: string): string => {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return fallback;
+  const normalized = toSharedErrorMessage(error).trim();
+  return normalized || fallback;
 };
 
 const normalizeTextValue = (value?: string): string => {
@@ -258,19 +256,6 @@ const formatDate = (value?: string): string => {
   }
 
   return date.toLocaleDateString("vi-VN");
-};
-
-const formatDateTime = (value?: string): string => {
-  if (!value) {
-    return "-";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString("vi-VN");
 };
 
 const formatScore = (value?: number): string => {
@@ -1384,9 +1369,6 @@ export default function GuardianDashboardPage() {
                         </table>
                       </div>
 
-                      <p className="text-xs text-[#5f7e93]">
-                        Cập nhật lần tạo: {formatDateTime(selectedGradeReport.createdAt)}
-                      </p>
                     </div>
                   )}
                 </div>
