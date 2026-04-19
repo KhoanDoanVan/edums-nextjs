@@ -1,22 +1,21 @@
 ﻿"use client";
 
-import { useMemo, useState } from "react";
-import Link from "next/link";
+import { useEffect, useMemo, useState } from "react";
 import { AuthGuard } from "@/components/auth/auth-guard";
 import { AccountManagementPanel } from "@/components/admin/account-management-panel";
 import { AdmissionsOnboardingPanel } from "@/components/admin/admissions-onboarding-panel";
 import { AdmissionsPanel } from "@/components/admin/admissions-panel";
 import { AttendanceManagementPanel } from "@/components/admin/attendance-management-panel";
-import { CohortManagementPanel } from "@/components/admin/cohort-management-panel";
 import { CourseSectionScheduleSummary } from "@/components/admin/course-section-schedule-summary";
 import { DynamicCrudPanel } from "@/components/admin/dynamic-crud-panel";
 import { GradeComponentPanel } from "@/components/admin/grade-component-panel";
 import { GradeManagementPanel } from "@/components/admin/grade-management-panel";
 import { RecurringSchedulePanel } from "@/components/admin/recurring-schedule-panel";
-import { RolePermissionPanel } from "@/components/admin/role-permission-panel";
 import { useAuth } from "@/context/auth-context";
 import { useToastFeedback } from "@/hooks/use-toast-feedback";
 import { adminFeatureTabs, adminTopHeaderTabs } from "@/lib/admin/tabs";
+import { getDynamicListByPath } from "@/lib/admin/service";
+import { toErrorMessage as toSharedErrorMessage } from "@/components/admin/format-utils";
 import type {
   AdminFeatureTab,
   AdminTabKey,
@@ -24,11 +23,7 @@ import type {
 } from "@/lib/admin/types";
 
 const toErrorMessage = (error: unknown): string => {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return "Thao tác thất bại. Vui lòng thử lại.";
+  return toSharedErrorMessage(error);
 };
 
 const contentCardClass =
@@ -42,6 +37,7 @@ type DynamicCrudTabConfig = {
   basePath: string;
   listQuery?: Record<string, string | number | undefined>;
   hiddenColumns?: string[];
+  rowTransform?: (row: DynamicRow) => DynamicRow;
   fieldLookups?: Record<
     string,
     {
@@ -99,6 +95,92 @@ type DynamicCrudTabConfig = {
     payload: Record<string, unknown>,
     currentRow: DynamicRow | null,
   ) => Record<string, unknown>;
+};
+
+type FacultyFilterOption = {
+  id: number;
+  name: string;
+  label: string;
+};
+
+type MajorFilterOption = {
+  id: number;
+  name: string;
+  label: string;
+};
+
+const toTrimmedText = (value: unknown): string => {
+  return typeof value === "string" ? value.trim() : "";
+};
+
+const toRecord = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+};
+
+const toGenderLabel = (value: unknown): string => {
+  if (typeof value === "boolean") {
+    return value ? "Nam" : "Nữ";
+  }
+
+  if (typeof value === "number") {
+    if (value === 1) {
+      return "Nam";
+    }
+    if (value === 0) {
+      return "Nữ";
+    }
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "male", "nam"].includes(normalized)) {
+      return "Nam";
+    }
+    if (["false", "0", "female", "nu", "nữ"].includes(normalized)) {
+      return "Nữ";
+    }
+  }
+
+  return "-";
+};
+
+const toStudentTableSummary = (row: DynamicRow): DynamicRow => {
+  const classRecord = toRecord(row.class);
+  const majorRecord = toRecord(row.major);
+  const specializationRecord = toRecord(row.specialization);
+
+  const className =
+    toTrimmedText(row.className) ||
+    toTrimmedText(classRecord?.className) ||
+    toTrimmedText(classRecord?.name);
+
+  const majorName =
+    toTrimmedText(row.majorName) ||
+    toTrimmedText(majorRecord?.majorName) ||
+    toTrimmedText(majorRecord?.name);
+
+  const specializationName =
+    toTrimmedText(row.specializationName) ||
+    toTrimmedText(specializationRecord?.specializationName) ||
+    toTrimmedText(specializationRecord?.name);
+
+  return {
+    id: row.id,
+    studentCode: toTrimmedText(row.studentCode),
+    fullName: toTrimmedText(row.fullName),
+    email: toTrimmedText(row.email),
+    phone: toTrimmedText(row.phone),
+    dateOfBirth: row.dateOfBirth,
+    gender: toGenderLabel(row.gender),
+    className,
+    majorName,
+    specializationName,
+    status: row.status,
+  };
 };
 
 const semesterStatusOptions = [
@@ -322,6 +404,7 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
   majors: {
     title: "Danh sách ngành",
     basePath: "/api/v1/majors",
+    hiddenColumns: ["facultyId"],
     fieldLookups: {
       facultyId: {
         path: "/api/v1/faculties",
@@ -341,8 +424,9 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
     },
   },
   specializations: {
-    title: "Danh sách chuyen ngành",
+    title: "Danh sách chuyên ngành",
     basePath: "/api/v1/specializations",
+    hiddenColumns: ["majorId"],
     fieldLookups: {
       majorId: {
         path: "/api/v1/majors",
@@ -379,6 +463,7 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
   courses: {
     title: "Danh sách môn học",
     basePath: "/api/v1/courses",
+    hiddenColumns: ["facultyId", "prerequisiteCourseId"],
     fieldLookups: {
       facultyId: {
         path: "/api/v1/faculties",
@@ -424,7 +509,7 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
     },
   },
   classrooms: {
-    title: "Danh sách phong hoc",
+    title: "Danh sách phòng học",
     basePath: "/api/v1/classrooms",
     priorityColumns: ["id", "roomName", "capacity", "roomType"],
     createTemplate: {
@@ -482,6 +567,7 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
   students: {
     title: "Quản lý sinh viên",
     basePath: "/api/v1/students",
+    rowTransform: toStudentTableSummary,
     listQuery: {
       page: 0,
       size: 20,
@@ -509,14 +595,16 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
       },
     },
     priorityColumns: [
-      "id",
       "studentCode",
       "fullName",
       "email",
       "phone",
+      "dateOfBirth",
+      "gender",
+      "className",
+      "majorName",
+      "specializationName",
       "status",
-      "classId",
-      "majorId",
     ],
     createTemplate: {
       classId: 1,
@@ -731,6 +819,11 @@ const dynamicCrudTabConfigs: Partial<Record<AdminTabKey, DynamicCrudTabConfig>> 
 
 export default function AdminDashboardPage() {
   const { session, logout } = useAuth();
+  const [isClientMounted, setIsClientMounted] = useState(false);
+
+  useEffect(() => {
+    setIsClientMounted(true);
+  }, []);
 
   const [activeTabKey, setActiveTabKey] = useState<AdminTabKey>("home");
   const [tabError, setTabError] = useState("");
@@ -741,7 +834,11 @@ export default function AdminDashboardPage() {
   });
   const [isWorking, setIsWorking] = useState(false);
   const [majorFacultyFilterValue, setMajorFacultyFilterValue] = useState("");
+  const [majorFacultyOptions, setMajorFacultyOptions] = useState<FacultyFilterOption[]>([]);
   const [majorListPath, setMajorListPath] = useState("/api/v1/majors");
+  const [specializationMajorOptions, setSpecializationMajorOptions] = useState<
+    MajorFilterOption[]
+  >([]);
   const [specializationMajorFilterValue, setSpecializationMajorFilterValue] =
     useState("");
   const [specializationListPath, setSpecializationListPath] = useState(
@@ -787,21 +884,75 @@ export default function AdminDashboardPage() {
   ): number | null => {
     const parsed = Number(rawValue);
     if (!Number.isInteger(parsed) || parsed <= 0) {
-      setTabError(`${fieldLabel} không hop le.`);
+      setTabError(`${fieldLabel} không hợp lệ.`);
       return null;
     }
 
     return parsed;
   };
 
+  const loadMajorFacultyOptions = async (authorization: string) => {
+    const response = await getDynamicListByPath(
+      "/api/v1/faculties",
+      authorization,
+      {
+        page: 0,
+        size: 200,
+      },
+    );
+
+    const nextOptions = response.rows
+      .map((row) => {
+        const facultyId = Number(row.id);
+        if (!Number.isInteger(facultyId) || facultyId <= 0) {
+          return null;
+        }
+
+        const facultyName =
+          typeof row.facultyName === "string" && row.facultyName.trim()
+            ? row.facultyName.trim()
+            : `Khoa #${facultyId}`;
+        const facultyCode =
+          typeof row.facultyCode === "string" && row.facultyCode.trim()
+            ? row.facultyCode.trim()
+            : "";
+
+        return {
+          id: facultyId,
+          name: facultyName,
+          label: facultyCode ? `${facultyName} (${facultyCode})` : facultyName,
+        };
+      })
+      .filter((option): option is FacultyFilterOption => Boolean(option))
+      .sort((left, right) => left.label.localeCompare(right.label, "vi"));
+
+    setMajorFacultyOptions(nextOptions);
+    setMajorFacultyFilterValue((currentValue) =>
+      nextOptions.some((option) => String(option.id) === currentValue)
+        ? currentValue
+        : "",
+    );
+  };
+
   const handleApplyMajorFacultyFilter = () => {
+    if (!majorFacultyFilterValue) {
+      setTabError("Vui lòng chọn khoa để lọc ngành.");
+      return;
+    }
+
     const facultyId = parsePositiveInteger(majorFacultyFilterValue, "Mã khoa");
     if (!facultyId) {
       return;
     }
 
+    const selectedFaculty = majorFacultyOptions.find((option) => option.id === facultyId);
+
     setMajorListPath(`/api/v1/majors/faculty/${facultyId}`);
-    setTabMessage(`Đang lọc ngành theo khoa #${facultyId}.`);
+    setTabMessage(
+      selectedFaculty
+        ? `Đang lọc ngành theo khoa ${selectedFaculty.name}.`
+        : `Đang lọc ngành theo khoa #${facultyId}.`,
+    );
   };
 
   const handleResetMajorFacultyFilter = () => {
@@ -810,7 +961,55 @@ export default function AdminDashboardPage() {
     setTabMessage("Đã xóa bộ lọc ngành theo khoa.");
   };
 
+  const loadSpecializationMajorOptions = async (authorization: string) => {
+    const response = await getDynamicListByPath(
+      "/api/v1/majors",
+      authorization,
+      {
+        page: 0,
+        size: 300,
+      },
+    );
+
+    const nextOptions = response.rows
+      .map((row) => {
+        const majorId = Number(row.id);
+        if (!Number.isInteger(majorId) || majorId <= 0) {
+          return null;
+        }
+
+        const majorName =
+          typeof row.majorName === "string" && row.majorName.trim()
+            ? row.majorName.trim()
+            : `Ngành #${majorId}`;
+        const majorCode =
+          typeof row.majorCode === "string" && row.majorCode.trim()
+            ? row.majorCode.trim()
+            : "";
+
+        return {
+          id: majorId,
+          name: majorName,
+          label: `${majorName}${majorCode ? ` (${majorCode})` : ""}`,
+        };
+      })
+      .filter((option): option is MajorFilterOption => Boolean(option))
+      .sort((left, right) => left.label.localeCompare(right.label, "vi"));
+
+    setSpecializationMajorOptions(nextOptions);
+    setSpecializationMajorFilterValue((currentValue) =>
+      nextOptions.some((option) => String(option.id) === currentValue)
+        ? currentValue
+        : "",
+    );
+  };
+
   const handleApplySpecializationMajorFilter = () => {
+    if (!specializationMajorFilterValue) {
+      setTabError("Vui lòng chọn ngành để lọc chuyên ngành.");
+      return;
+    }
+
     const majorId = parsePositiveInteger(
       specializationMajorFilterValue,
       "Mã ngành",
@@ -854,65 +1053,61 @@ export default function AdminDashboardPage() {
     await runAction(async () => {
       switch (tabKey) {
         case "accounts": {
-          setTabMessage("Sử dụng module Quản lý tải khoan để thao tac CRUD.");
-          break;
-        }
-        case "roles": {
-          setTabMessage(
-            "Sử dụng module Vai trò & phan quyen để thao tac toan bo CRUD vai trò.",
-          );
+          setTabMessage("Sử dụng module Quản lý tài khoản để thao tác CRUD.");
           break;
         }
         case "faculties": {
-          setTabMessage("Sử dụng module CRUD để quan ly dữ liệu khoa.");
+          setTabMessage("Sử dụng module CRUD để quản lý dữ liệu khoa.");
           break;
         }
         case "majors": {
-          setTabMessage("Sử dụng module CRUD để quan ly dữ liệu ngành, có thể lọc theo khoa.");
+          await loadMajorFacultyOptions(authorization);
+          setTabMessage("Sử dụng module CRUD để quản lý dữ liệu ngành, có thể lọc theo khoa.");
           break;
         }
         case "specializations": {
-          setTabMessage("Sử dụng module CRUD để quan ly dữ liệu chuyen ngành, có thể lọc theo ngành.");
+          await loadSpecializationMajorOptions(authorization);
+          setTabMessage("Sử dụng module CRUD để quản lý dữ liệu chuyên ngành, có thể lọc theo ngành.");
           break;
         }
         case "cohorts": {
-          setTabMessage("Sử dụng module CRUD để quan ly dữ liệu niên khóa.");
+          setTabMessage("Sử dụng module CRUD để quản lý dữ liệu niên khóa.");
           break;
         }
         case "courses": {
-          setTabMessage("Sử dụng module CRUD để quan ly dữ liệu môn học, có thể lọc theo khoa.");
+          setTabMessage("Sử dụng module CRUD để quản lý dữ liệu môn học, có thể lọc theo khoa.");
           break;
         }
         case "grade-components": {
-          setTabMessage("Sử dụng module Cấu hình điểm để quan ly thành phần điểm theo môn học.");
+          setTabMessage("Sử dụng module Cấu hình điểm để quản lý thành phần điểm theo môn học.");
           break;
         }
         case "classrooms": {
-          setTabMessage("Sử dụng module CRUD để quan ly dữ liệu phong hoc.");
+          setTabMessage("Sử dụng module CRUD để quản lý dữ liệu phòng học.");
           break;
         }
         case "administrative-classes": {
-          setTabMessage("Sử dụng module CRUD để quan ly lớp chủ nhiệm.");
+          setTabMessage("Sử dụng module CRUD để quản lý lớp chủ nhiệm.");
           break;
         }
         case "students": {
-          setTabMessage("Sử dụng module CRUD để quan ly sinh viên.");
+          setTabMessage("Sử dụng module CRUD để quản lý sinh viên.");
           break;
         }
         case "lecturers": {
-          setTabMessage("Sử dụng module CRUD để quan ly giảng viên.");
+          setTabMessage("Sử dụng module CRUD để quản lý giảng viên.");
           break;
         }
         case "guardians": {
-          setTabMessage("Sử dụng module CRUD để quan ly phụ huynh.");
+          setTabMessage("Sử dụng module CRUD để quản lý phụ huynh.");
           break;
         }
         case "course-sections": {
-          setTabMessage("Sử dụng module CRUD để quan ly lop hoc phan.");
+          setTabMessage("Sử dụng module CRUD để quản lý lớp học phần.");
           break;
         }
         case "recurring-schedules": {
-          setTabMessage("Nhập section ID để tải va quan ly lịch học lap lai.");
+          setTabMessage("Nhập section ID để tải và quản lý lịch học lặp lại.");
           break;
         }
         case "admissions": {
@@ -943,10 +1138,13 @@ export default function AdminDashboardPage() {
   };
 
   const activeDynamicCrudConfig =
-    activeTab.key === "cohorts" ||
     activeTab.key === "recurring-schedules"
       ? undefined
       : dynamicCrudTabConfigs[activeTab.key];
+
+  if (!isClientMounted) {
+    return null;
+  }
 
   return (
     <AuthGuard allowedRoles={["ADMIN"]}>
@@ -1011,15 +1209,6 @@ export default function AdminDashboardPage() {
                 );
               })}
             </nav>
-
-            <div className="mt-5 border-t border-[#d0dce6] px-3 py-3 text-sm text-[#516b7f]">
-              <p className="font-semibold text-[#2d5672]">Điều hướng nhanh</p>
-              <p className="mt-2">
-                <Link className="font-semibold text-[#0a5f92] hover:underline" href="/dashboard">
-                  Mo dashboard student
-                </Link>
-              </p>
-            </div>
           </aside>
 
           <main className="space-y-4 p-3 sm:p-4">
@@ -1062,14 +1251,14 @@ export default function AdminDashboardPage() {
 
                 <section className={contentCardClass}>
                   <div className={sectionTitleClass}>
-                    <h2>Danh sách chuc nang admin</h2>
+                    <h2>Danh sách chức năng admin</h2>
                   </div>
                   <div className="overflow-x-auto px-4 py-3">
                     <table className="min-w-full text-left text-sm">
                       <thead>
                         <tr className="border-b border-[#cfdfec] text-[#305970]">
                           <th className="px-2 py-2">Tab</th>
-                          <th className="px-2 py-2">Mo ta</th>
+                          <th className="px-2 py-2">Mô tả</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1092,14 +1281,6 @@ export default function AdminDashboardPage() {
               <AccountManagementPanel authorization={session?.authorization} />
             ) : null}
 
-            {activeTab.key === "roles" ? (
-              <RolePermissionPanel authorization={session?.authorization} />
-            ) : null}
-
-            {activeTab.key === "cohorts" ? (
-              <CohortManagementPanel authorization={session?.authorization} />
-            ) : null}
-
             {activeTab.key === "grade-components" ? (
               <GradeComponentPanel authorization={session?.authorization} />
             ) : null}
@@ -1117,12 +1298,19 @@ export default function AdminDashboardPage() {
                   <h2>Lọc ngành theo khoa</h2>
                 </div>
                 <div className="grid gap-2 px-4 py-4 sm:grid-cols-[220px_160px_140px]">
-                  <input
+                  <select
                     className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
-                    placeholder="Nhập faculty ID"
                     value={majorFacultyFilterValue}
                     onChange={(event) => setMajorFacultyFilterValue(event.target.value)}
-                  />
+                    disabled={isWorking || majorFacultyOptions.length === 0}
+                  >
+                    <option value="">Chọn khoa theo tên</option>
+                    {majorFacultyOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
                   <button
                     type="button"
                     onClick={handleApplyMajorFacultyFilter}
@@ -1149,12 +1337,19 @@ export default function AdminDashboardPage() {
                   <h2>Lọc chuyên ngành theo ngành</h2>
                 </div>
                 <div className="grid gap-2 px-4 py-4 sm:grid-cols-[220px_160px_140px]">
-                  <input
+                  <select
                     className="h-10 rounded-[6px] border border-[#c8d3dd] px-3 text-sm text-[#111827] outline-none focus:border-[#6aa8cf]"
-                    placeholder="Nhập major ID"
                     value={specializationMajorFilterValue}
                     onChange={(event) => setSpecializationMajorFilterValue(event.target.value)}
-                  />
+                    disabled={isWorking || specializationMajorOptions.length === 0}
+                  >
+                    <option value="">Chọn ngành...</option>
+                    {specializationMajorOptions.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
                   <button
                     type="button"
                     onClick={handleApplySpecializationMajorFilter}
@@ -1223,6 +1418,7 @@ export default function AdminDashboardPage() {
                 }
                 listQuery={activeDynamicCrudConfig.listQuery}
                 hiddenColumns={activeDynamicCrudConfig.hiddenColumns}
+                rowTransform={activeDynamicCrudConfig.rowTransform}
                 fieldLookups={activeDynamicCrudConfig.fieldLookups}
                 fieldConfigs={activeDynamicCrudConfig.fieldConfigs}
                 priorityColumns={activeDynamicCrudConfig.priorityColumns}

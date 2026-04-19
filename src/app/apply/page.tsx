@@ -13,13 +13,17 @@ import type {
   PublicAdmissionApplyPayload,
   PublicSelectOption,
 } from "@/lib/public-admission/types";
+import { toErrorMessage as toSharedErrorMessage } from "@/components/admin/format-utils";
 
 const toErrorMessage = (error: unknown): string => {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
+  return toSharedErrorMessage(error);
+};
 
-  return "Nộp hồ sơ thất bại. Vui lòng thử lại.";
+const hasApiStatus = (error: unknown, statusCode: number): boolean => {
+  return (
+    error instanceof Error &&
+    new RegExp(`\\[API\\s+${statusCode}\\]`, "i").test(error.message)
+  );
 };
 
 const emptyApplyForm = {
@@ -251,7 +255,7 @@ export default function PublicAdmissionApplyPage() {
       } catch (error) {
         if (!cancelled) {
           const message = toErrorMessage(error);
-          if (message.includes("[API 404]")) {
+          if (hasApiStatus(error, 404)) {
             setErrorMessage(
               "Hệ thống chưa cấu hình API kỳ tuyển sinh công khai. Vui lòng liên hệ quản trị.",
             );
@@ -550,10 +554,6 @@ export default function PublicAdmissionApplyPage() {
 
           <div className="grid gap-4 px-4 py-4 lg:grid-cols-[1.6fr_1fr]">
             <section className="rounded-[8px] border border-[#c7dceb] bg-[#f8fcff] p-3">
-              <p className="mb-3 rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#4f6d82]">
-                Vui lòng nhập đúng CCCD 12 số, SĐT và tổng điểm để hệ thống xét duyệt chính xác.
-              </p>
-
               {(errorMessage || successMessage) && (
                 <div className="mb-3 space-y-2 text-sm">
                   {errorMessage ? (
@@ -730,15 +730,6 @@ export default function PublicAdmissionApplyPage() {
                 <p>Kỳ tuyển sinh: {selectedPeriodLabel}</p>
                 <p>Ngành: {selectedMajorLabel}</p>
                 <p>Khối: {selectedBlockLabel}</p>
-              </div>
-              <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#4f6d82]">
-                <p>Step 1: Chọn kỳ tuyển sinh để tải danh sách ngành.</p>
-                <p>Step 2: Chọn ngành để tải danh sách khối xét tuyển.</p>
-                <p>Step 3: Khi nộp, backend sẽ kiểm tra đợt còn mở, trùng CCCD trong kỳ và benchmark tổ hợp ngành-khối.</p>
-                <p>1. Chọn kỳ tuyển sinh đang mở.</p>
-                <p>2. Chọn ngành và khối xét tuyển.</p>
-                <p>3. Điền đầy đủ thông tin cá nhân để nộp.</p>
-                <p>4. Sau khi nộp, vào mục Tra cứu hồ sơ để xem trạng thái.</p>
               </div>
 
               <div className="rounded-[6px] border border-[#d7e7f3] bg-white px-3 py-2 text-xs text-[#4f6d82]">

@@ -21,19 +21,6 @@ export const adminFeatureTabs: AdminFeatureTab[] = [
     ],
   },
   {
-    key: "roles",
-    label: "Vai trò và quyền",
-    description: "Quản lý vai trò và tập quyền của hệ thống.",
-    endpoints: [
-      { method: "GET", path: "/api/v1/roles" },
-      { method: "GET", path: "/api/v1/roles/{id}" },
-      { method: "POST", path: "/api/v1/roles" },
-      { method: "PUT", path: "/api/v1/roles/{id}" },
-      { method: "DELETE", path: "/api/v1/roles/{id}" },
-      { method: "GET", path: "/api/v1/roles/permissions" },
-    ],
-  },
-  {
     key: "semesters",
     label: "Quản lý học kỳ",
     description: "Tạo học kỳ, thời gian học và tổng số tuần để mở đăng ký đúng kỳ.",
@@ -166,33 +153,6 @@ export const adminFeatureTabs: AdminFeatureTab[] = [
       { method: "POST", path: "/api/v1/recurring-schedules" },
       { method: "PUT", path: "/api/v1/recurring-schedules/{id}" },
       { method: "DELETE", path: "/api/v1/recurring-schedules/{id}" },
-    ],
-  },
-  {
-    key: "grade-management",
-    label: "Quản lý điểm",
-    description: "Xem bảng điểm theo lớp học phần và cập nhật phiếu điểm.",
-    endpoints: [
-      { method: "GET", path: "/api/v1/course-sections/{sectionId}/grade-reports" },
-      { method: "GET", path: "/api/v1/students/{studentId}/grade-reports" },
-      { method: "POST", path: "/api/v1/grade-reports" },
-      { method: "GET", path: "/api/v1/grade-reports/{id}" },
-      { method: "PUT", path: "/api/v1/grade-reports/{id}" },
-      { method: "DELETE", path: "/api/v1/grade-reports/{id}" },
-    ],
-  },
-  {
-    key: "attendance-management",
-    label: "Quản lý điểm danh",
-    description:
-      "Theo dõi và hiệu chỉnh điểm danh theo lớp học phần, lịch học định kỳ và từng buổi học.",
-    endpoints: [
-      { method: "GET", path: "/api/v1/course-sections" },
-      { method: "GET", path: "/api/v1/recurring-schedules/section/{sectionId}" },
-      { method: "GET", path: "/api/v1/recurring-schedules/{id}/sessions" },
-      { method: "GET", path: "/api/v1/class-sessions/{sessionId}/attendances" },
-      { method: "PUT", path: "/api/v1/attendances/{id}" },
-      { method: "DELETE", path: "/api/v1/attendances/{id}" },
     ],
   },
   {

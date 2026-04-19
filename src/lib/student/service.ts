@@ -14,7 +14,9 @@ import type {
   CourseSectionResponse,
   FacultyResponse,
   GradeComponentResponse,
+  GradeOverviewResponse,
   GradeReportResponse,
+  GradeSemesterSummaryResponse,
   LecturerResponse,
   MajorResponse,
   ProfileResponse,
@@ -52,6 +54,306 @@ const toArray = <TItem>(value: unknown): TItem[] => {
   }
 
   return [];
+};
+
+const toPositiveInteger = (raw: unknown): number | undefined => {
+  if (typeof raw === "number" && Number.isInteger(raw) && raw > 0) {
+    return raw;
+  }
+
+  if (typeof raw === "string") {
+    const parsed = Number(raw);
+    if (Number.isInteger(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+
+  return undefined;
+};
+
+const toNullableNumber = (raw: unknown): number | null | undefined => {
+  if (raw === null) {
+    return null;
+  }
+
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return raw;
+  }
+
+  if (typeof raw === "string" && raw.trim() !== "") {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return undefined;
+};
+
+const getString = (raw: unknown): string | undefined => {
+  return typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
+};
+
+const toGradeStatus = (raw: unknown): GradeReportResponse["status"] | undefined => {
+  const normalized = typeof raw === "string" ? raw.trim().toUpperCase() : "";
+  if (normalized === "DRAFT" || normalized === "PUBLISHED" || normalized === "LOCKED") {
+    return normalized;
+  }
+
+  return undefined;
+};
+
+const toGradeDetails = (value: unknown): GradeReportResponse["gradeDetails"] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((item): item is Record<string, unknown> => isObject(item))
+    .map((item) => {
+      const componentId =
+        toPositiveInteger(item.componentId) ||
+        toPositiveInteger(item.gradeComponentId) ||
+        toPositiveInteger(item.id);
+
+      if (!componentId) {
+        return null;
+      }
+
+      return {
+        id: toPositiveInteger(item.id),
+        componentId,
+        componentName: getString(item.componentName) || getString(item.name),
+        weightPercentage: toNullableNumber(item.weightPercentage) ?? undefined,
+        score: toNullableNumber(item.score) ?? undefined,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null);
+};
+
+const toGradeReport = (value: unknown): GradeReportResponse | null => {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const item = value;
+  const nestedReport = isObject(item.gradeReport) ? item.gradeReport : undefined;
+  const nestedStudent = isObject(item.student) ? item.student : undefined;
+  const nestedRegistration =
+    (isObject(item.courseRegistration) ? item.courseRegistration : undefined) ||
+    (isObject(item.registration) ? item.registration : undefined);
+  const nestedSection =
+    (isObject(item.courseSection) ? item.courseSection : undefined) ||
+    (nestedRegistration && isObject(nestedRegistration.courseSection)
+      ? nestedRegistration.courseSection
+      : undefined);
+  const nestedCourse =
+    (isObject(item.course) ? item.course : undefined) ||
+    (nestedSection && isObject(nestedSection.course) ? nestedSection.course : undefined);
+
+  const registrationId =
+    toPositiveInteger(item.registrationId) ||
+    toPositiveInteger(item.courseRegistrationId) ||
+    (nestedRegistration
+      ? toPositiveInteger(nestedRegistration.id) ||
+        toPositiveInteger(nestedRegistration.registrationId) ||
+        toPositiveInteger(nestedRegistration.courseRegistrationId)
+      : undefined);
+
+  const persistedGradeReportId =
+    toPositiveInteger(item.gradeReportId) ||
+    toPositiveInteger(item.id) ||
+    (nestedReport
+      ? toPositiveInteger(nestedReport.id) || toPositiveInteger(nestedReport.gradeReportId)
+      : undefined);
+
+  const syntheticId = registrationId ? -registrationId : undefined;
+  const rowId = persistedGradeReportId || syntheticId;
+
+  if (!rowId) {
+    return null;
+  }
+
+  const detailRows = Array.isArray(item.gradeDetails)
+    ? item.gradeDetails
+    : nestedReport && Array.isArray(nestedReport.gradeDetails)
+      ? nestedReport.gradeDetails
+      : [];
+
+  return {
+    id: rowId,
+    gradeReportId: persistedGradeReportId ?? null,
+    registrationId,
+    studentId:
+      toPositiveInteger(item.studentId) ||
+      (nestedStudent ? toPositiveInteger(nestedStudent.id) : undefined),
+    studentName:
+      getString(item.studentName) ||
+      (nestedStudent
+        ? getString(nestedStudent.fullName) || getString(nestedStudent.studentName)
+        : undefined),
+    studentCode:
+      getString(item.studentCode) ||
+      (nestedStudent ? getString(nestedStudent.studentCode) : undefined),
+    sectionId:
+      toPositiveInteger(item.sectionId) ||
+      toPositiveInteger(item.courseSectionId) ||
+      (nestedSection
+        ? toPositiveInteger(nestedSection.id) || toPositiveInteger(nestedSection.sectionId)
+        : undefined),
+    sectionCode:
+      getString(item.sectionCode) ||
+      (nestedSection ? getString(nestedSection.sectionCode) : undefined),
+    semesterId:
+      toPositiveInteger(item.semesterId) ||
+      (nestedSection ? toPositiveInteger(nestedSection.semesterId) : undefined),
+    semesterNumber:
+      toPositiveInteger(item.semesterNumber) ||
+      (nestedSection ? toPositiveInteger(nestedSection.semesterNumber) : undefined),
+    academicYear:
+      getString(item.academicYear) ||
+      (nestedSection ? getString(nestedSection.academicYear) : undefined),
+    courseCode:
+      getString(item.courseCode) ||
+      (nestedSection
+        ? getString(nestedSection.courseCode) || getString(nestedSection.subjectCode)
+        : undefined) ||
+      (nestedCourse
+        ? getString(nestedCourse.courseCode) || getString(nestedCourse.subjectCode)
+        : undefined),
+    credits:
+      toNullableNumber(item.credits) ??
+      (nestedSection ? toNullableNumber(nestedSection.credits) : undefined) ??
+      (nestedCourse ? toNullableNumber(nestedCourse.credits) : undefined) ??
+      undefined,
+    courseName:
+      getString(item.courseName) ||
+      (nestedSection
+        ? getString(nestedSection.courseName) || getString(nestedSection.subjectName)
+        : undefined) ||
+      (nestedCourse
+        ? getString(nestedCourse.courseName) || getString(nestedCourse.name)
+        : undefined),
+    finalScore:
+      toNullableNumber(item.finalScore) ??
+      toNullableNumber(item.score) ??
+      (nestedReport
+        ? toNullableNumber(nestedReport.finalScore) ?? toNullableNumber(nestedReport.score)
+        : undefined) ??
+      undefined,
+    letterGrade:
+      getString(item.letterGrade) ||
+      getString(item.gradeLetter) ||
+      (nestedReport
+        ? getString(nestedReport.letterGrade) || getString(nestedReport.gradeLetter)
+        : undefined),
+    status:
+      toGradeStatus(item.status) ||
+      toGradeStatus(item.gradeStatus) ||
+      (nestedReport ? toGradeStatus(nestedReport.status) : undefined),
+    createdAt:
+      getString(item.createdAt) ||
+      (nestedReport ? getString(nestedReport.createdAt) : undefined),
+    gradeDetails: toGradeDetails(detailRows),
+  };
+};
+
+const toGradeReportList = (value: unknown): GradeReportResponse[] => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => toGradeReport(item))
+      .filter((item): item is GradeReportResponse => item !== null);
+  }
+
+  if (isObject(value)) {
+    const rows = Array.isArray(value.items)
+      ? value.items
+      : Array.isArray(value.content)
+        ? value.content
+        : Array.isArray(value.rows)
+          ? value.rows
+          : Array.isArray(value.data)
+            ? value.data
+            : null;
+
+    if (rows) {
+      return rows
+        .map((item) => toGradeReport(item))
+        .filter((item): item is GradeReportResponse => item !== null);
+    }
+
+    const single = toGradeReport(value);
+    return single ? [single] : [];
+  }
+
+  return [];
+};
+
+const toGradeSemesterSummary = (
+  value: unknown,
+): GradeSemesterSummaryResponse | null => {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  return {
+    semesterId: toPositiveInteger(value.semesterId),
+    semesterNumber: toNullableNumber(value.semesterNumber) ?? null,
+    academicYear: getString(value.academicYear) ?? null,
+    semesterAverage10: toNullableNumber(value.semesterAverage10) ?? null,
+    semesterEarnedCredits: toNullableNumber(value.semesterEarnedCredits) ?? null,
+  };
+};
+
+const toGradeSemesterSummaryList = (
+  value: unknown,
+): GradeSemesterSummaryResponse[] => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => toGradeSemesterSummary(item))
+      .filter((item): item is GradeSemesterSummaryResponse => item !== null);
+  }
+
+  if (isObject(value)) {
+    const rows = Array.isArray(value.items)
+      ? value.items
+      : Array.isArray(value.content)
+        ? value.content
+        : Array.isArray(value.rows)
+          ? value.rows
+          : Array.isArray(value.data)
+            ? value.data
+            : null;
+
+    if (rows) {
+      return rows
+        .map((item) => toGradeSemesterSummary(item))
+        .filter((item): item is GradeSemesterSummaryResponse => item !== null);
+    }
+
+    const single = toGradeSemesterSummary(value);
+    return single ? [single] : [];
+  }
+
+  return [];
+};
+
+const toGradeOverview = (value: unknown): GradeOverviewResponse => {
+  if (!isObject(value)) {
+    return {
+      reports: [],
+      semesterSummaries: [],
+      cumulativeAverage10: null,
+      cumulativeEarnedCredits: null,
+    };
+  }
+
+  return {
+    reports: toGradeReportList(value.reports),
+    semesterSummaries: toGradeSemesterSummaryList(value.semesterSummaries),
+    cumulativeAverage10: toNullableNumber(value.cumulativeAverage10) ?? null,
+    cumulativeEarnedCredits: toNullableNumber(value.cumulativeEarnedCredits) ?? null,
+  };
 };
 
 export const getMyProfile = async (
@@ -135,7 +437,21 @@ export const getMyGradeReports = async (
     },
   );
 
-  return toArray<GradeReportResponse>(unwrapApiData<unknown>(response));
+  return toGradeReportList(unwrapApiData<unknown>(response));
+};
+
+export const getMyGradeOverview = async (
+  authorization: string,
+): Promise<GradeOverviewResponse> => {
+  const response = await apiRequest<ApiResponse<unknown> | unknown>(
+    "/api/v1/students/me/grade-reports/overview",
+    {
+      method: "GET",
+      accessToken: authorization,
+    },
+  );
+
+  return toGradeOverview(unwrapApiData<unknown>(response));
 };
 
 export const getGradeReportById = async (
@@ -150,7 +466,14 @@ export const getGradeReportById = async (
     },
   );
 
-  return unwrapApiData<GradeReportResponse>(response);
+  const parsed = toGradeReport(unwrapApiData<unknown>(response));
+
+  return (
+    parsed || {
+      id: gradeReportId,
+      gradeReportId,
+    }
+  );
 };
 
 export const getGradeComponentsByCourse = async (

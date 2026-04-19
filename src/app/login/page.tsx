@@ -17,13 +17,10 @@ import { useAuth } from "@/context/auth-context";
 import { useToast } from "@/context/toast-context";
 import { useToastFeedback } from "@/hooks/use-toast-feedback";
 import { getPostLoginPath } from "@/lib/auth/routing";
+import { toErrorMessage as toSharedErrorMessage } from "@/components/admin/format-utils";
 
 const toErrorMessage = (error: unknown): string => {
-  if (error instanceof Error && error.message) {
-    return error.message;
-  }
-
-  return "Đăng nhập thất bại. Vui lòng thử lại.";
+  return toSharedErrorMessage(error);
 };
 
 function LoginPageContent() {
