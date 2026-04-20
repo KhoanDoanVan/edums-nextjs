@@ -138,7 +138,7 @@ export default function RegisterPage() {
 
   return (
     <AuthGuard allowedRoles={["ADMIN"]}>
-      <AuthPageShell mode="register">
+      <AuthPageShell>
         <form className="space-y-2.5" onSubmit={handleSubmit}>
           <AuthInput
             leftIcon={<UserIcon />}

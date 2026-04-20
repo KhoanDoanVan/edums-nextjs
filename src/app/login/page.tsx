@@ -78,7 +78,7 @@ function LoginPageContent() {
   };
 
   return (
-    <AuthPageShell mode="login">
+    <AuthPageShell>
       <form className="space-y-2.5" onSubmit={handleSubmit}>
         <AuthInput
           leftIcon={<UserIcon />}
@@ -154,7 +154,7 @@ export default function LoginPage() {
   return (
     <Suspense
       fallback={
-        <AuthPageShell mode="login">
+        <AuthPageShell>
           <div className="rounded-[4px] border border-[#bfd4e4] bg-white px-4 py-3 text-sm text-[#355970]">
             Đang tải trang đăng nhập...
           </div>
